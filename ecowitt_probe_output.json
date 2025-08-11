@@ -1,0 +1,44 @@
+{
+  "real_time": {
+    "status": 200,
+    "reason": "OK",
+    "sample": {
+      "code": 40010,
+      "msg": "Invalid application Key",
+      "time": "1754841002",
+      "data": []
+    }
+  },
+  "history_1d": {
+    "status": 200,
+    "reason": "OK",
+    "keys": [
+      "code",
+      "msg",
+      "time",
+      "data"
+    ],
+    "sample": {
+      "code": 40010,
+      "msg": "Invalid application Key",
+      "time": "1754841003",
+      "data": []
+    }
+  },
+  "history_30min": {
+    "status": 200,
+    "reason": "OK",
+    "keys": [
+      "code",
+      "msg",
+      "time",
+      "data"
+    ],
+    "sample": {
+      "code": 40010,
+      "msg": "Invalid application Key",
+      "time": "1754841003",
+      "data": []
+    }
+  }
+}

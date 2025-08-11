@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+requests
+python-dotenv
+SQLAlchemy
+plotly
+psycopg2-binary
+
+pydeck

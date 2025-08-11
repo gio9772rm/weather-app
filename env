@@ -1,0 +1,20 @@
+# === REQUIRED ===
+OWM_API_KEY=1f61fcd5668f468f6364a27d94dc5c9b
+
+# Fill with your station coordinates
+LAT=41.9067235
+LON=12.3899144
+
+# Prefer Ecowitt Cloud ingestion (these override CSV if present)
+ECOWITT_APPLICATION_KEY=0e273ded-425a-44b6-abd3-113e1250063a
+ECOWITT_API_KEY=F8861A8001268688DD8DC7CB965B86AA
+ECOWITT_MAC=BC:FF:4D:0F:B9:5E
+
+# Optional: if you still want to ingest from a CSV, set a path here
+# STATION_CSV=/absolute/path/to/station_clean_3h_2022_2025.csv
+
+# Database path
+SQLITE_PATH=./data/weather.db
+
+# Keep this much recent station history when re-ingesting (hours)
+STATION_HISTORY_HOURS=240
