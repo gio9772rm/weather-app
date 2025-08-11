@@ -1,0 +1,45 @@
+name: Hourly Ingest (Ecowitt + OpenWeather)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # ogni ora (UTC)
+  workflow_dispatch:       # avvio manuale dal tab Actions
+
+permissions:
+  contents: read
+
+jobs:
+  run-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ingest-hourly
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests python-dotenv SQLAlchemy psycopg2-binary
+
+      - name: Run weather_ingest.py
+        env:
+          # DB e variabili dalla sezione "Secrets and variables > Actions"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OWM_API_KEY: ${{ secrets.OWM_API_KEY }}
+          LAT: ${{ secrets.LAT }}
+          LON: ${{ secrets.LON }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY }}
+          ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
+          ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
+        run: |
+          python weather_ingest.py
