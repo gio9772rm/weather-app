@@ -300,8 +300,14 @@ def main():
         print("OpenWeather error:", e)
 
     with engine.begin() as conn:
-        conn.execute(text("INSERT OR REPLACE INTO meta (k,v) VALUES ('last_ingest', :v)"),
-                     {"v": datetime.now(timezone.utc).isoformat()})
+       conn.execute(
+           text("""
+               INSERT INTO meta (k, v) VALUES ('last_ingest', :v)
+               ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
+           """),
+           {"v": datetime.now(timezone.utc).isoformat()}
+       )
+
 
 if __name__ == "__main__":
     main()
