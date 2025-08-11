@@ -85,9 +85,15 @@ def upsert(df: pd.DataFrame, eng) -> int:
         for _, row in df.iterrows():
             conn.execute(sql, row.to_dict())
             n += 1
-        conn.execute(text("INSERT OR REPLACE INTO meta (k,v) VALUES ('last_ingest', :v)"),
-                     {"v": pd.Timestamp.utcnow().isoformat()+"Z"})
+        conn.execute(
+            text("""
+                INSERT INTO meta (k, v) VALUES ('last_ingest', :v)
+                ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
+            """),
+            {"v": pd.Timestamp.utcnow().isoformat()+"Z"}
+        )
     return n
+
 
 def main():
     eng = make_engine()
