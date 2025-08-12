@@ -9,6 +9,7 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import subprocess
+import requests  # per Radar & Allerte
 
 # =========================
 # Config
@@ -17,6 +18,7 @@ st.set_page_config(page_title="Meteo • Dashboard", layout="wide", page_icon="�
 load_dotenv()
 
 DB_PATH = os.getenv("SQLITE_PATH", "./data/weather.db")
+DB_URL = os.getenv("DATABASE_URL", "").strip()  # se presente (Render/Postgres) lo usiamo
 LAT = os.getenv("LAT", "")
 LON = os.getenv("LON", "")
 
@@ -24,18 +26,18 @@ LON = os.getenv("LON", "")
 st.markdown("""
 <style>
 :root { --radius: 16px; }
-.block-container { padding-top: 1rem; }
+.block-container { padding-top: 0.5rem; }
 .header {
-  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
   border-radius: var(--radius);
-  padding: 18px 20px; color: white; margin-bottom: 1rem;
+  padding: 18px 20px; color: white; margin-bottom: 0.5rem;
 }
-.kpi-card {
-  background: #ffffff10;
-  border: 1px solid #ffffff30;
-  border-radius: var(--radius);
-  padding: 14px 16px;
+.kpi { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:8px 0 0; }
+.kpi .card {
+  background: #ffffff10; border: 1px solid #ffffff30; border-radius: var(--radius);
+  padding: 12px 14px; color:#fff;
 }
+.small { opacity:.85; font-size:12px; margin-top:2px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -43,6 +45,8 @@ st.markdown("""
 # Data access
 # =========================
 def get_engine():
+    if DB_URL:
+        return create_engine(DB_URL, future=True)
     db = Path(DB_PATH)
     db.parent.mkdir(parents=True, exist_ok=True)
     return create_engine(f"sqlite:///{db}", future=True)
@@ -92,7 +96,7 @@ def ensure_venv_and_run_ingest():
 
     cmds = [
         [str(py_exe), "-m", "pip", "install", "--upgrade", "pip"],
-        [str(py_exe), "-m", "pip", "install", "streamlit", "python-dotenv", "pandas", "requests", "SQLAlchemy", "plotly"]
+        [str(py_exe), "-m", "pip", "install", "streamlit", "python-dotenv", "pandas", "requests", "SQLAlchemy", "plotly", "pydeck"]
     ]
     for cmd in cmds:
         res = subprocess.run(cmd, capture_output=True, text=True)
@@ -115,6 +119,93 @@ def run_ingest_now():
             return False, str(e)
     else:
         return ensure_venv_and_run_ingest()
+
+# =========================
+# Extra: Radar & Allerte
+# =========================
+@st.cache_data(ttl=300)
+def get_rainviewer_tile():
+    """Ottiene l'ultimo frame e l’URL tile per il radar RainViewer."""
+    try:
+        j = requests.get("https://api.rainviewer.com/public/weather-maps.json", timeout=10).json()
+        past = j.get("radar", {}).get("past", [])
+        if not past:
+            return None
+        ts = past[-1]["time"]
+        url = f"https://tilecache.rainviewer.com/v2/radar/{ts}/256/{{z}}/{{x}}/{{y}}/2/1_1.png?color=5&smooth=1&snow=1"
+        return url
+    except Exception:
+        return None
+
+@st.cache_data(ttl=600)
+def fetch_alerts(lat, lon):
+    """
+    1) Se OWM_ONECALL_KEY è presente → alerts da One Call 3.0
+    2) Altrimenti, se METEOALARM_FEED è settato → tenta un feed alternativo
+    """
+    out = []
+    onecall = os.getenv("OWM_ONECALL_KEY", "").strip()
+    feed = os.getenv("METEOALARM_FEED", "").strip()
+
+    if onecall and lat and lon:
+        try:
+            r = requests.get(
+                "https://api.openweathermap.org/data/3.0/onecall",
+                params={"lat": lat, "lon": lon, "appid": onecall, "units": "metric", "lang": "it", "exclude": "minutely,hourly,daily"},
+                timeout=15
+            )
+            r.raise_for_status()
+            alerts = r.json().get("alerts", []) or []
+            for a in alerts:
+                out.append({
+                    "Fonte": a.get("sender_name") or "OpenWeather",
+                    "Evento": a.get("event"),
+                    "Inizio": pd.to_datetime(a.get("start"), unit="s", utc=True, errors="coerce"),
+                    "Fine": pd.to_datetime(a.get("end"), unit="s", utc=True, errors="coerce"),
+                    "Descrizione": a.get("description")
+                })
+            if out:
+                df = pd.DataFrame(out)
+                df["Inizio"] = df["Inizio"].dt.tz_convert("UTC").dt.strftime("%Y-%m-%d %H:%M UTC")
+                df["Fine"] = df["Fine"].dt.tz_convert("UTC").dt.strftime("%Y-%m-%d %H:%M UTC")
+                return df
+        except Exception:
+            pass
+
+    if feed:
+        try:
+            resp = requests.get(feed, timeout=15)
+            txt = resp.text
+            # Tentativo semplice per estrarre titoli/descrizioni
+            try:
+                data = resp.json()
+                items = data if isinstance(data, list) else data.get("items") or data.get("entries") or []
+                for it in items:
+                    out.append({
+                        "Fonte": "Feed",
+                        "Evento": it.get("title") or it.get("event") or "Allerta",
+                        "Inizio": it.get("onset") or it.get("effective") or "",
+                        "Fine": it.get("expires") or it.get("ends") or "",
+                        "Descrizione": it.get("description") or it.get("summary") or ""
+                    })
+                if out:
+                    return pd.DataFrame(out)
+            except Exception:
+                import re
+                titles = re.findall(r"<title>(.*?)</title>", txt, flags=re.I|re.S)
+                sums = re.findall(r"<summary>(.*?)</summary>|<description>(.*?)</description>", txt, flags=re.I|re.S)
+                for i, t in enumerate(titles[:10]):
+                    desc = ""
+                    if i < len(sums):
+                        pair = sums[i]
+                        desc = pair[0] or pair[1] or ""
+                    out.append({"Fonte":"Feed","Evento":t.strip(),"Inizio":"","Fine":"","Descrizione":re.sub("<.*?>","",desc).strip()})
+                if out:
+                    return pd.DataFrame(out)
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=["Fonte","Evento","Inizio","Fine","Descrizione"])
 
 # =========================
 # Sidebar
@@ -158,7 +249,7 @@ with st.sidebar:
         else:
             st.error("Aggiornamento fallito (vedi log).")
 
-    # Ultimo ingest
+    # Ultimo ingest (caption anche in header sotto)
     try:
         meta = pd.read_sql_query(text("SELECT v FROM meta WHERE k='last_ingest'"), get_engine())
         if not meta.empty:
@@ -167,15 +258,27 @@ with st.sidebar:
         pass
 
 # =========================
-# Header
+# Header + badge aggiornamento
 # =========================
 with st.container():
     st.markdown('<div class="header"><h2>🌦️ Meteo Dashboard</h2><p style="margin:0">Stazione locale + OpenWeather • Roma</p></div>', unsafe_allow_html=True)
 
+# Badge "Aggiornato X min fa"
+try:
+    meta = pd.read_sql_query(text("SELECT v FROM meta WHERE k='last_ingest'"), get_engine())
+    if not meta.empty:
+        ts = pd.to_datetime(meta.iloc[0,0], utc=True, errors="coerce")
+        if pd.notna(ts):
+            delta = pd.Timestamp.utcnow() - ts.tz_convert("UTC")
+            mins = int(delta.total_seconds() // 60)
+            st.markdown(f"**Aggiornato {mins} min fa** • {ts.strftime('%Y-%m-%d %H:%M UTC')}")
+except Exception:
+    pass
+
 # =========================
 # Tabs
 # =========================
-tab1, tab2 = st.tabs(["📈 Osservazioni", "🛰️ Previsioni"])
+tab1, tab2, tab3 = st.tabs(["📈 Osservazioni", "🛰️ Previsioni", "🛰️ Radar & Allerte"])
 
 # -------- Osservazioni (default 72h + smooth max) --------
 with tab1:
@@ -203,7 +306,6 @@ with tab1:
                 return df
             n = len(df)
             if anti_flat and n < min_points_for_smoothing:
-                # troppi pochi punti: niente smoothing
                 return df
             eff_window = max(3, min(window_requested, max(3, n // 3)))
             sdf = df.copy()
@@ -261,7 +363,6 @@ with tab2:
     if df_fc.empty:
         st.info("Nessun dato previsione disponibile. Premi **Aggiorna dati ora**.")
     else:
-        # vento in km/h per grafico
         fc = df_fc.copy()
         fc["Wind_kmh"] = pd.to_numeric(fc["Wind_mps"], errors="coerce") * 3.6
 
@@ -280,7 +381,43 @@ with tab2:
         fig = px.bar(fc, x="Time", y="Rain_mm", title="Pioggia prevista (mm / 3h)", template=template)
         st.plotly_chart(fig, use_container_width=True)
 
-# -------- Mappa --------
+# -------- Radar & Allerte --------
+with tab3:
+    st.subheader("🛰️ Radar pioggia (RainViewer)")
+    tile = get_rainviewer_tile()
+    if tile and LAT and LON:
+        try:
+            import pydeck as pdk
+            lat = float(LAT); lon = float(LON)
+            layer = pdk.Layer(
+                "TileLayer",
+                data=tile,        # URL template tile
+                min_zoom=0, max_zoom=18,
+                tile_size=256
+            )
+            view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=8)
+            deck = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=None,
+                            tooltip={"text": "Radar RainViewer"})
+            st.pydeck_chart(deck, use_container_width=True)
+            st.caption("Fonte tile: RainViewer")
+        except Exception as e:
+            st.info(f"Impossibile mostrare la mappa (pydeck): {e}")
+    else:
+        st.info("Radar non disponibile al momento.")
+
+    st.markdown("---")
+    st.subheader("🚨 Allerte meteo")
+    try:
+        df_alerts = fetch_alerts(os.getenv("LAT"), os.getenv("LON"))
+        if df_alerts is not None and not df_alerts.empty:
+            st.dataframe(df_alerts, use_container_width=True, hide_index=True)
+        else:
+            st.success("Nessuna allerta attiva per l'area configurata.")
+            st.caption("Suggerimento: imposta OWM_ONECALL_KEY oppure METEOALARM_FEED nel file .env")
+    except Exception as e:
+        st.warning(f"Errore lettura allerte: {e}")
+
+# -------- Mappa semplice posizione (facoltativa) --------
 try:
     if LAT and LON:
         lat = float(LAT); lon = float(LON)
@@ -289,4 +426,4 @@ try:
 except Exception:
     pass
 
-st.caption("© La tua stazione + OpenWeather • aggiornamento consigliato ogni ora")
+st.caption("© La tua stazione + OpenWeather • aggiornamento automatico via GitHub Actions ogni 30 minuti")
