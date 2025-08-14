@@ -1,7 +1,7 @@
-# app_streamlit.py
 import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+import time
 
 import pandas as pd
 import plotly.express as px
@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import subprocess
 import requests  # per Radar & Allerte
+import pydeck as pdk  # per mappa radar/satellite
 
 # =========================
 # Config
@@ -21,6 +22,7 @@ DB_PATH = os.getenv("SQLITE_PATH", "./data/weather.db")
 DB_URL = os.getenv("DATABASE_URL", "").strip()  # se presente (Render/Postgres) lo usiamo
 LAT = os.getenv("LAT", "")
 LON = os.getenv("LON", "")
+OW_API_KEY = os.getenv("OW_API_KEY", "").strip()  # per tile nuvole OpenWeather (opzionale)
 
 # ----------------- Style: header + CSS -----------------
 st.markdown("""
@@ -121,22 +123,36 @@ def run_ingest_now():
         return ensure_venv_and_run_ingest()
 
 # =========================
-# Extra: Radar & Allerte
+# Radar helpers (RainViewer + OpenWeather)
 # =========================
 @st.cache_data(ttl=300)
-def get_rainviewer_tile():
-    """Ottiene l'ultimo frame e l’URL tile per il radar RainViewer."""
-    try:
-        j = requests.get("https://api.rainviewer.com/public/weather-maps.json", timeout=10).json()
-        past = j.get("radar", {}).get("past", [])
-        if not past:
-            return None
-        ts = past[-1]["time"]
-        url = f"https://tilecache.rainviewer.com/v2/radar/{ts}/256/{{z}}/{{x}}/{{y}}/2/1_1.png?color=5&smooth=1&snow=1"
-        return url
-    except Exception:
-        return None
+def rainviewer_catalog():
+    """Restituisce lista timestamps (epoch) disponibili per radar e satellite IR da RainViewer."""
+    j = requests.get("https://api.rainviewer.com/public/weather-maps.json", timeout=15).json()
+    radar_past = [f.get("time") for f in j.get("radar", {}).get("past", []) if "time" in f]
+    radar_now = [f.get("time") for f in j.get("radar", {}).get("nowcast", []) if "time" in f]
+    radar_times = sorted(set(radar_past + radar_now))
+    sat_past = [f.get("time") for f in j.get("satellite", {}).get("infrared", {}).get("past", []) if "time" in f]
+    sat_times = sorted(set(sat_past))
+    return {"radar": radar_times, "sat": sat_times}
 
+def rv_url(layer: str, ts: int, color: int = 3, smooth: int = 1, snow: int = 1) -> str:
+    """Costruisce la URL template per tile RainViewer (radar/satellite)."""
+    base = f"https://tilecache.rainviewer.com/v2/{layer}/{ts}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
+    if layer == "radar":
+        return f"{base}?color={color}&smooth={smooth}&snow={snow}"
+    return base  # satellite ignora i parametri extra
+
+def ow_clouds_url(appid: str) -> str:
+    """Tile nuvole OpenWeather (opzionale)."""
+    return f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={appid}"
+
+def ts_to_str(ts: int) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+# =========================
+# Allerte
+# =========================
 @st.cache_data(ttl=600)
 def fetch_alerts(lat, lon):
     """
@@ -383,27 +399,124 @@ with tab2:
 
 # -------- Radar & Allerte --------
 with tab3:
-    st.subheader("🛰️ Radar pioggia (RainViewer)")
-    tile = get_rainviewer_tile()
-    if tile and LAT and LON:
-        try:
-            import pydeck as pdk
-            lat = float(LAT); lon = float(LON)
-            layer = pdk.Layer(
-                "TileLayer",
-                data=tile,        # URL template tile
-                min_zoom=0, max_zoom=18,
-                tile_size=256
-            )
-            view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=8)
-            deck = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=None,
-                            tooltip={"text": "Radar RainViewer"})
-            st.pydeck_chart(deck, use_container_width=True)
-            st.caption("Fonte tile: RainViewer")
-        except Exception as e:
-            st.info(f"Impossibile mostrare la mappa (pydeck): {e}")
+    st.subheader("🛰️ Radar pioggia + Nuvole")
+
+    # Centro mappa
+    lat = float(LAT) if LAT else 41.89
+    lon = float(LON) if LON else 12.49
+
+    # Catalogo RainViewer (timestamps)
+    try:
+        cat = rainviewer_catalog()
+        radar_times_all = cat.get("radar", [])
+        sat_times_all = cat.get("sat", [])
+    except Exception as e:
+        radar_times_all, sat_times_all = [], []
+        st.warning(f"RainViewer non disponibile: {e}")
+
+    # Selettori layer + opacità
+    c0, c1, c2, c3 = st.columns([1,1,1,1])
+    with c0:
+        animate = st.checkbox("▶️ Anima", value=False, help="Scorre automaticamente gli ultimi frame")
+    with c1:
+        show_radar = st.checkbox("Mostra Radar (RainViewer)", value=True, help="Riflettività/precipitazioni")
+        radar_opacity = st.slider("Opacità Radar", 0.0, 1.0, 0.9, 0.05, disabled=not show_radar)
+    with c2:
+        show_sat = st.checkbox("Mostra Satellite IR (RainViewer)", value=True, help="Copertura nuvolosa/IR")
+        sat_opacity = st.slider("Opacità Satellite", 0.0, 1.0, 0.7, 0.05, disabled=not show_sat)
+    with c3:
+        show_ow = st.checkbox("Nuvole (OpenWeather)", value=bool(OW_API_KEY), help="Richiede OW_API_KEY")
+        ow_opacity = st.slider("Opacità OW Clouds", 0.0, 1.0, 0.6, 0.05, disabled=not show_ow)
+
+    # Finestra e velocità animazione
+    c4, c5 = st.columns([2,1])
+    with c4:
+        last_n = st.slider("Numero di frame (ultimi N) da usare", 6, 24, 12, step=2)
+    with c5:
+        fps = st.slider("Velocità (frame/sec)", 1, 12, 4)
+
+    # Sottoinsiemi di frame (ultimi N)
+    radar_frames = radar_times_all[-last_n:] if radar_times_all else []
+    sat_frames = sat_times_all[-last_n:] if sat_times_all else []
+
+    # Inizializza e clamp indici in sessione
+    if "radar_idx" not in st.session_state:
+        st.session_state.radar_idx = max(0, len(radar_frames) - 1)
+    st.session_state.radar_idx = min(st.session_state.radar_idx, max(0, len(radar_frames) - 1))
+
+    if "sat_idx" not in st.session_state:
+        st.session_state.sat_idx = max(0, len(sat_frames) - 1)
+    st.session_state.sat_idx = min(st.session_state.sat_idx, max(0, len(sat_frames) - 1))
+
+    # Slider manuali
+    col_r, col_s = st.columns(2)
+    if show_radar and radar_frames:
+        st.session_state.radar_idx = col_r.slider(
+            "Frame Radar (più a destra = più recente)",
+            0, len(radar_frames)-1, st.session_state.radar_idx, key="radar_slider"
+        )
+        radar_ts = radar_frames[st.session_state.radar_idx]
+        col_r.caption(f"Radar: {ts_to_str(radar_ts)}")
     else:
-        st.info("Radar non disponibile al momento.")
+        radar_ts = None
+        col_r.caption("Radar: nessun frame disponibile")
+
+    if show_sat and sat_frames:
+        st.session_state.sat_idx = col_s.slider(
+            "Frame Satellite IR",
+            0, len(sat_frames)-1, st.session_state.sat_idx, key="sat_slider"
+        )
+        sat_ts = sat_frames[st.session_state.sat_idx]
+        col_s.caption(f"Satellite: {ts_to_str(sat_ts)}")
+    else:
+        sat_ts = None
+        col_s.caption("Satellite: nessun frame disponibile")
+
+    # Costruzione layer mappa
+    layers = []
+
+    # Basemap OSM (semplice)
+    layers.append(pdk.Layer(
+        "TileLayer",
+        data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        min_zoom=0, max_zoom=19, tile_size=256, opacity=1.0
+    ))
+
+    if show_radar and radar_ts:
+        layers.append(pdk.Layer(
+            "TileLayer",
+            data=rv_url("radar", radar_ts),
+            min_zoom=0, max_zoom=18, tile_size=256, opacity=radar_opacity
+        ))
+
+    if show_sat and sat_ts:
+        layers.append(pdk.Layer(
+            "TileLayer",
+            data=rv_url("satellite", sat_ts),
+            min_zoom=0, max_zoom=18, tile_size=256, opacity=sat_opacity
+        ))
+
+    if show_ow and OW_API_KEY:
+        layers.append(pdk.Layer(
+            "TileLayer",
+            data=ow_clouds_url(OW_API_KEY),
+            min_zoom=0, max_zoom=18, tile_size=256, opacity=ow_opacity
+        ))
+
+    view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=6)
+    deck = pdk.Deck(layers=layers, initial_view_state=view_state, map_style=None,
+                    tooltip={"text": "Radar/Satellite"})
+    st.pydeck_chart(deck, use_container_width=True)
+
+    # Animazione: incrementa indici e ricarica
+    if animate and ((show_radar and len(radar_frames) > 1) or (show_sat and len(sat_frames) > 1)):
+        # attesa in secondi per il prossimo frame
+        time.sleep(1.0 / max(1, fps))
+        if show_radar and len(radar_frames) > 1:
+            st.session_state.radar_idx = (st.session_state.radar_idx + 1) % len(radar_frames)
+        if show_sat and len(sat_frames) > 1:
+            st.session_state.sat_idx = (st.session_state.sat_idx + 1) % len(sat_frames)
+        st.rerun()
 
     st.markdown("---")
     st.subheader("🚨 Allerte meteo")
@@ -426,4 +539,4 @@ try:
 except Exception:
     pass
 
-st.caption("© La tua stazione + OpenWeather • aggiornamento automatico via GitHub Actions ogni 30 minuti")
+st.caption("© La tua stazione + OpenWeather • aggiornamento automatico via Cron/Render")

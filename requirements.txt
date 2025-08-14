@@ -7,3 +7,6 @@ SQLAlchemy>=2.0
 psycopg[binary]>=3.1
 python-dotenv>=1.0
 pydeck
+plotly
+folium>=0.16
+streamlit-folium>=0.22
