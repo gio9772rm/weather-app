@@ -1,46 +1,59 @@
-import os
+# radar_layers.py
 import requests
-from typing import Optional
 
 RAINVIEWER_JSON = "https://api.rainviewer.com/public/weather-maps.json"
 
+def _safe_json(url: str) -> dict:
+    j = requests.get(url, timeout=20).json()
+    # A volte la radice è una LISTA
+    if isinstance(j, list) and j:
+        j = j[0]
+    if not isinstance(j, dict):
+        raise ValueError("Formato RainViewer inatteso (root non dict)")
+    return j
+
+def _extract_times(seq) -> list[int]:
+    out = []
+    if isinstance(seq, list):
+        for f in seq:
+            t = f.get("time") if isinstance(f, dict) else None
+            if t is not None:
+                out.append(int(t))
+    return out
+
 def get_latest_rainviewer_timestamps() -> dict:
     """
-    Returns latest timestamps for radar and satellite (infrared) from RainViewer.
+    Ritorna {'radar': <ts|None>, 'satellite': <ts|None>}
     """
-    r = requests.get(RAINVIEWER_JSON, timeout=20)
-    r.raise_for_status()
-    data = r.json()
-    # Radar: take latest from 'past' + 'nowcast' if exists
-    radar_times = []
-    for k in ("past", "nowcast"):
-        for f in data.get("radar", {}).get(k, []):
-            if "time" in f:
-                radar_times.append(f["time"])
-    radar_times = sorted(set(radar_times))
-    latest_radar = radar_times[-1] if radar_times else None
+    j = _safe_json(RAINVIEWER_JSON)
 
-    # Satellite infrared: latest from 'past'
-    sat_times = [f.get("time") for f in data.get("satellite", {}).get("infrared", {}).get("past", []) if "time" in f]
-    sat_times = sorted(set(sat_times))
-    latest_sat = sat_times[-1] if sat_times else None
+    radar = (j.get("radar") or {})
+    radar_times = sorted(set(
+        _extract_times(radar.get("past") or []) +
+        _extract_times(radar.get("nowcast") or [])
+    ))
 
-    return {"radar": latest_radar, "satellite": latest_sat}
+    # satellite.infrared può essere LISTA o DICT con 'past'
+    sat_ir = (j.get("satellite") or {}).get("infrared", [])
+    if isinstance(sat_ir, dict):
+        sat_ir = sat_ir.get("past") or []
+    sat_times = sorted(set(_extract_times(sat_ir)))
+
+    return {
+        "radar": radar_times[-1] if radar_times else None,
+        "satellite": sat_times[-1] if sat_times else None,
+    }
 
 def build_rainviewer_tile(layer: str, ts: int, opacity: float = 0.9, color: int = 3, smooth: int = 1, snow: int = 1) -> str:
     """
-    Build RainViewer XYZ tile URL for a given layer and timestamp.
-    layer: 'radar' or 'satellite'
+    XYZ tile RainViewer v2 per radar/satellite.
     """
-    base = f"https://tilecache.rainviewer.com/v2/{layer}/{ts}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
-    # For radar, color/smooth/snow params allowed; satellite ignores extras
+    base = f"https://tilecache.rainviewer.com/v2/{layer}/{ts}/256/{{z}}/{{x}}/{{y}}"
     if layer == "radar":
-        return f"{base}?color={color}&smooth={smooth}&snow={snow}&opacity={opacity}"
+        return f"{base}/2/1_1.png?opacity={opacity}&color={color}&smooth={smooth}&snow={snow}"
     else:
-        return f"{base}?opacity={opacity}"
+        return f"{base}/0/0_0.png?opacity={opacity}"
 
 def build_openweather_tile(layer: str, apikey: str, opacity: float = 0.6) -> str:
-    """
-    Build OpenWeather XYZ tile URL for a given layer (e.g., 'clouds_new', 'precipitation_new').
-    """
     return f"https://tile.openweathermap.org/map/{layer}/{{z}}/{{x}}/{{y}}.png?appid={apikey}&opacity={opacity}"
+
