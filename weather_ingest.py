@@ -12,13 +12,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_URL = os.getenv("DATABASE_URL","").strip()
-SQLITE_PATH = os.getenv("SQLITE_PATH","./data/weather.db")
-LAT = float(os.getenv("LAT","41.89"))
-LON = float(os.getenv("LON","12.49"))
-OW_API_KEY = os.getenv("OW_API_KEY","") or os.getenv("OWM_API_KEY","") or os.getenv("OPENWEATHER_API_KEY","")
-STATION_CSV = os.getenv("STATION_CSV","").strip()
-STATION_TZ = os.getenv("STATION_TZ","UTC")
+def _get_float_env(name: str, default: float) -> float:
+    """Return float value from environment, falling back on default for blanks."""
+    try:
+        return float(os.getenv(name) or default)
+    except ValueError:
+        return float(default)
+
+
+DB_URL = (os.getenv("DATABASE_URL") or "").strip()
+# Se l'URL contiene segnaposto (es. USER, HOST, PORT) ignora e usa SQLite
+if DB_URL and any(p in DB_URL for p in ["USER", "PASS", "HOST", "PORT", "DBNAME"]):
+    DB_URL = ""
+
+SQLITE_PATH = os.getenv("SQLITE_PATH", "./data/weather.db")
+LAT = _get_float_env("LAT", 41.89)
+LON = _get_float_env("LON", 12.49)
+OW_API_KEY = os.getenv("OW_API_KEY", "") or os.getenv("OWM_API_KEY", "") or os.getenv("OPENWEATHER_API_KEY", "")
+STATION_CSV = os.getenv("STATION_CSV", "").strip()
+STATION_TZ = os.getenv("STATION_TZ", "UTC")
 
 def engine():
     if DB_URL:
@@ -45,7 +57,7 @@ def parse_wind_value(val, default_unit='km/h'):
         m = _re.search(r'([-+]?\d*\.?\d+)\s*(km/?h|kph|m/s|ms|kts?|knots?|mph|bft)?', s)
         if not m: return None
         num = float(m.group(1)); unit = (m.group(2) or default_unit).replace('kph','km/h').replace('ms','m/s').replace('kt','kts')
-        if unit in ('km/h','kmh','km/h?'): v = num
+        if unit in ('km/h','kmh'): v = num
         elif unit in ('m/s','mps'): v = num*3.6
         elif unit in ('kts','knot','knots'): v = num*1.852
         elif unit == 'mph': v = num*1.60934
