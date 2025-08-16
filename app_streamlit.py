@@ -22,6 +22,22 @@ except Exception:
     HAS_FOLIUM = False
 
 # =========================
+# UI helpers
+# =========================
+def _keep_scroll():
+    st.components.v1.html(
+        """<script>
+        const KEY='scrollY_weather_app';
+        window.addEventListener('load',()=>{
+            const y=sessionStorage.getItem(KEY);
+            if(y!==null){ window.scrollTo(0, parseFloat(y)); }
+        });
+        window.addEventListener('scroll',()=>{
+            sessionStorage.setItem(KEY, String(window.scrollY||window.pageYOffset||0));
+        });
+        </script>""", height=0)
+
+# =========================
 # Setup & ENV
 # =========================
 st.set_page_config(page_title="Meteo • Dashboard", layout="wide", page_icon="🌦️")
@@ -89,21 +105,6 @@ PREFS = load_prefs()
 def pref(key, default):
     return PREFS.get(key, default)
 
-# =========================
-# UI helpers
-# =========================
-def _keep_scroll():
-    st.components.v1.html(
-        """<script>
-        const KEY='scrollY_weather_app';
-        window.addEventListener('load',()=>{
-            const y=sessionStorage.getItem(KEY);
-            if(y!==null){ window.scrollTo(0, parseFloat(y)); }
-        });
-        window.addEventListener('scroll',()=>{
-            sessionStorage.setItem(KEY, String(window.scrollY||window.pageYOffset||0));
-        });
-        </script>""", height=0)
 
 st.markdown("""
 <style>
