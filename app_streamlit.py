@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 app_streamlit.py — Meteo Dashboard
+- Canonizzazione colonne case-insensitive (Temp_C, Humidity, Pressure_hPa, Wind_kmh, WindGust_kmh, WindDir, Rain_mm, Time)
+- Parsing numerico locale-aware + normalizzazione unità (Temp: K/°F→°C; Pressione: Pa/kPa/inHg e hPa*10→hPa)
 - Fix grafico vento (usa station_raw o station_3h, conversioni e cast)
+- Loader robusto per il timestamp (accetta Time/ts_utc/timestamp/…)
 - Health widget + update manuale ingest locale/cloud
 - Auto-refresh opzionale (5 min) + cache TTL 5 min
-- Radar RainViewer + Nuvole (OpenWeather/NASA) con opacità layer
-- Salva impostazioni (tabella user_prefs) + Ricerca città (Nominatim)
+- Radar RainViewer + Nuvole (OpenWeather/NASA)
+- Salva impostazioni + Ricerca città (Nominatim)
+- Fallback dati quando finestra vuota + warning vento=0
+- Diagnostica dati + padding asse vento
 """
 
 import os, json, time, subprocess
@@ -18,7 +23,6 @@ from dotenv import load_dotenv
 import requests
 import pydeck as pdk
 
-# Compatibilità (Leaflet) opzionale
 try:
     import folium
     from streamlit_folium import st_folium
@@ -26,17 +30,15 @@ try:
 except Exception:
     HAS_FOLIUM = False
 
-# -------------------- Setup & ENV --------------------
 st.set_page_config(page_title="Meteo • Dashboard", layout="wide", page_icon="🌦️")
 load_dotenv()
 
 DB_PATH = os.getenv("SQLITE_PATH", "./data/weather.db")
 DB_URL = (os.getenv("DATABASE_URL", "") or "").strip()
 if DB_URL and "USER:PASS@HOST:PORT/DBNAME" in DB_URL:
-    DB_URL = ""  # placeholder → ignora e usa SQLite
+    DB_URL = ""
 
-OW_API_KEY = (os.getenv("OW_API_KEY") or "").strip()            # tiles nuvole correnti
-OWM_ONECALL_KEY = (os.getenv("OWM_ONECALL_KEY") or "").strip()  # allerte (facoltativo)
+OW_API_KEY = (os.getenv("OW_API_KEY") or "").strip()
 ENV_LAT = (os.getenv("LAT") or "").strip()
 ENV_LON = (os.getenv("LON") or "").strip()
 LOCAL_TZ = "Europe/Rome"
@@ -47,7 +49,7 @@ def get_engine():
     p = Path(DB_PATH); p.parent.mkdir(parents=True, exist_ok=True)
     return create_engine(f"sqlite:///{p}", future=True)
 
-# -------------------- Prefs (user_prefs) --------------------
+# -------------------- Prefs --------------------
 def ensure_prefs():
     try:
         with get_engine().begin() as cx:
@@ -93,101 +95,201 @@ st.markdown("""
 <style>
 :root { --radius: 16px; }
 .block-container { padding-top: .5rem; }
-.header {
-  background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
-  border-radius: var(--radius);
-  padding: 18px 20px; color: white; margin-bottom: 0.5rem;
-}
-.smallcaps { font-variant: all-small-caps; opacity: .8; }
+.header { background: linear-gradient(135deg,#3b82f6 0%,#06b6d4 100%); border-radius:16px; padding:18px 20px; color:#fff; margin-bottom:.5rem; }
+.smallcaps { font-variant: all-small-caps; opacity:.8; }
 </style>
 """, unsafe_allow_html=True)
 _keep_scroll()
 
-# Auto-refresh (abilitabile da sidebar)
 def autorefresh(minutes: int):
     ms = int(minutes * 60 * 1000)
     st.components.v1.html(f"<script>setTimeout(()=>window.parent.location.reload(), {ms});</script>", height=0)
 
-# -------------------- Data access --------------------
+# -------------------- Data helpers --------------------
+CANON_MAP = {
+    "temp_c": "Temp_C",
+    "humidity": "Humidity",
+    "hum": "Humidity",
+    "pressure_hpa": "Pressure_hPa",
+    "press_hpa": "Pressure_hPa",
+    "wind_kmh": "Wind_kmh",
+    "windgust_kmh": "WindGust_kmh",
+    "wind_gust_kmh": "WindGust_kmh",
+    "winddir": "WindDir",
+    "wind_dir": "WindDir",
+    "rain_mm": "Rain_mm",
+    "ts_utc": "Time",
+    "timestamp": "Time",
+    "datetime": "Time",
+    "date_time": "Time",
+    "time": "Time",
+    "timestamp_utc": "Time",
+}
+NUMERIC_COLS = ["Temp_C","Humidity","Pressure_hPa","Wind_kmh","WindGust_kmh","WindDir","Rain_mm"]
+
+def _fix_num_str(x):
+    """Normalizza stringhe numeriche in vari formati locali."""
+    if isinstance(x, (int, float)) or x is None:
+        return x
+    s = str(x).strip()
+    if not s:
+        return None
+    s = s.replace(" ", "")
+    if "." in s and "," in s and s.rfind(",") > s.rfind("."):
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        if "," in s and "." not in s:
+            s = s.replace(",", ".")
+        if s.count(",") > 1 and "." in s:
+            s = s.replace(",", "")
+        if s.count(".") > 1 and "," not in s:
+            s = s.replace(".", "")
+    return s
+
+def canonicalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    lower_map = {c: c.lower() for c in df.columns}
+    rename = {}
+    for orig, low in lower_map.items():
+        if low in CANON_MAP:
+            rename[orig] = CANON_MAP[low]
+    if rename:
+        df.rename(columns=rename, inplace=True)
+    if "Time" not in df.columns:
+        for c in df.columns:
+            if "time" in str(c).lower():
+                df.rename(columns={c: "Time"}, inplace=True)
+                break
+    return df
+
+def ensure_time_and_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    if "Time" not in df.columns:
+        return pd.DataFrame()
+    df["Time"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
+    df = df.dropna(subset=["Time"])
+    if df.empty:
+        return pd.DataFrame()
+    for c in NUMERIC_COLS:
+        if c in df.columns:
+            if df[c].dtype == object:
+                df[c] = df[c].map(_fix_num_str)
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+def normalize_units(df: pd.DataFrame) -> pd.DataFrame:
+    """Porta Pressione in hPa (~800–1100) e Temperatura in °C in modo deterministico."""
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+
+    # ---- PRESSIONE → hPa
+    if "Pressure_hPa" in df.columns:
+        p = pd.to_numeric(df["Pressure_hPa"], errors="coerce")
+
+        if p.notna().any():
+            med = float(p.median())
+
+            # mapping deterministico per i casi comuni
+            if   800.0 <= med <= 1100.0:
+                pass                             # già in hPa
+            elif 8000.0 <= med <= 11000.0:
+                p = p / 10.0                     # hPa*10 → hPa
+            elif 80000.0 <= med <= 110000.0:
+                p = p / 100.0                    # Pa → hPa
+            elif 50.0 <= med <= 200.0:
+                p = p * 10.0                     # kPa → hPa
+            elif 20.0 <= med <= 40.0:
+                p = p * 33.8638866667            # inHg → hPa
+            else:
+                # fallback: scala per potenze di 10 verso il range 800–1100
+                # (max 3 iterazioni per sicurezza)
+                for _ in range(3):
+                    med = float(pd.to_numeric(p, errors="coerce").dropna().median())
+                    if 800.0 <= med <= 1100.0:
+                        break
+                    if med > 1100.0:
+                        p = p / 10.0
+                    elif med < 800.0:
+                        p = p * 10.0
+
+        df["Pressure_hPa"] = p
+
+    # ---- TEMPERATURA → °C
+    if "Temp_C" in df.columns:
+        t = pd.to_numeric(df["Temp_C"], errors="coerce")
+        if t.notna().any():
+            medt = float(t.median())
+            if medt > 200.0:         # Kelvin → °C
+                t = t - 273.15
+            elif medt > 60.0:        # °F → °C
+                t = (t - 32.0) * 5.0/9.0
+        df["Temp_C"] = t
+
+    return df
+
+
 def read_table(table):
     try:
         with get_engine().connect() as cx:
-            return pd.read_sql(f"SELECT * FROM {table}", cx)
+            raw = pd.read_sql(f"SELECT * FROM {table}", cx)
     except Exception:
         return pd.DataFrame()
+    raw = canonicalize_columns(raw)
+    raw = ensure_time_and_numeric(raw)
+    raw = normalize_units(raw)
+    return raw
 
+# -------------------- Station loaders --------------------
 @st.cache_data(ttl=300)
 def load_station():
-    """Carica osservazioni scegliendo la tabella più recente tra station_3h e station_raw.
-       Normalizza i nomi e i tipi così i grafici vedono sempre Wind_kmh/WindGust_kmh numerici.
-    """
+    """Sceglie la tabella più recente tra station_3h e station_raw e normalizza vento/raffiche."""
     df3h = read_table("station_3h")
     dfr  = read_table("station_raw")
 
-    # normalizza 3h
-    def _norm_3h(df):
-        if df.empty: return df
-        df = df.copy()
-        df["Time"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
-        for c in ["Temp_C","Humidity","Pressure_hPa","Wind_kmh","WindGust_kmh","Rain_mm"]:
-            if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
-        if "WindGust_kmh" in df.columns and "Wind_kmh" in df.columns:
-            df["WindGust_kmh"] = df["WindGust_kmh"].fillna(df["Wind_kmh"])
-        return df.dropna(subset=["Time"]).sort_values("Time")
+    # Se station_raw ha wind_ms, deriviamo Wind_kmh
+    try:
+        with get_engine().connect() as cx:
+            raw = pd.read_sql("SELECT * FROM station_raw", cx)
+    except Exception:
+        raw = pd.DataFrame()
+    if not raw.empty:
+        tmp = canonicalize_columns(raw)
+        tmp = ensure_time_and_numeric(tmp)
+        if "wind_ms" in raw.columns and "Time" in tmp.columns:
+            m = tmp[["Time"]].copy()
+            m["wind_ms"] = pd.to_numeric(raw["wind_ms"], errors="coerce")
+            dfr = dfr.merge(m, on="Time", how="left")
+            if "Wind_kmh" not in dfr.columns:
+                dfr["Wind_kmh"] = m["wind_ms"] * 3.6
+            else:
+                dfr["Wind_kmh"] = dfr["Wind_kmh"].fillna(m["wind_ms"] * 3.6)
+            if "WindGust_kmh" not in dfr.columns:
+                dfr["WindGust_kmh"] = dfr["Wind_kmh"]
+            dfr.drop(columns=[c for c in ["wind_ms"] if c in dfr.columns], inplace=True, errors="ignore")
 
-    # normalizza raw (rinomina e conversioni)
-    def _norm_raw(df):
-        if df.empty: return df
-        df = df.copy()
-        colmap = {
-            "ts_utc": "Time",
-            "temp_c": "Temp_C",
-            "hum": "Humidity",
-            "press_hpa": "Pressure_hPa",
-            "winddir": "WindDir",
-            "rain_mm": "Rain_mm",
-        }
-        for src, dst in colmap.items():
-            if src in df.columns:
-                df.rename(columns={src: dst}, inplace=True)
-
-        if "Time" in df.columns:
-            df["Time"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
-        else:
-            return pd.DataFrame()
-
-        # vento: m/s → km/h
-        if "Wind_kmh" not in df.columns and "wind_ms" in df.columns:
-            df["Wind_kmh"] = pd.to_numeric(df["wind_ms"], errors="coerce") * 3.6
-        # raffica: fallback alla media se manca
-        if "WindGust_kmh" not in df.columns:
-            df["WindGust_kmh"] = df.get("Wind_kmh")
-
-        for c in ["Temp_C","Humidity","Pressure_hPa","Wind_kmh","WindGust_kmh","Rain_mm","WindDir"]:
-            if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
-
-        return df.dropna(subset=["Time"]).sort_values("Time")
-
-    df3h = _norm_3h(df3h)
-    dfr  = _norm_raw(dfr)
-
-    # scegli dataset più recente
+    # Scegli dataset più recente
     if df3h.empty and dfr.empty:
-        return pd.DataFrame()
-    if df3h.empty:
-        chosen = dfr
+        chosen = pd.DataFrame()
+    elif df3h.empty:
+        chosen = dfr.sort_values("Time")
     elif dfr.empty:
-        chosen = df3h
+        chosen = df3h.sort_values("Time")
     else:
-        t3h = df3h["Time"].max()
-        tr  = dfr["Time"].max()
-        chosen = dfr if tr >= t3h else df3h
+        chosen = dfr if dfr["Time"].max() >= df3h["Time"].max() else df3h
+        chosen = chosen.sort_values("Time")
 
-    # cast finali
-    for c in ["Wind_kmh","WindGust_kmh","Rain_mm","Temp_C","Humidity","Pressure_hPa"]:
-        if c in chosen.columns: chosen[c] = pd.to_numeric(chosen[c], errors="coerce")
+    # Cast finali + normalizzazione unità
+    for c in ["Wind_kmh","WindGust_kmh","Rain_mm","Temp_C","Humidity","Pressure_hPa","WindDir"]:
+        if c in chosen.columns:
+            chosen[c] = pd.to_numeric(chosen[c], errors="coerce")
     if "WindGust_kmh" in chosen.columns and "Wind_kmh" in chosen.columns:
         chosen["WindGust_kmh"] = chosen["WindGust_kmh"].fillna(chosen["Wind_kmh"])
+    # chosen = normalize_units(chosen)
 
     return chosen
 
@@ -195,23 +297,29 @@ def load_station():
 def load_forecast():
     df = read_table("forecast_ow")
     if df.empty: return df
-    df["Time"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
-    for c in ["Temp_C","Humidity","Pressure_hPa","Clouds","Wind_mps","WindDir","Rain_mm","Snow_mm"]:
-        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+    if "Wind_mps" in df.columns and "Wind_kmh" not in df.columns:
+        df["Wind_kmh"] = pd.to_numeric(df["Wind_mps"], errors="coerce") * 3.6
+    df = normalize_units(df)
     return df.sort_values("Time")
 
 def get_last_ingest():
     try:
-        df = read_table("meta")
-        if df.empty: return None
+        with get_engine().connect() as cx:
+            df = pd.read_sql("SELECT * FROM meta", cx)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    if "k" in df.columns and "v" in df.columns:
         v = df.loc[df["k"]=="last_ingest","v"]
         if v.empty: return None
         return pd.to_datetime(v.iloc[0], utc=True, errors="coerce")
-    except Exception:
-        return None
+    df = canonicalize_columns(df)
+    df = ensure_time_and_numeric(df)
+    if df.empty: return None
+    return df["Time"].max()
 
 def run_ingest(script_name:str):
-    # prova venv locale su Windows, altrimenti python di PATH
     venv_py = Path(".venv") / "Scripts" / "python.exe"
     cmd = f'"{venv_py}" "{script_name}"' if venv_py.exists() else f'python "{script_name}"'
     try:
@@ -318,7 +426,7 @@ with st.sidebar:
     theme = st.radio("Tema grafici", ["Chiaro","Scuro"], horizontal=True,
                      index=0 if pref("theme","Chiaro")=="Chiaro" else 1, key="ui_theme")
     template = "plotly_white" if theme=="Chiaro" else "plotly_dark"
-    hours = st.slider("Ore osservazioni", 6, 96, int(pref("hours",72)), step=6, key="hours")
+    hours = st.slider("Ore osservazioni", 6, 240, int(pref("hours",72)), step=6, key="hours")
     auto_ref = st.checkbox("Auto refresh ogni 5 minuti", value=bool(pref("auto_refresh", True)), key="auto_refresh")
 
     st.markdown("#### Grafici")
@@ -409,7 +517,7 @@ with st.sidebar:
 with st.container():
     st.markdown('<div class="header"><h2>🌦️ Meteo Dashboard</h2><p class="smallcaps">Stazione locale + OpenWeather</p></div>', unsafe_allow_html=True)
     if st.session_state.get("auto_refresh", True):
-        autorefresh(5)  # 5 minuti
+        autorefresh(5)
     health_widget()
 
 # -------------------- Tabs --------------------
@@ -424,7 +532,15 @@ with tab1:
         now_utc = pd.Timestamp.utcnow()
         tmin = now_utc - pd.Timedelta(hours=st.session_state["hours"])
         recent = df_station[df_station["Time"] >= tmin].copy()
+        if recent.empty:
+            recent = df_station.copy()
+            st.info("Nessun dato nelle ultime ore selezionate: mostro tutti i dati disponibili. Aumenta 'Ore osservazioni' nella sidebar per filtrare meglio.")
         recent["TimeLocal"] = recent["Time"].dt.tz_convert(LOCAL_TZ)
+
+        # Warning se vento tutto zero
+        if "Wind_kmh" in recent.columns and len(recent) > 0:
+            if (recent["Wind_kmh"].fillna(0).abs() < 0.001).all():
+                st.warning("I valori del vento risultano tutti 0. Verifica la sorgente (riempi 'station_raw' via ingest cloud/backfill).")
 
         # KPI
         last_row = recent.tail(1)
@@ -441,7 +557,26 @@ with tab1:
             rain_disp = "{:.1f} mm".format(rain_val) if pd.notna(rain_val) else "0.0 mm"
             c5.metric("🌧️ Pioggia 3h", rain_disp)
 
-        # grafici
+        # 🔎 Diagnostica
+        with st.expander("🔎 Diagnostica dati (ultima finestra)", expanded=False):
+            def _rng(s):
+                if s not in recent.columns or recent[s].dropna().empty:
+                    return "—"
+                v = pd.to_numeric(recent[s], errors="coerce").dropna()
+                if v.empty: return "—"
+                return f"{v.min():.2f} → {v.max():.2f}"
+            def _nnz(s):
+                if s not in recent.columns: return 0
+                v = pd.to_numeric(recent[s], errors="coerce").fillna(0)
+                return int((v.abs() > 1e-6).sum())
+            st.write(
+                f"- Temp_C: {_rng('Temp_C')}\n"
+                f"- Pressure_hPa: {_rng('Pressure_hPa')}\n"
+                f"- Wind_kmh: {_rng('Wind_kmh')}\n"
+                f"- WindGust_kmh: {_rng('WindGust_kmh')}"
+            )
+
+        # funzione smoothing
         def smooth(df, cols):
             if df.empty: return df
             n = len(df); eff = max(3, min(15, max(3, n//3)))
@@ -451,10 +586,21 @@ with tab1:
                     out[c] = out[c].rolling(eff, min_periods=1, center=True).mean()
             return out
 
+        # Temperatura (range dinamico)
         if "Temperatura" in st.session_state["charts"] and "Temp_C" in recent.columns:
             d = smooth(recent, ["Temp_C"])
-            fig = px.area(d, x="TimeLocal", y="Temp_C", template=("plotly_dark" if st.session_state["ui_theme"]=="Scuro" else "plotly_white"), title="Temperatura (°C)")
-            fig.update_traces(mode="lines+markers"); st.plotly_chart(fig, use_container_width=True)
+            fig = px.line(d, x="TimeLocal", y="Temp_C",
+                          template=("plotly_dark" if st.session_state["ui_theme"]=="Scuro" else "plotly_white"),
+                          title="Temperatura (°C)", markers=True)
+            try:
+                y = pd.to_numeric(d["Temp_C"], errors="coerce").dropna()
+                if not y.empty:
+                    ymin, ymax = float(y.min()), float(y.max())
+                    pad = max(0.5, (ymax - ymin) * 0.1)
+                    fig.update_yaxes(range=[ymin - pad, ymax + pad])
+            except Exception:
+                pass
+            st.plotly_chart(fig, use_container_width=True)
 
         if "Umidità" in st.session_state["charts"] and "Humidity" in recent.columns:
             d = smooth(recent, ["Humidity"])
@@ -468,7 +614,16 @@ with tab1:
             cols = [c for c in ["Wind_kmh","WindGust_kmh"] if c in recent.columns]
             if cols:
                 d = smooth(recent, cols)
-                st.plotly_chart(px.line(d, x="TimeLocal", y=cols, template=template, title="Vento (km/h)", markers=True), use_container_width=True)
+                fig_w = px.line(d, x="TimeLocal", y=cols, template=template, title="Vento (km/h)", markers=True)
+                try:
+                    y = pd.concat([pd.to_numeric(d[c], errors="coerce") for c in cols], axis=0).dropna()
+                    if not y.empty:
+                        ymin, ymax = float(y.min()), float(y.max())
+                        if abs(ymax - ymin) < 0.5:
+                            fig_w.update_yaxes(range=[ymin - 0.5, ymax + 0.5])
+                except Exception:
+                    pass
+                st.plotly_chart(fig_w, use_container_width=True)
             else:
                 st.info("Nessuna colonna vento trovata (cerco Wind_kmh / WindGust_kmh). Colonne presenti: " + ", ".join(list(recent.columns)))
 
@@ -483,7 +638,8 @@ with tab2:
         st.info("Nessun dato previsione disponibile.")
     else:
         fc = df_fc.copy(); fc["TimeLocal"] = fc["Time"].dt.tz_convert(LOCAL_TZ)
-        if "Wind_mps" in fc.columns: fc["Wind_kmh"] = pd.to_numeric(fc["Wind_mps"], errors="coerce") * 3.6
+        if "Wind_kmh" not in fc.columns and "Wind_mps" in fc.columns:
+            fc["Wind_kmh"] = pd.to_numeric(fc["Wind_mps"], errors="coerce") * 3.6
         if "Temp_C" in fc.columns:
             st.plotly_chart(px.line(fc, x="TimeLocal", y="Temp_C", title="Temperatura prevista (°C)", template=template, markers=True), use_container_width=True)
         if "Pressure_hPa" in fc.columns:
@@ -511,7 +667,6 @@ with tab3:
         ts = current["ts"]
         dt = pd.to_datetime(ts, unit="s", utc=True)
 
-        # Playback
         if st.session_state.get("play_toggle", False) and len(frames) > 1:
             last_tick = st.session_state.get("rv_last_tick", 0.0); now = time.time()
             if now - last_tick >= (st.session_state["speed_ms"]/1000.0):
@@ -519,7 +674,6 @@ with tab3:
                 st.session_state["rv_idx"] = (st.session_state["rv_idx"] + 1) % len(frames)
                 st.rerun()
 
-        # URLs
         palette_idx = RADAR_PALETTES.get(st.session_state["radar_palette"], 5)
         radar_url = rv_tile(ts, palette_idx, st.session_state["radar_smooth"], st.session_state["radar_snow"])
 
