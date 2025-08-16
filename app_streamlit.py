@@ -132,6 +132,8 @@ def read_table(table):
 def load_station():
     df = read_table("station_3h")
     if df.empty:
+        df = read_table("station_30m")
+    if df.empty:
         df = read_table("station_raw")  # fallback
     if df.empty:
         return df
