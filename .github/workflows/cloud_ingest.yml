@@ -40,22 +40,24 @@ jobs:
       - name: Preflight env
         env:
           ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
-          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APP_KEY }}   # compatibilità
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
+        shell: bash
         run: |
-          for k in ECOWITT_APP_KEY ECOWITT_APPLICATION_KEY ECOWITT_API_KEY ECOWITT_MAC; do
-            if [ -z "${!k}" ]; then echo "::error::$k NON impostata"; exit 2; else echo "$k OK"; fi
-          done
+          ok_app=""
+          if [ -n "$ECOWITT_APP_KEY" ] || [ -n "$ECOWITT_APPLICATION_KEY" ]; then ok_app="ok"; fi
+          [ -z "$ok_app" ] && echo "::error::Manca ECOWITT_APP_KEY o ECOWITT_APPLICATION_KEY" && exit 2
+          [ -z "$ECOWITT_API_KEY" ] && echo "::error::Manca ECOWITT_API_KEY" && exit 2
+          [ -z "$ECOWITT_MAC" ] && echo "::error::Manca ECOWITT_MAC" && exit 2
+          echo "Secrets Ecowitt OK"
+
 
       - name: Run Ecowitt Cloud ingest
         env:
-          # Se usi Postgres, inserisci la secret e togli SQLite
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLITE_PATH: ./data/weather.db
-
-          ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
-          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APP_KEY }}   # compatibilità
+          # Fallback: usa APP_KEY se c'è, altrimenti APPLICATION_KEY
+          ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY != '' && secrets.ECOWITT_APP_KEY || secrets.ECOWITT_APPLICATION_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY != '' && secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
 
