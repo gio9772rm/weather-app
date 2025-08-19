@@ -10,13 +10,8 @@ on:
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
-      ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
-      ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
-      LOG_LEVEL: DEBUG
-      BACKFILL_HOURS: 0
+    # Se le secrets le hai messe in un Environment (es. production), sbloccale così:
+    # environment: production
 
     steps:
       - name: Checkout
@@ -28,36 +23,59 @@ jobs:
           python-version: "3.11"
 
       - name: Check env presence (masked)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY }}
+          ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
+          ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
         run: |
           python - << 'PY'
           import os
-          keys = ["DATABASE_URL","ECOWITT_APP_KEY","ECOWITT_API_KEY","ECOWITT_MAC"]
+          keys = ["DATABASE_URL","ECOWITT_APP_KEY","ECOWITT_APPLICATION_KEY","ECOWITT_API_KEY","ECOWITT_MAC"]
           for k in keys:
-            v = os.getenv(k)
-            print(f"{k}: {'set' if v else 'MISSING'}", end='')
-            if v: print(f" (len={len(v)})")
-            else: print()
+              v = os.getenv(k)
+              print(f"{k}: {'set' if v else 'MISSING'}", end='')
+              if v: print(f" (len={len(v)})")
+              else: print()
+          # Serve almeno una tra APP_KEY e APPLICATION_KEY
+          if not (os.getenv("ECOWITT_APP_KEY") or os.getenv("ECOWITT_APPLICATION_KEY")):
+              raise SystemExit("::error::Manca ECOWITT_APP_KEY o ECOWITT_APPLICATION_KEY")
+          if not os.getenv("ECOWITT_API_KEY"):
+              raise SystemExit("::error::Manca ECOWITT_API_KEY")
+          if not os.getenv("ECOWITT_MAC"):
+              raise SystemExit("::error::Manca ECOWITT_MAC")
+          print("Preflight OK")
           PY
 
       - name: Install deps
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          REQ=""
-          if [ -f requirements-ingest.txt ]; then
-            REQ="requirements-ingest.txt"
-          elif [ -f requirements_ingest.txt ]; then
-            REQ="requirements_ingest.txt"
-          elif [ -f requirements.txt ]; then
-            REQ="requirements.txt"
-          fi
-          if [ -z "$REQ" ]; then
-            echo "Nessun requirements trovato. Esco."
-            exit 1
-          fi
-          echo "Uso $REQ"
-          pip install -r "$REQ"
+          # usa qualunque requirements tu abbia in repo
+          if   [ -f requirements-ingest.txt ]; then pip install -r requirements-ingest.txt
+          elif [ -f requirements_ingest.txt ]; then pip install -r requirements_ingest.txt
+          elif [ -f requirements.txt ]; then       pip install -r requirements.txt
+          else echo "::error::Nessun requirements trovato"; exit 1; fi
+
+      - name: Prepare runtime (solo se usi SQLite)
+        run: mkdir -p ./data
 
       - name: Run ingest (Ecowitt Cloud)
-        run: |
-          python weather_ingest_ecowitt_cloud.py
+        env:
+          # DB (se usi Postgres; se no lascia vuoto)
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # SQLite locale (opzionale)
+          SQLITE_PATH: ./data/weather.db
+
+          # PASSIAMO ENTRAMBE per compatibilità con lo script
+          ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
+          ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
+          ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
+
+          # Altri parametri
+          ECOWITT_TZ: Europe/Rome
+          LOG_LEVEL: DEBUG
+          BACKFILL_HOURS: "0"
+        run: python weather_ingest_ecowitt_cloud.py
