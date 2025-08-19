@@ -62,7 +62,3 @@ jobs:
           ECOWITT_TZ: Europe/Rome
           BACKFILL_HOURS: "0"
         run: python weather_ingest_ecowitt_cloud.py
-
-          BACKFILL_HOURS: "0"
-        run: |
-          python weather_ingest_ecowitt_cloud.py
