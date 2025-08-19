@@ -3,7 +3,6 @@ name: Cloud Weather Ingest
 on:
   workflow_dispatch: {}
   schedule:
-    # Esegui ogni 10 minuti (GitHub non garantisce precisione al minuto)
     - cron: "*/10 * * * *"
 
 permissions:
@@ -17,6 +16,10 @@ jobs:
   ingest:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      # Opzionali generali
+      ECOWITT_TZ: Europe/Rome
+      BACKFILL_HOURS: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,21 +32,37 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-ingest.txt
+          pip install -r requirements-ingest.txt   # <-- verifica il nome del file nel repo
+
+      - name: Prepare runtime (solo se usi SQLite)
+        run: mkdir -p ./data
+
+      - name: Preflight env
+        env:
+          ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APP_KEY }}   # compatibilità
+          ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
+          ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
+        run: |
+          for k in ECOWITT_APP_KEY ECOWITT_APPLICATION_KEY ECOWITT_API_KEY ECOWITT_MAC; do
+            if [ -z "${!k}" ]; then echo "::error::$k NON impostata"; exit 2; else echo "$k OK"; fi
+          done
 
       - name: Run Ecowitt Cloud ingest
         env:
-          # DB (consigliato Postgres). Esempio: postgresql+psycopg2://user:pass@host:5432/db?sslmode=require
+          # Se usi Postgres, inserisci la secret e togli SQLite
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SQLITE_PATH: ./data/weather.db
 
-          # Chiavi Ecowitt Cloud
           ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APP_KEY }}   # compatibilità
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
 
-          # Opzionali
           ECOWITT_TZ: Europe/Rome
+          BACKFILL_HOURS: "0"
+        run: python weather_ingest_ecowitt_cloud.py
+
           BACKFILL_HOURS: "0"
         run: |
           python weather_ingest_ecowitt_cloud.py
