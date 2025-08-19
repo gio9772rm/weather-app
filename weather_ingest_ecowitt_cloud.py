@@ -300,7 +300,7 @@ def touch_last_ingest():
 # -------------------- Main --------------------
 def main():
     if not APP_KEY or not API_KEY or not MAC:
-        log.error("Chiavi Ecowitt mancanti (.env): ECOWITT_APP_KEY/ECOWITT_APPLICATION_KEY, ECOWITT_API_KEY, ECOWITT_MAC")
+        log.error("Chiavi Ecowitt mancanti (Actions/Render/locale): ECOWITT_APP_KEY/ECOWITT_APPLICATION_KEY, ECOWITT_API_KEY, ECOWITT_MAC")
         sys.exit(2)
 
     ensure_schema()
