@@ -60,7 +60,6 @@ if errorlevel 1 (
 
 echo.
 echo [5/5] Avvio dashboard web...
-start "" "http://localhost:8501"
 call "%PYEXE%" -m streamlit run "%WORKDIR%\app_streamlit.py" --server.port 8501 --server.address localhost --server.headless false
 
 endlocal

@@ -1,0 +1,14 @@
+# secrets
+.env
+.env.*
+*.key
+*.pem
+*.p12
+.streamlit/secrets.toml
+__pycache__/
+.pytest_cache/
+*.env
+*.xlsx
+*.csv
+*.sqlite*
+.cache/
