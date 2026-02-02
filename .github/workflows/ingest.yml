@@ -1,6 +1,10 @@
 name: Hourly Ingest (Ecowitt + OpenWeather)
 
 on:
+  concurrency:
+  group: ingest-ecowitt
+  cancel-in-progress: true
+  
   schedule:
     - cron: "0 * * * *"   # ogni ora (UTC)
   workflow_dispatch:       # avvio manuale dal tab Actions
