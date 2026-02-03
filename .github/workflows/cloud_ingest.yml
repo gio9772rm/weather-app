@@ -10,12 +10,13 @@ permissions:
 
 concurrency:
   group: cloud-ingest
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   ingest:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,52 +24,47 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Install deps
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          # prova entrambi i nomi: requirements-ingest.txt / requirements_ingest.txt
           if [ -f requirements-ingest.txt ]; then
             pip install -r requirements-ingest.txt
           elif [ -f requirements_ingest.txt ]; then
             pip install -r requirements_ingest.txt
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
           else
             echo "::error::File requirements per l'ingest non trovato"; exit 2
           fi
 
-      - name: Prepare runtime (solo se usi SQLite)
-        run: mkdir -p ./data
-
       - name: Preflight env (non stampa valori)
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
           ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
         shell: bash
         run: |
+          [ -z "$DATABASE_URL" ] && echo "::error::Manca DATABASE_URL" && exit 2
           ok_app=""
           if [ -n "$ECOWITT_APP_KEY" ] || [ -n "$ECOWITT_APPLICATION_KEY" ]; then ok_app="ok"; fi
           [ -z "$ok_app" ] && echo "::error::Manca ECOWITT_APP_KEY o ECOWITT_APPLICATION_KEY" && exit 2
           [ -z "$ECOWITT_API_KEY" ] && echo "::error::Manca ECOWITT_API_KEY" && exit 2
           [ -z "$ECOWITT_MAC" ] && echo "::error::Manca ECOWITT_MAC" && exit 2
-          echo "Secrets Ecowitt OK"
+          echo "Secrets OK"
 
-      - name: Run Ecowitt Cloud ingest
+      - name: Run Ecowitt Cloud ingest (Postgres)
         env:
-          # Se usi Postgres metti la secret, altrimenti lascia solo SQLite
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLITE_PATH: ./data/weather.db
-
-          # Compatibilità: passa entrambe (puoi duplicare la stessa secret)
           ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
-          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
-
-          # Opzionali
           ECOWITT_TZ: Europe/Rome
-          BACKFILL_HOURS: "0"
+          BACKFILL_HOURS: "1"
         run: python weather_ingest_ecowitt_cloud.py
