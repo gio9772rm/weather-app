@@ -16,8 +16,10 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from dotenv import load_dotenv
+
+from db import get_engine as _get_engine, ensure_schema as _ensure_schema
 
 # -------------------- Setup & log --------------------
 load_dotenv()
@@ -37,37 +39,13 @@ BACKFILL_HOURS = int((os.getenv("BACKFILL_HOURS") or "0").strip() or "0")
 
 # -------------------- DB helpers --------------------
 def engine():
-    """Usa Postgres se DATABASE_URL esiste, altrimenti SQLite."""
-    if DB_URL:
-        return create_engine(DB_URL, future=True, pool_pre_ping=True)
-    Path(SQLITE).parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{SQLITE}", future=True)
+    """Ritorna l'Engine SQLAlchemy centralizzato (db.py)."""
+    return _get_engine()
+
 
 def ensure_schema():
-    """Crea tabelle se mancanti con schema minuscolo."""
-    with engine().begin() as con:
-        con.execute(text("""
-        CREATE TABLE IF NOT EXISTS station_raw (
-          time TIMESTAMPTZ PRIMARY KEY,
-          temp_c DOUBLE PRECISION,
-          humidity DOUBLE PRECISION,
-          pressure_hpa DOUBLE PRECISION,
-          wind_kmh DOUBLE PRECISION,
-          windgust_kmh DOUBLE PRECISION,
-          winddir DOUBLE PRECISION,
-          rain_mm DOUBLE PRECISION
-        );"""))
-        con.execute(text("""
-        CREATE TABLE IF NOT EXISTS station_3h (
-          time TIMESTAMPTZ PRIMARY KEY,
-          temp_c DOUBLE PRECISION,
-          humidity DOUBLE PRECISION,
-          pressure_hpa DOUBLE PRECISION,
-          wind_kmh DOUBLE PRECISION,
-          windgust_kmh DOUBLE PRECISION,
-          rain_mm DOUBLE PRECISION
-        );"""))
-        con.execute(text("""CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)"""))
+    """Crea le tabelle se mancanti usando schema.sql (db.py)."""
+    _ensure_schema()
 
 # -------------------- Ecowitt API --------------------
 def ecowitt_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -242,39 +220,86 @@ def parse_payload(j: Dict[str, Any]) -> pd.DataFrame:
     return df
 
 # -------------------- Upsert & aggregazione --------------------
+def _chunked(records: List[Dict[str, Any]], chunk_size: int = 5000):
+    for i in range(0, len(records), chunk_size):
+        yield records[i:i+chunk_size]
+
 def upsert_raw(df: pd.DataFrame) -> int:
+    """Upsert bulk (executemany) su station_raw."""
     if df is None or df.empty:
         return 0
     keep = ["time","temp_c","humidity","pressure_hpa","wind_kmh","windgust_kmh","winddir","rain_mm"]
     df = df[keep].copy()
-    cnt = 0
-    with engine().begin() as con:
-        for _, row in df.iterrows():
-            con.execute(text("""
-                INSERT INTO station_raw (time, temp_c, humidity, pressure_hpa, wind_kmh, windgust_kmh, winddir, rain_mm)
-                VALUES (:time, :temp_c, :humidity, :pressure_hpa, :wind_kmh, :windgust_kmh, :winddir, :rain_mm)
-                ON CONFLICT (time) DO UPDATE SET
-                  temp_c=excluded.temp_c,
-                  humidity=excluded.humidity,
-                  pressure_hpa=excluded.pressure_hpa,
-                  wind_kmh=excluded.wind_kmh,
-                  windgust_kmh=excluded.windgust_kmh,
-                  winddir=excluded.winddir,
-                  rain_mm=excluded.rain_mm;
-            """), dict(row))
-            cnt += 1
-    return cnt
+    # normalizza timestamp in ISO UTC (string) per compatibilità sqlite/postgres
+    df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    df = df.dropna(subset=["time"])
+    records = df.to_dict("records")
+    if not records:
+        return 0
 
-def recompute_3h(lookback_hours: int = 96) -> int:
+    stmt = text("""
+        INSERT INTO station_raw (time, temp_c, humidity, pressure_hpa, wind_kmh, windgust_kmh, winddir, rain_mm)
+        VALUES (:time, :temp_c, :humidity, :pressure_hpa, :wind_kmh, :windgust_kmh, :winddir, :rain_mm)
+        ON CONFLICT (time) DO UPDATE SET
+          temp_c=excluded.temp_c,
+          humidity=excluded.humidity,
+          pressure_hpa=excluded.pressure_hpa,
+          wind_kmh=excluded.wind_kmh,
+          windgust_kmh=excluded.windgust_kmh,
+          winddir=excluded.winddir,
+          rain_mm=excluded.rain_mm;
+    """)
+    with engine().begin() as con:
+        for chunk in _chunked(records, chunk_size=5000):
+            con.execute(stmt, chunk)
+    return len(records)
+
+def recompute_3h(window_start_utc: Optional[pd.Timestamp] = None, lookback_hours: int = 96) -> int:
+    """Ricalcolo 3h *incrementale* (upsert solo dei bucket toccati).
+
+    - Se window_start_utc è None: usa now-lookback_hours.
+    - Legge station_raw nell'intervallo [t0, now] e upserta station_3h.
+    """
+    now = pd.Timestamp.utcnow().tz_localize("UTC")
+    if window_start_utc is None:
+        t0 = now - pd.Timedelta(hours=lookback_hours)
+    else:
+        t0 = pd.to_datetime(window_start_utc, utc=True, errors="coerce")
+        if pd.isna(t0):
+            t0 = now - pd.Timedelta(hours=lookback_hours)
+
     with engine().begin() as con:
         df = pd.read_sql(
             text("SELECT * FROM station_raw WHERE time >= :t0 ORDER BY time"),
-            con, params={"t0": (pd.Timestamp.utcnow() - pd.Timedelta(hours=lookback_hours)).isoformat()}
+            con,
+            params={"t0": t0.strftime("%Y-%m-%dT%H:%M:%SZ")}
         )
+
     if df.empty:
         return 0
-    df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
-    agg = (df.set_index("time")
+
+    # Column canonicalization (case-insensitive)
+    cols = {c.lower(): c for c in df.columns}
+    def col(name): return cols.get(name)
+    time_col = col("time") or col("ts_utc") or col("timestamp")
+    if not time_col:
+        return 0
+
+    df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
+    df = df.dropna(subset=[time_col]).sort_values(time_col)
+
+    # allineo t0 al bordo 3H per aggiornare bucket completo
+    t0_aligned = df[time_col].min().floor("3H")
+    df = df[df[time_col] >= t0_aligned]
+
+    # rename to canonical expected names
+    rename_map = {}
+    for k in ["temp_c","humidity","pressure_hpa","wind_kmh","windgust_kmh","rain_mm"]:
+        if col(k):
+            rename_map[col(k)] = k
+    df = df.rename(columns=rename_map)
+
+    agg = (df.set_index(time_col)
              .resample("3H")
              .agg({
                  "temp_c":"mean",
@@ -284,11 +309,29 @@ def recompute_3h(lookback_hours: int = 96) -> int:
                  "windgust_kmh":"max",
                  "rain_mm":"sum"
              })
-             .reset_index())
+             .reset_index()
+          )
+    agg = agg.rename(columns={time_col: "time"})
+    agg["time"] = pd.to_datetime(agg["time"], utc=True, errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    records = agg.to_dict("records")
+    if not records:
+        return 0
+
+    stmt = text("""
+        INSERT INTO station_3h (time, temp_c, humidity, pressure_hpa, wind_kmh, windgust_kmh, rain_mm)
+        VALUES (:time, :temp_c, :humidity, :pressure_hpa, :wind_kmh, :windgust_kmh, :rain_mm)
+        ON CONFLICT (time) DO UPDATE SET
+          temp_c=excluded.temp_c,
+          humidity=excluded.humidity,
+          pressure_hpa=excluded.pressure_hpa,
+          wind_kmh=excluded.wind_kmh,
+          windgust_kmh=excluded.windgust_kmh,
+          rain_mm=excluded.rain_mm;
+    """)
     with engine().begin() as con:
-        # replace per semplicità (se preferisci ON CONFLICT riga per riga, avvisami)
-        agg.to_sql("station_3h", con.connection, if_exists="replace", index=False)
-    return len(agg)
+        for chunk in _chunked(records, chunk_size=2000):
+            con.execute(stmt, chunk)
+    return len(records)
 
 def touch_last_ingest():
     with engine().begin() as con:
@@ -305,12 +348,20 @@ def main():
 
     ensure_schema()
 
+    window_start_utc: Optional[pd.Timestamp] = None
+
     # Realtime
     try:
         rt = ecowitt_get("device/real_time", {"mac": MAC, "call_back": "outdoor,wind,pressure,rainfall"})
         df_rt = parse_payload(rt)
         if not df_rt.empty:
             upsert_raw(df_rt.tail(1))
+            try:
+                tmin = pd.to_datetime(df_rt['time'].min(), utc=True, errors='coerce')
+                if not pd.isna(tmin):
+                    window_start_utc = tmin if window_start_utc is None else min(window_start_utc, tmin)
+            except Exception:
+                pass
             last = df_rt.iloc[-1].to_dict()
             log.info(
                 "REALTIME: T=%.2f°C H=%.0f%% P=%.1f hPa V=%.2f km/h G=%s dir=%s",
@@ -344,6 +395,12 @@ def main():
                 )
                 df_h = parse_payload(hist)
                 cnt = upsert_raw(df_h)
+                try:
+                    tmin = pd.to_datetime(df_h['time'].min(), utc=True, errors='coerce')
+                    if not pd.isna(tmin):
+                        window_start_utc = tmin if window_start_utc is None else min(window_start_utc, tmin)
+                except Exception:
+                    pass
                 if not df_h.empty:
                     last = df_h.iloc[-1].to_dict()
                     log.info(
@@ -359,7 +416,7 @@ def main():
 
     # Ricostruisci 3h
     try:
-        n3 = recompute_3h(lookback_hours=max(96, BACKFILL_HOURS))
+        n3 = recompute_3h(window_start_utc=window_start_utc, lookback_hours=max(96, BACKFILL_HOURS))
         log.info("station_3h ricostruita: %s bucket", n3)
     except Exception as e:
         log.warning("Recompute 3h error: %s", e)

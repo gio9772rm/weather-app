@@ -13,12 +13,13 @@ app_streamlit.py — Meteo Dashboard
 - Diagnostica dati + padding asse vento
 """
 
-import os, json, time, subprocess
+import os, sys, json, time, subprocess
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from db import get_engine, ensure_schema
 from dotenv import load_dotenv
 import requests
 import pydeck as pdk
@@ -43,11 +44,11 @@ ENV_LAT = (os.getenv("LAT") or "").strip()
 ENV_LON = (os.getenv("LON") or "").strip()
 LOCAL_TZ = "Europe/Rome"
 
-def get_engine():
-    if DB_URL:
-        return create_engine(DB_URL, future=True)
-    p = Path(DB_PATH); p.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{p}", future=True)
+# Inizializza schema DB (idempotente)
+try:
+    ensure_schema()
+except Exception:
+    pass
 
 # -------------------- Prefs --------------------
 def ensure_prefs():
@@ -251,26 +252,16 @@ def load_station():
     df3h = read_table("station_3h")
     dfr  = read_table("station_raw")
 
-    # Se station_raw ha wind_ms, deriviamo Wind_kmh
-    try:
-        with get_engine().connect() as cx:
-            raw = pd.read_sql("SELECT * FROM station_raw", cx)
-    except Exception:
-        raw = pd.DataFrame()
-    if not raw.empty:
-        tmp = canonicalize_columns(raw)
-        tmp = ensure_time_and_numeric(tmp)
-        if "wind_ms" in raw.columns and "Time" in tmp.columns:
-            m = tmp[["Time"]].copy()
-            m["wind_ms"] = pd.to_numeric(raw["wind_ms"], errors="coerce")
-            dfr = dfr.merge(m, on="Time", how="left")
-            if "Wind_kmh" not in dfr.columns:
-                dfr["Wind_kmh"] = m["wind_ms"] * 3.6
-            else:
-                dfr["Wind_kmh"] = dfr["Wind_kmh"].fillna(m["wind_ms"] * 3.6)
-            if "WindGust_kmh" not in dfr.columns:
-                dfr["WindGust_kmh"] = dfr["Wind_kmh"]
-            dfr.drop(columns=[c for c in ["wind_ms"] if c in dfr.columns], inplace=True, errors="ignore")
+    # Se station_raw ha wind_ms (m/s), deriviamo Wind_kmh
+    if not dfr.empty and "wind_ms" in dfr.columns:
+        ms = pd.to_numeric(dfr["wind_ms"], errors="coerce")
+        kmh = ms * 3.6
+        if "Wind_kmh" not in dfr.columns:
+            dfr["Wind_kmh"] = kmh
+        else:
+            dfr["Wind_kmh"] = pd.to_numeric(dfr["Wind_kmh"], errors="coerce").fillna(kmh)
+        if "WindGust_kmh" not in dfr.columns:
+            dfr["WindGust_kmh"] = dfr["Wind_kmh"]
 
     # Scegli dataset più recente
     if df3h.empty and dfr.empty:
@@ -319,11 +310,13 @@ def get_last_ingest():
     if df.empty: return None
     return df["Time"].max()
 
-def run_ingest(script_name:str):
+def run_ingest(script_name: str):
+    """Esegue lo script di ingest in modo sicuro (senza shell=True)."""
     venv_py = Path(".venv") / "Scripts" / "python.exe"
-    cmd = f'"{venv_py}" "{script_name}"' if venv_py.exists() else f'python "{script_name}"'
+    py = str(venv_py) if venv_py.exists() else sys.executable
+    cmd = [py, script_name]
     try:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
+        res = subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=600)
         ok = (res.returncode == 0)
         out = (res.stdout or "") + ("\n" + (res.stderr or ""))
         return ok, out
