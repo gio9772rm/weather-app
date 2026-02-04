@@ -2,7 +2,6 @@ streamlit>=1.36
 pandas>=2.2
 numpy
 requests>=2.32
-python-dotenv
 SQLAlchemy>=2.0
 psycopg[binary]>=2.9
 python-dotenv>=1.0

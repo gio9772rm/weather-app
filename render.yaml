@@ -5,7 +5,7 @@ services:
     env: python
     plan: starter
     schedule: "*/5 * * * *"        # ogni 5 minuti (UTC)
-    buildCommand: pip install -r requirements_ingest.txt
+    buildCommand: pip install -r requirements-ingest.txt
     startCommand: python weather_ingest_ecowitt_cloud.py
     envVars:
       - key: DATABASE_URL          # incollalo dal tuo Postgres Render
