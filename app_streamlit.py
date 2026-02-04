@@ -18,7 +18,8 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from db import get_engine, ensure_schema
 from dotenv import load_dotenv
 import requests
 import pydeck as pdk
@@ -43,11 +44,11 @@ ENV_LAT = (os.getenv("LAT") or "").strip()
 ENV_LON = (os.getenv("LON") or "").strip()
 LOCAL_TZ = "Europe/Rome"
 
-def get_engine():
-    if DB_URL:
-        return create_engine(DB_URL, future=True)
-    p = Path(DB_PATH); p.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{p}", future=True)
+# Inizializza schema DB (idempotente)
+try:
+    ensure_schema()
+except Exception:
+    pass
 
 # -------------------- Prefs --------------------
 def ensure_prefs():
