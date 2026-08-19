@@ -75,6 +75,7 @@ def _additive_migrations(engine: Engine) -> None:
     """Add V3 observation columns to pre-existing V1/V2 databases."""
     additions = {
         "station_raw": {
+            "wind_ms": "REAL",
             "rain_rate_mm_h": "REAL",
             "rain_total_mm": "REAL",
             "solar_w_m2": "REAL",
