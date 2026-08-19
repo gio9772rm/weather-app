@@ -1,708 +1,870 @@
-# -*- coding: utf-8 -*-
-"""
-app_streamlit.py — Meteo Dashboard
-- Canonizzazione colonne case-insensitive (Temp_C, Humidity, Pressure_hPa, Wind_kmh, WindGust_kmh, WindDir, Rain_mm, Time)
-- Parsing numerico locale-aware + normalizzazione unità (Temp: K/°F→°C; Pressione: Pa/kPa/inHg e hPa*10→hPa)
-- Fix grafico vento (usa station_raw o station_3h, conversioni e cast)
-- Loader robusto per il timestamp (accetta Time/ts_utc/timestamp/…)
-- Health widget + update manuale ingest locale/cloud
-- Auto-refresh opzionale (5 min) + cache TTL 5 min
-- Radar RainViewer + Nuvole (OpenWeather/NASA)
-- Salva impostazioni + Ricerca città (Nominatim)
-- Fallback dati quando finestra vuota + warning vento=0
-- Diagnostica dati + padding asse vento
-"""
+"""Meteo V3 — station-aware, multi-provider Streamlit dashboard."""
 
-import os, sys, json, time, subprocess
-from pathlib import Path
+from __future__ import annotations
+
+import html
+import time
+from typing import Any
+
+import numpy as np
 import pandas as pd
-import plotly.express as px
-import streamlit as st
-from sqlalchemy import text
-from db import get_engine, ensure_schema
-from dotenv import load_dotenv
-import requests
+import plotly.graph_objects as go
 import pydeck as pdk
+import requests
+import streamlit as st
+from plotly.subplots import make_subplots
 
-try:
-    import folium
-    from streamlit_folium import st_folium
-    HAS_FOLIUM = True
-except Exception:
-    HAS_FOLIUM = False
+from astro_weather import astronomy_events, best_observing_windows, prepare_astronomy
+from config import Settings
+from data_access import (
+    daily_forecast,
+    health_snapshot,
+    load_forecast,
+    load_provider_scores,
+    load_recent_logs,
+    load_station,
+)
 
-st.set_page_config(page_title="Meteo • Dashboard", layout="wide", page_icon="🌦️")
-load_dotenv()
+st.set_page_config(
+    page_title="Meteo V3",
+    page_icon="🌦️",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+CFG = Settings.from_env()
 
-DB_PATH = os.getenv("SQLITE_PATH", "./data/weather.db")
-DB_URL = (os.getenv("DATABASE_URL", "") or "").strip()
-if DB_URL and "USER:PASS@HOST:PORT/DBNAME" in DB_URL:
-    DB_URL = ""
 
-OW_API_KEY = (os.getenv("OW_API_KEY") or "").strip()
-ENV_LAT = (os.getenv("LAT") or "").strip()
-ENV_LON = (os.getenv("LON") or "").strip()
-LOCAL_TZ = "Europe/Rome"
-
-# Inizializza schema DB (idempotente)
-try:
-    ensure_schema()
-except Exception:
-    pass
-
-# -------------------- Prefs --------------------
-def ensure_prefs():
-    try:
-        with get_engine().begin() as cx:
-            cx.execute(text("CREATE TABLE IF NOT EXISTS user_prefs (k TEXT PRIMARY KEY, v TEXT)"))
-    except Exception:
-        pass
-
-def load_prefs():
-    ensure_prefs()
-    try:
-        with get_engine().begin() as cx:
-            rows = cx.execute(text("SELECT k, v FROM user_prefs")).fetchall()
-        out = {}
-        for k, v in rows:
-            try: out[k] = json.loads(v)
-            except Exception: out[k] = v
-        return out
-    except Exception:
-        return {}
-
-def save_prefs(d: dict):
-    ensure_prefs()
-    with get_engine().begin() as cx:
-        for k, v in d.items():
-            cx.execute(text("""
-                INSERT INTO user_prefs (k, v) VALUES (:k, :v)
-                ON CONFLICT (k) DO UPDATE SET v=excluded.v
-            """), {"k": k, "v": json.dumps(v)})
-
-PREFS = load_prefs()
-pref = lambda k, dv: PREFS.get(k, dv)
-
-# -------------------- UI helpers --------------------
-def _keep_scroll():
-    st.components.v1.html(
-        '<script>\n'
-        'const KEY="scrollY_weather_app";\n'
-        'addEventListener("load",()=>{const y=sessionStorage.getItem(KEY);if(y!==null)scrollTo(0,parseFloat(y));});\n'
-        'addEventListener("scroll",()=>{sessionStorage.setItem(KEY, String(window.scrollY||pageYOffset||0));});\n'
-        '</script>', height=0)
-
-st.markdown("""
+st.markdown(
+    """
 <style>
-:root { --radius: 16px; }
-.block-container { padding-top: .5rem; }
-.header { background: linear-gradient(135deg,#3b82f6 0%,#06b6d4 100%); border-radius:16px; padding:18px 20px; color:#fff; margin-bottom:.5rem; }
-.smallcaps { font-variant: all-small-caps; opacity:.8; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+:root { --ink:#10243d; --muted:#64748b; --line:rgba(148,163,184,.22); --blue:#2563eb; }
+html, body, [class*="css"] { font-family:'DM Sans',system-ui,sans-serif; }
+.block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
+.hero { position:relative; overflow:hidden; color:white; padding:1.7rem 1.9rem; border-radius:24px;
+  background:radial-gradient(circle at 85% 20%,rgba(255,255,255,.24),transparent 24%),
+  linear-gradient(125deg,#0f3d78 0%,#0b76b7 48%,#10a6a0 100%); box-shadow:0 18px 45px rgba(15,61,120,.20); }
+.hero h1 { margin:0; font-size:clamp(1.8rem,4vw,3rem); letter-spacing:-.045em; }
+.hero p { margin:.45rem 0 0; opacity:.86; font-size:1rem; }
+.eyebrow { font-size:.72rem; letter-spacing:.13em; text-transform:uppercase; font-weight:700; opacity:.76; }
+.health-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.75rem 0 1.15rem; }
+.pill { display:inline-flex; align-items:center; gap:.38rem; padding:.42rem .72rem; border-radius:999px;
+  font-size:.78rem; font-weight:700; border:1px solid var(--line); background:rgba(255,255,255,.72); }
+.dot { width:.48rem; height:.48rem; border-radius:99px; display:inline-block; }
+.online .dot { background:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,.12); }
+.delayed .dot { background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.12); }
+.offline .dot { background:#ef4444; box-shadow:0 0 0 4px rgba(239,68,68,.12); }
+.forecast-grid { display:grid; grid-template-columns:repeat(7,minmax(145px,1fr)); gap:.7rem; margin:.3rem 0 1.2rem; }
+.day-card { border:1px solid var(--line); border-radius:17px; padding:.92rem; background:linear-gradient(155deg,rgba(255,255,255,.96),rgba(241,245,249,.82));
+  box-shadow:0 7px 22px rgba(15,23,42,.055); min-height:174px; }
+.day-name { color:#0f3d78; font-size:.76rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; }
+.day-icon { font-size:1.75rem; margin:.32rem 0; }.day-temp { font-size:1.18rem; font-weight:700; color:var(--ink); }
+.day-desc { color:var(--muted); font-size:.76rem; min-height:2.1rem; line-height:1.3; }
+.day-meta { margin-top:.55rem; color:#475569; font-size:.72rem; line-height:1.55; }
+.section-kicker { color:#0b76b7; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.11em; margin-top:.25rem; }
+.empty { border:1px dashed #94a3b8; background:#f8fafc; padding:1rem 1.1rem; border-radius:15px; color:#475569; }
+[data-testid="stMetric"] { border:1px solid var(--line); border-radius:17px; padding:.8rem 1rem; background:rgba(255,255,255,.72); }
+[data-testid="stMetricLabel"] { color:#64748b; } [data-testid="stMetricValue"] { color:#10243d; }
+div[data-baseweb="tab-list"] { gap:.25rem; } button[data-baseweb="tab"] { border-radius:11px; padding:.45rem .8rem; }
+@media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
+@media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:160px}}
 </style>
-""", unsafe_allow_html=True)
-_keep_scroll()
-
-def autorefresh(minutes: int):
-    ms = int(minutes * 60 * 1000)
-    st.components.v1.html(f"<script>setTimeout(()=>window.parent.location.reload(), {ms});</script>", height=0)
-
-# -------------------- Data helpers --------------------
-CANON_MAP = {
-    "temp_c": "Temp_C",
-    "humidity": "Humidity",
-    "hum": "Humidity",
-    "pressure_hpa": "Pressure_hPa",
-    "press_hpa": "Pressure_hPa",
-    "wind_kmh": "Wind_kmh",
-    "windgust_kmh": "WindGust_kmh",
-    "wind_gust_kmh": "WindGust_kmh",
-    "winddir": "WindDir",
-    "wind_dir": "WindDir",
-    "rain_mm": "Rain_mm",
-    "ts_utc": "Time",
-    "timestamp": "Time",
-    "datetime": "Time",
-    "date_time": "Time",
-    "time": "Time",
-    "timestamp_utc": "Time",
-}
-NUMERIC_COLS = ["Temp_C","Humidity","Pressure_hPa","Wind_kmh","WindGust_kmh","WindDir","Rain_mm"]
-
-def _fix_num_str(x):
-    """Normalizza stringhe numeriche in vari formati locali."""
-    if isinstance(x, (int, float)) or x is None:
-        return x
-    s = str(x).strip()
-    if not s:
-        return None
-    s = s.replace(" ", "")
-    if "." in s and "," in s and s.rfind(",") > s.rfind("."):
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        if "," in s and "." not in s:
-            s = s.replace(",", ".")
-        if s.count(",") > 1 and "." in s:
-            s = s.replace(",", "")
-        if s.count(".") > 1 and "," not in s:
-            s = s.replace(".", "")
-    return s
-
-def canonicalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = df.copy()
-    lower_map = {c: c.lower() for c in df.columns}
-    rename = {}
-    for orig, low in lower_map.items():
-        if low in CANON_MAP:
-            rename[orig] = CANON_MAP[low]
-    if rename:
-        df.rename(columns=rename, inplace=True)
-    if "Time" not in df.columns:
-        for c in df.columns:
-            if "time" in str(c).lower():
-                df.rename(columns={c: "Time"}, inplace=True)
-                break
-    return df
-
-def ensure_time_and_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = df.copy()
-    if "Time" not in df.columns:
-        return pd.DataFrame()
-    df["Time"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
-    df = df.dropna(subset=["Time"])
-    if df.empty:
-        return pd.DataFrame()
-    for c in NUMERIC_COLS:
-        if c in df.columns:
-            if df[c].dtype == object:
-                df[c] = df[c].map(_fix_num_str)
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
-
-def normalize_units(df: pd.DataFrame) -> pd.DataFrame:
-    """Porta Pressione in hPa (~800–1100) e Temperatura in °C in modo deterministico."""
-    if df is None or df.empty:
-        return df
-    df = df.copy()
-
-    # ---- PRESSIONE → hPa
-    if "Pressure_hPa" in df.columns:
-        p = pd.to_numeric(df["Pressure_hPa"], errors="coerce")
-
-        if p.notna().any():
-            med = float(p.median())
-
-            # mapping deterministico per i casi comuni
-            if   800.0 <= med <= 1100.0:
-                pass                             # già in hPa
-            elif 8000.0 <= med <= 11000.0:
-                p = p / 10.0                     # hPa*10 → hPa
-            elif 80000.0 <= med <= 110000.0:
-                p = p / 100.0                    # Pa → hPa
-            elif 50.0 <= med <= 200.0:
-                p = p * 10.0                     # kPa → hPa
-            elif 20.0 <= med <= 40.0:
-                p = p * 33.8638866667            # inHg → hPa
-            else:
-                # fallback: scala per potenze di 10 verso il range 800–1100
-                # (max 3 iterazioni per sicurezza)
-                for _ in range(3):
-                    med = float(pd.to_numeric(p, errors="coerce").dropna().median())
-                    if 800.0 <= med <= 1100.0:
-                        break
-                    if med > 1100.0:
-                        p = p / 10.0
-                    elif med < 800.0:
-                        p = p * 10.0
-
-        df["Pressure_hPa"] = p
-
-    # ---- TEMPERATURA → °C
-    if "Temp_C" in df.columns:
-        t = pd.to_numeric(df["Temp_C"], errors="coerce")
-        if t.notna().any():
-            medt = float(t.median())
-            if medt > 200.0:         # Kelvin → °C
-                t = t - 273.15
-            elif medt > 60.0:        # °F → °C
-                t = (t - 32.0) * 5.0/9.0
-        df["Temp_C"] = t
-
-    return df
+""",
+    unsafe_allow_html=True,
+)
 
 
-def read_table(table):
+@st.cache_data(ttl=180, show_spinner=False)
+def station_data(hours: int) -> pd.DataFrame:
+    return load_station(hours)
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def forecast_data() -> pd.DataFrame:
+    return load_forecast()
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def health_data() -> dict[str, Any]:
+    return health_snapshot(Settings.from_env())
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def score_data() -> pd.DataFrame:
+    return load_provider_scores()
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def log_data() -> pd.DataFrame:
+    return load_recent_logs()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def rainviewer_frames() -> list[dict[str, Any]]:
     try:
-        with get_engine().connect() as cx:
-            raw = pd.read_sql(f"SELECT * FROM {table}", cx)
-    except Exception:
-        return pd.DataFrame()
-    raw = canonicalize_columns(raw)
-    raw = ensure_time_and_numeric(raw)
-    raw = normalize_units(raw)
-    return raw
+        response = requests.get(
+            "https://api.rainviewer.com/public/weather-maps.json",
+            timeout=(5, 15),
+            headers={"User-Agent": "weather-app-v3/1.0"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        radar = payload.get("radar") or {}
+        frames = (radar.get("past") or []) + (radar.get("nowcast") or [])
+        return [item for item in frames if isinstance(item, dict) and item.get("time")]
+    except (requests.RequestException, ValueError, AttributeError):
+        return []
 
-# -------------------- Station loaders --------------------
-@st.cache_data(ttl=300)
-def load_station():
-    """Sceglie la tabella più recente tra station_3h e station_raw e normalizza vento/raffiche."""
-    df3h = read_table("station_3h")
-    dfr  = read_table("station_raw")
 
-    # Se station_raw ha wind_ms (m/s), deriviamo Wind_kmh
-    if not dfr.empty and "wind_ms" in dfr.columns:
-        ms = pd.to_numeric(dfr["wind_ms"], errors="coerce")
-        kmh = ms * 3.6
-        if "Wind_kmh" not in dfr.columns:
-            dfr["Wind_kmh"] = kmh
-        else:
-            dfr["Wind_kmh"] = pd.to_numeric(dfr["Wind_kmh"], errors="coerce").fillna(kmh)
-        if "WindGust_kmh" not in dfr.columns:
-            dfr["WindGust_kmh"] = dfr["Wind_kmh"]
+@st.fragment(run_every=300)
+def _refresh_controller(enabled: bool) -> None:
+    """Refresh the full app every five minutes without injecting browser script."""
+    if not enabled:
+        return
+    now = time.monotonic()
+    previous = st.session_state.get("last_full_refresh")
+    if previous is None:
+        st.session_state["last_full_refresh"] = now
+    elif now - previous >= 295:
+        st.session_state["last_full_refresh"] = now
+        st.cache_data.clear()
+        st.rerun()
 
-    # Scegli dataset più recente
-    if df3h.empty and dfr.empty:
-        chosen = pd.DataFrame()
-    elif df3h.empty:
-        chosen = dfr.sort_values("Time")
-    elif dfr.empty:
-        chosen = df3h.sort_values("Time")
-    else:
-        chosen = dfr if dfr["Time"].max() >= df3h["Time"].max() else df3h
-        chosen = chosen.sort_values("Time")
 
-    # Cast finali + normalizzazione unità
-    for c in ["Wind_kmh","WindGust_kmh","Rain_mm","Temp_C","Humidity","Pressure_hPa","WindDir"]:
-        if c in chosen.columns:
-            chosen[c] = pd.to_numeric(chosen[c], errors="coerce")
-    if "WindGust_kmh" in chosen.columns and "Wind_kmh" in chosen.columns:
-        chosen["WindGust_kmh"] = chosen["WindGust_kmh"].fillna(chosen["Wind_kmh"])
-    # chosen = normalize_units(chosen)
-
-    return chosen
-
-@st.cache_data(ttl=300)
-def load_forecast():
-    df = read_table("forecast_ow")
-    if df.empty: return df
-    if "Wind_mps" in df.columns and "Wind_kmh" not in df.columns:
-        df["Wind_kmh"] = pd.to_numeric(df["Wind_mps"], errors="coerce") * 3.6
-    df = normalize_units(df)
-    return df.sort_values("Time")
-
-def get_last_ingest():
-    try:
-        with get_engine().connect() as cx:
-            df = pd.read_sql("SELECT * FROM meta", cx)
-    except Exception:
-        return None
-    if df.empty:
-        return None
-    if "k" in df.columns and "v" in df.columns:
-        v = df.loc[df["k"]=="last_ingest","v"]
-        if v.empty: return None
-        return pd.to_datetime(v.iloc[0], utc=True, errors="coerce")
-    df = canonicalize_columns(df)
-    df = ensure_time_and_numeric(df)
-    if df.empty: return None
-    return df["Time"].max()
-
-def run_ingest(script_name: str):
-    """Esegue lo script di ingest in modo sicuro (senza shell=True)."""
-    venv_py = Path(".venv") / "Scripts" / "python.exe"
-    py = str(venv_py) if venv_py.exists() else sys.executable
-    cmd = [py, script_name]
-    try:
-        res = subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=600)
-        ok = (res.returncode == 0)
-        out = (res.stdout or "") + ("\n" + (res.stderr or ""))
-        return ok, out
-    except Exception as e:
-        return False, str(e)
-
-# -------------------- Health & Force Update --------------------
-def _humanize_delta(minutes:int) -> str:
-    try:
-        m = int(minutes)
-        if m < 60: return f"{m} min"
-        h = m // 60; r = m % 60
-        return f"{h}h {r}m" if r else f"{h}h"
-    except Exception:
-        return "—"
-
-def health_widget():
-    st.markdown(
-        """
-        <style>
-        .pill { display:inline-block; padding:6px 10px; border-radius:999px; font-weight:600; font-size:0.9rem; }
-        .ok { background:#16a34a; color:white; }
-        .warn { background:#f59e0b; color:black; }
-        .crit { background:#ef4444; color:white; }
-        .muted { color:#6b7280; font-size:0.9rem; }
-        </style>
-        """, unsafe_allow_html=True
+def _local_time(value: Any, pattern: str = "%d/%m %H:%M") -> str:
+    timestamp = pd.to_datetime(value, utc=True, errors="coerce")
+    return (
+        "—"
+        if pd.isna(timestamp)
+        else timestamp.tz_convert(CFG.local_timezone).strftime(pattern)
     )
-    ts = get_last_ingest()
-    if ts is None or pd.isna(ts):
-        st.markdown('<span class="pill crit">HEALTH: sconosciuto</span> <span class="muted">Nessun last_ingest</span>', unsafe_allow_html=True)
-    else:
-        age = pd.Timestamp.utcnow() - ts.tz_convert("UTC")
-        age_min = int(age.total_seconds() // 60)
-        css, label = ("ok","OK") if age_min <= 40 else (("warn","RITARDO") if age_min <= 120 else ("crit","FUORI SERVIZIO"))
-        local = ts.tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
-        st.markdown(f'<span class="pill {css}">HEALTH: {label}</span> <span class="muted">ultimo ingest: {_humanize_delta(age_min)} fa • {local} {LOCAL_TZ}</span>', unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1,1,2])
-    with c1:
-        if st.button("⚡ Forza aggiornamento (locale)"):
-            with st.spinner("Eseguo ingest locale…"):
-                ok, out = run_ingest("weather_ingest.py")
-            st.expander("Log ingest locale", expanded=True).code(out or "(nessun output)")
-            if ok:
-                load_station.clear(); load_forecast.clear()
-                st.success("Ingest locale completato e cache svuotata.")
-                st.rerun()
-            else:
-                st.error("Ingest locale fallito. Vedi log.")
-    with c2:
-        if st.button("🌐 Forza ingest (Ecowitt Cloud)"):
-            with st.spinner("Eseguo ingest Ecowitt Cloud…"):
-                ok, out = run_ingest("weather_ingest_ecowitt_cloud.py")
-            st.expander("Log ingest cloud", expanded=True).code(out or "(nessun output)")
-            if ok:
-                load_station.clear(); load_forecast.clear()
-                st.success("Ingest cloud completato e cache svuotata.")
-                st.rerun()
-            else:
-                st.error("Ingest cloud fallito. Vedi log.")
-    with c3:
-        st.caption("Verde ≤ 40 min; Giallo 40–120; Rosso > 120 o assente.")
 
-# -------------------- Radar & Nuvole --------------------
-RADAR_PALETTES = {"Classic":0, "Dark":3, "Blue":5, "Tropical":9, "Original":1}
+def _age_text(minutes: Any) -> str:
+    if minutes is None or not np.isfinite(minutes):
+        return "mai"
+    minutes = max(0, int(minutes))
+    if minutes < 60:
+        return f"{minutes} min fa"
+    hours, remainder = divmod(minutes, 60)
+    return f"{hours} h {remainder:02d} min fa"
 
-@st.cache_data(ttl=120)
-def rv_frames():
-    j = requests.get("https://api.rainviewer.com/public/weather-maps.json", timeout=10).json()
-    radar = j.get("radar") or {}
-    past = radar.get("past") or []
-    nowcast = radar.get("nowcast") or radar.get("future") or []
-    frames = past + nowcast
-    if not frames: return [], -1
-    out = []
-    for f in frames:
-        ts = int(f.get("time"))
-        local = pd.to_datetime(ts, unit="s", utc=True).tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
-        out.append({"ts": ts, "label_local": local})
-    now_idx = len(past)-1 if past else len(out)-1
-    if now_idx < 0: now_idx = len(out)-1
-    return out, now_idx
 
-def rv_tile(ts, palette_idx=5, smooth=True, snow=True):
-    return f"https://tilecache.rainviewer.com/v2/radar/{ts}/256/{{z}}/{{x}}/{{y}}/2/1_1.png?color={palette_idx}&smooth={1 if smooth else 0}&snow={1 if snow else 0}"
+def _number(value: Any, digits: int = 1, suffix: str = "") -> str:
+    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    return "—" if pd.isna(number) else f"{number:.{digits}f}{suffix}"
 
-def ow_clouds_tile(api_key: str):
-    if not api_key: return None
-    return f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={api_key}"
 
-def gibs_truecolor_tile(dt_utc: pd.Timestamp):
-    d = dt_utc.tz_convert("UTC").strftime("%Y-%m-%d")
-    return f"https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{d}/GoogleMapsCompatible_Level{{z}}/{{y}}/{{x}}.jpg"
+def _numeric_series(
+    frame: pd.DataFrame, column: str, default: float = np.nan
+) -> pd.Series:
+    if column not in frame:
+        return pd.Series(default, index=frame.index, dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce")
 
-# -------------------- Sidebar --------------------
+
+def _weather_icon(description: Any) -> str:
+    value = str(description or "").lower()
+    if "tempor" in value:
+        return "⛈️"
+    if "neve" in value:
+        return "🌨️"
+    if "piogg" in value or "rovesc" in value or "piovigg" in value:
+        return "🌧️"
+    if "nebb" in value:
+        return "🌫️"
+    if "coperto" in value:
+        return "☁️"
+    if "nuvol" in value:
+        return "⛅"
+    return "☀️"
+
+
+def _delta(
+    row: pd.Series, previous: pd.Series | None, column: str, digits: int = 1
+) -> str | None:
+    if previous is None or column not in row or column not in previous:
+        return None
+    current_value = pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
+    previous_value = pd.to_numeric(
+        pd.Series([previous.get(column)]), errors="coerce"
+    ).iloc[0]
+    if pd.isna(current_value) or pd.isna(previous_value):
+        return None
+    return f"{current_value - previous_value:+.{digits}f} in 3 h"
+
+
+def _health_pill(label: str, status: str, detail: str) -> str:
+    return (
+        f'<span class="pill {status}"><span class="dot"></span>{html.escape(label)}: '
+        f'{html.escape(status.upper())}</span><span style="color:#64748b;font-size:.78rem">{html.escape(detail)}</span>'
+    )
+
+
+def render_daily_cards(daily: pd.DataFrame) -> None:
+    if daily.empty:
+        st.info(
+            "La previsione giornaliera comparirà dopo il primo aggiornamento della pipeline V3."
+        )
+        return
+    names = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
+    cards = []
+    for _, row in daily.head(7).iterrows():
+        day = pd.Timestamp(row["date"])
+        description = str(row.get("description") or "Variabile")
+        cards.append(
+            '<div class="day-card">'
+            f'<div class="day-name">{names[day.weekday()]} {day.day}</div>'
+            f'<div class="day-icon">{_weather_icon(description)}</div>'
+            f'<div class="day-temp">{_number(row.get("temp_min"), 0, "°")} / {_number(row.get("temp_max"), 0, "°")}</div>'
+            f'<div class="day-desc">{html.escape(description)}</div>'
+            f'<div class="day-meta">💧 {_number(row.get("rain_mm"), 1, " mm")} · rischio {_number(row.get("pop_max"), 0, "%")}'
+            f"<br>💨 raffiche {_number(row.get('wind_max'), 0, ' km/h')}<br>◎ fiducia {_number(row.get('confidence'), 0, '%')}</div>"
+            "</div>"
+        )
+    st.markdown(
+        '<div class="forecast-grid">' + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def combined_chart(
+    station: pd.DataFrame, forecast: pd.DataFrame, hours: int, theme: str
+) -> go.Figure:
+    now = pd.Timestamp.now(tz="UTC")
+    observations = (
+        station[station["time"] >= now - pd.Timedelta(hours=hours)].copy()
+        if not station.empty
+        else station
+    )
+    future = (
+        forecast[
+            (forecast["valid_time"] >= now - pd.Timedelta(hours=1))
+            & (forecast["valid_time"] <= now + pd.Timedelta(hours=72))
+        ].copy()
+        if not forecast.empty
+        else forecast
+    )
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.68, 0.32],
+        vertical_spacing=0.08,
+        specs=[[{}], [{"secondary_y": True}]],
+    )
+    if not observations.empty and "temp_c" in observations:
+        figure.add_trace(
+            go.Scatter(
+                x=observations["time"],
+                y=observations["temp_c"],
+                name="Stazione",
+                mode="lines",
+                line={"color": "#0b76b7", "width": 3},
+                hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.1f} °C<extra>Stazione</extra>",
+            ),
+            row=1,
+            col=1,
+        )
+    if not future.empty and "temp_c" in future:
+        uncertainty = pd.to_numeric(
+            future.get("temp_uncertainty_c"), errors="coerce"
+        ).fillna(1.2)
+        upper = future["temp_c"] + uncertainty
+        lower = future["temp_c"] - uncertainty
+        figure.add_trace(
+            go.Scatter(
+                x=future["valid_time"],
+                y=upper,
+                mode="lines",
+                line={"width": 0},
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=future["valid_time"],
+                y=lower,
+                mode="lines",
+                line={"width": 0},
+                fill="tonexty",
+                fillcolor="rgba(37,99,235,.12)",
+                name="Incertezza",
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=future["valid_time"],
+                y=future["temp_c"],
+                name="Previsione corretta",
+                mode="lines",
+                line={"color": "#2563eb", "width": 3, "dash": "dash"},
+                customdata=np.stack(
+                    [future.get("confidence", pd.Series(np.nan, index=future.index))],
+                    axis=-1,
+                ),
+                hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.1f} °C<br>Fiducia %{customdata[0]:.0f}%<extra>Previsione</extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        if "rain_mm" in future:
+            figure.add_trace(
+                go.Bar(
+                    x=future["valid_time"],
+                    y=future["rain_mm"],
+                    name="Pioggia",
+                    marker_color="#38bdf8",
+                    opacity=0.72,
+                ),
+                row=2,
+                col=1,
+                secondary_y=False,
+            )
+        if "precip_probability" in future:
+            figure.add_trace(
+                go.Scatter(
+                    x=future["valid_time"],
+                    y=future["precip_probability"],
+                    name="Prob. pioggia",
+                    line={"color": "#7c3aed", "width": 2},
+                ),
+                row=2,
+                col=1,
+                secondary_y=True,
+            )
+    figure.add_vline(
+        x=now.timestamp() * 1000, line_dash="dot", line_color="#f97316", opacity=0.9
+    )
+    figure.update_yaxes(title_text="Temperatura °C", row=1, col=1)
+    figure.update_yaxes(
+        title_text="Pioggia mm/h", rangemode="tozero", row=2, col=1, secondary_y=False
+    )
+    figure.update_yaxes(
+        title_text="Probabilità %", range=[0, 105], row=2, col=1, secondary_y=True
+    )
+    figure.update_layout(
+        height=570,
+        margin={"l": 15, "r": 15, "t": 30, "b": 10},
+        hovermode="x unified",
+        legend={"orientation": "h", "y": 1.08, "x": 0},
+        template=theme,
+        bargap=0.1,
+    )
+    return figure
+
+
+def forecast_alerts(forecast: pd.DataFrame) -> None:
+    if forecast.empty:
+        return
+    now = pd.Timestamp.now(tz="UTC")
+    next_24 = forecast[
+        (forecast["valid_time"] >= now)
+        & (forecast["valid_time"] <= now + pd.Timedelta(hours=24))
+    ]
+    if next_24.empty:
+        return
+    messages = []
+    rain = _numeric_series(next_24, "rain_mm", 0).sum()
+    pop = _numeric_series(next_24, "precip_probability", 0).max()
+    gust = _numeric_series(next_24, "wind_gust_kmh", 0).max()
+    confidence = _numeric_series(next_24, "confidence").mean()
+    if rain >= 15 or pop >= 80:
+        messages.append(f"pioggia probabile ({rain:.1f} mm, rischio max {pop:.0f}%)")
+    if gust >= 50:
+        messages.append(f"raffiche fino a {gust:.0f} km/h")
+    if pd.notna(confidence) and confidence < 50:
+        messages.append("modelli poco concordi: previsione più incerta del normale")
+    if messages:
+        st.warning("Nelle prossime 24 ore: " + "; ".join(messages) + ".")
+
+
 with st.sidebar:
-    st.title("Impostazioni")
-    st.markdown("#### Visuale")
-    theme = st.radio("Tema grafici", ["Chiaro","Scuro"], horizontal=True,
-                     index=0 if pref("theme","Chiaro")=="Chiaro" else 1, key="ui_theme")
-    template = "plotly_white" if theme=="Chiaro" else "plotly_dark"
-    hours = st.slider("Ore osservazioni", 6, 240, int(pref("hours",72)), step=6, key="hours")
-    auto_ref = st.checkbox("Auto refresh ogni 5 minuti", value=bool(pref("auto_refresh", True)), key="auto_refresh")
+    st.header("Vista")
+    observation_hours = st.select_slider(
+        "Storico nel grafico",
+        options=[12, 24, 48, 72, 120],
+        value=24,
+        format_func=lambda value: f"{value} ore",
+    )
+    dark_mode = st.toggle("Grafici scuri", value=False)
+    auto_refresh = st.toggle("Aggiorna la pagina ogni 5 min", value=True)
+    st.divider()
+    st.caption(
+        "I dati vengono aggiornati dal workflow GitHub. Il pulsante ricarica solo la pagina e non espone chiavi API."
+    )
+    if st.button("Ricarica dati", width="stretch"):
+        st.cache_data.clear()
+        st.rerun()
 
-    st.markdown("#### Grafici")
-    charts_default = ["Temperatura","Umidità","Pressione","Vento","Pioggia"]
-    charts = st.multiselect("Mostra", charts_default, default=pref("charts",charts_default), key="charts")
+_refresh_controller(auto_refresh)
 
-    st.markdown("#### Radar & Nuvole")
-    renderer = st.radio("Renderer", ["WebGL (veloce)","Compatibilità (massima)"],
-                        index=0 if pref("renderer","WebGL (veloce)")=="WebGL (veloce)" else 1, key="renderer")
-    basemap = st.selectbox("Basemap (compatibilità)", ["Carto Positron","OpenStreetMap"],
-                           index=0 if pref("basemap","Carto Positron")=="Carto Positron" else 1, key="basemap")
-    show_radar = st.checkbox("Mostra radar pioggia", value=bool(pref("show_radar",True)), key="show_radar")
-    show_clouds = st.checkbox("Mostra nuvole", value=bool(pref("show_clouds",bool(OW_API_KEY))), key="show_clouds")
-    radar_palette = st.selectbox("Palette radar", list(RADAR_PALETTES.keys()),
-                                 index=list(RADAR_PALETTES.keys()).index(pref("radar_palette","Blue")), key="radar_palette")
-    radar_smooth = st.checkbox("Radar smoothing", value=bool(pref("radar_smooth",True)), key="radar_smooth")
-    radar_snow = st.checkbox("Mostra neve", value=bool(pref("radar_snow",True)), key="radar_snow")
-    clouds_provider = st.selectbox("Provider nuvole", ["OpenWeather (corrente)","NASA GIBS (TrueColor)"],
-                                   index=0 if pref("clouds_provider","OpenWeather (corrente)")=="OpenWeather (corrente)" else 1, key="clouds_provider")
-    radar_opacity = st.slider("Opacità radar", 0.0, 1.0, float(pref("radar_opacity",0.7)), 0.05, key="radar_opacity")
-    clouds_opacity = st.slider("Opacità nuvole", 0.0, 1.0, float(pref("clouds_opacity",0.55)), 0.05, key="clouds_opacity")
+station = station_data(max(observation_hours + 24, 240))
+forecast = forecast_data()
+health = health_data()
+theme = "plotly_dark" if dark_mode else "plotly_white"
 
-    st.markdown("#### Playback")
-    speed_ms = st.slider("Velocità (ms/frame)", 150, 1200, int(pref("speed_ms",400)), 50, key="speed_ms")
-    play = st.toggle("▶️ Play", value=bool(pref("play",False)), key="play_toggle")
-    if st.button("⏮️ Torna adesso"): st.session_state["rv_force_now"] = True
+st.markdown(
+    '<div class="hero">'
+    '<div class="eyebrow">Stazione locale · previsione multi‑modello</div>'
+    f"<h1>{html.escape(CFG.location_name)}</h1>"
+    f"<p>{CFG.latitude:.4f}, {CFG.longitude:.4f} · aggiornamento automatico · orari {html.escape(CFG.local_timezone)}</p>"
+    "</div>",
+    unsafe_allow_html=True,
+)
 
-    st.markdown("#### Mappa")
-    try:
-        lat_default = float(pref("lat", ENV_LAT or 41.9)); lon_default = float(pref("lon", ENV_LON or 12.5))
-    except Exception:
-        lat_default, lon_default = 41.9, 12.5
-    lat = st.number_input("Latitudine", value=lat_default, format="%.6f", key="lat")
-    lon = st.number_input("Longitudine", value=lon_default, format="%.6f", key="lon")
-    zoom = st.slider("Zoom iniziale", 3, 12, int(pref("zoom",7)), 1, key="zoom")
-    show_marker = st.checkbox("Mostra marker posizione", value=bool(pref("show_marker",True)), key="show_marker")
+station_detail = f"ultimo dato {_age_text(health.get('station_age_minutes'))}"
+forecast_detail = f"emissione {_age_text(health.get('forecast_age_minutes'))}"
+st.markdown(
+    '<div class="health-row">'
+    + _health_pill("Stazione", health["station_status"], station_detail)
+    + _health_pill("Previsioni", health["forecast_status"], forecast_detail)
+    + f'<span style="color:#64748b;font-size:.78rem">Dati stazione: {_local_time(health.get("station_time"))} · copertura prevista fino al {_local_time(health.get("forecast_until"), "%d/%m %H:%M")}</span>'
+    + "</div>",
+    unsafe_allow_html=True,
+)
 
-    # 🔎 Ricerca città (Nominatim)
-    st.markdown("#### Ricerca città")
-    q = st.text_input("Cerca città/indirizzo", value=pref("city_query",""), key="city_query")
-    if st.button("🔎 Cerca città"):
-        if q.strip():
-            try:
-                headers = {"User-Agent": "meteo-dashboard/1.0 (streamlit)"}
-                r = requests.get("https://nominatim.openstreetmap.org/search",
-                                 params={"q": q, "format": "json", "limit": 1},
-                                 headers=headers, timeout=12)
-                r.raise_for_status()
-                arr = r.json()
-                if arr:
-                    lat_found = float(arr[0]["lat"]); lon_found = float(arr[0]["lon"])
-                    st.session_state["lat"] = lat_found
-                    st.session_state["lon"] = lon_found
-                    st.success(f"Trovato: {arr[0].get('display_name','')} → lat={lat_found:.5f}, lon={lon_found:.5f}")
-                else:
-                    st.warning("Nessun risultato.")
-            except Exception as e:
-                st.error(f"Errore ricerca città: {e}")
-        else:
-            st.info("Inserisci un nome città prima di cercare.")
+if not station.empty:
+    current = station.iloc[-1]
+    target = current["time"] - pd.Timedelta(hours=3)
+    older = station[station["time"] <= target]
+    previous = older.iloc[-1] if not older.empty else None
+    rain_24 = (
+        station[station["time"] >= current["time"] - pd.Timedelta(hours=24)]
+        .get("rain_mm", pd.Series(dtype=float))
+        .sum()
+    )
+    cols = st.columns(6)
+    cols[0].metric(
+        "Temperatura",
+        _number(current.get("temp_c"), 1, " °C"),
+        _delta(current, previous, "temp_c"),
+    )
+    cols[1].metric(
+        "Umidità",
+        _number(current.get("humidity"), 0, " %"),
+        _delta(current, previous, "humidity", 0),
+    )
+    cols[2].metric(
+        "Pressione",
+        _number(current.get("pressure_hpa"), 1, " hPa"),
+        _delta(current, previous, "pressure_hpa"),
+    )
+    cols[3].metric(
+        "Vento",
+        _number(current.get("wind_kmh"), 1, " km/h"),
+        f"raffica {_number(current.get('windgust_kmh'), 1, ' km/h')}",
+    )
+    cols[4].metric(
+        "Pioggia 24 h",
+        _number(rain_24, 1, " mm"),
+        f"ora {_number(current.get('rain_rate_mm_h'), 1, ' mm/h')}",
+    )
+    cols[5].metric(
+        "Solare / UV",
+        _number(current.get("solar_w_m2"), 0, " W/m²"),
+        f"UV {_number(current.get('uv_index'), 1)}",
+    )
+else:
+    st.markdown(
+        '<div class="empty"><b>Stazione non ancora popolata.</b> La dashboard può già mostrare le previsioni; '
+        "esegui la pipeline dopo aver configurato le tre credenziali Ecowitt.</div>",
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("#### Azioni")
-    colA, colB = st.columns(2)
-    if colA.button("💾 Salva impostazioni"):
-        save_prefs({
-            "theme": theme, "hours": hours, "charts": charts,
-            "renderer": renderer, "basemap": basemap,
-            "show_radar": show_radar, "show_clouds": show_clouds,
-            "radar_palette": radar_palette, "radar_smooth": radar_smooth, "radar_snow": radar_snow,
-            "clouds_provider": clouds_provider,
-            "radar_opacity": radar_opacity, "clouds_opacity": clouds_opacity,
-            "speed_ms": speed_ms, "lat": st.session_state["lat"], "lon": st.session_state["lon"],
-            "zoom": zoom, "show_marker": show_marker,
-            "play": st.session_state.get("play_toggle", False),
-            "auto_refresh": st.session_state.get("auto_refresh", True),
-            "city_query": st.session_state.get("city_query",""),
-        })
-        st.success("Preferenze salvate.")
-    if colB.button("🔄 Aggiorna dati ora"):
-        ok, out = run_ingest("weather_ingest.py")
-        with st.expander("Log aggiornamento", expanded=True):
-            st.code(out or "(nessun output)")
-        if ok:
-            load_station.clear(); load_forecast.clear()
-            st.success("Aggiornato e cache svuotata.")
+forecast_alerts(forecast)
 
-# -------------------- Header --------------------
-with st.container():
-    st.markdown('<div class="header"><h2>🌦️ Meteo Dashboard</h2><p class="smallcaps">Stazione locale + OpenWeather</p></div>', unsafe_allow_html=True)
-    if st.session_state.get("auto_refresh", True):
-        autorefresh(5)
-    health_widget()
+tab_overview, tab_forecast, tab_station, tab_astro, tab_radar = st.tabs(
+    ["Panoramica", "7 giorni", "Stazione", "Astronomia", "Radar"]
+)
 
-# -------------------- Tabs --------------------
-tab1, tab2, tab3 = st.tabs(["📈 Osservazioni", "🛰️ Previsioni", "🗺️ Radar & Nuvole"])
-
-# -------- Osservazioni --------
-with tab1:
-    df_station = load_station()
-    if df_station.empty:
-        st.warning("Nessun dato stazione. (Attendi il prossimo ingest o aggiorna manualmente)")
+with tab_overview:
+    st.markdown(
+        '<div class="section-kicker">Passato e futuro, senza interruzioni</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Temperatura e precipitazioni")
+    if station.empty and forecast.empty:
+        st.info(
+            "Nessun dato disponibile. Avvia `python ingest_all.py --force-forecast` dopo la configurazione."
+        )
     else:
-        now_utc = pd.Timestamp.utcnow()
-        tmin = now_utc - pd.Timedelta(hours=st.session_state["hours"])
-        recent = df_station[df_station["Time"] >= tmin].copy()
-        if recent.empty:
-            recent = df_station.copy()
-            st.info("Nessun dato nelle ultime ore selezionate: mostro tutti i dati disponibili. Aumenta 'Ore osservazioni' nella sidebar per filtrare meglio.")
-        recent["TimeLocal"] = recent["Time"].dt.tz_convert(LOCAL_TZ)
-
-        # Warning se vento tutto zero
-        if "Wind_kmh" in recent.columns and len(recent) > 0:
-            if (recent["Wind_kmh"].fillna(0).abs() < 0.001).all():
-                st.warning("I valori del vento risultano tutti 0. Verifica la sorgente (riempi 'station_raw' via ingest cloud/backfill).")
-
-        # KPI
-        last_row = recent.tail(1)
-        if not last_row.empty:
-            row = last_row.iloc[0]
-            def _fmt(v, fmt, fallback="—"):
-                return (fmt.format(v) if pd.notna(v) else fallback)
-            c1,c2,c3,c4,c5 = st.columns(5)
-            c1.metric("🌡️ Temp", _fmt(row.get("Temp_C"), "{:.1f} °C"))
-            c2.metric("💧 UR", _fmt(row.get("Humidity"), "{:.0f} %"))
-            c3.metric("⏱️ Press", _fmt(row.get("Pressure_hPa"), "{:.1f} hPa"))
-            c4.metric("🍃 Vento", _fmt(row.get("Wind_kmh"), "{:.1f} km/h"))
-            rain_val = row.get("Rain_mm")
-            rain_disp = "{:.1f} mm".format(rain_val) if pd.notna(rain_val) else "0.0 mm"
-            c5.metric("🌧️ Pioggia 3h", rain_disp)
-
-        # 🔎 Diagnostica
-        with st.expander("🔎 Diagnostica dati (ultima finestra)", expanded=False):
-            def _rng(s):
-                if s not in recent.columns or recent[s].dropna().empty:
-                    return "—"
-                v = pd.to_numeric(recent[s], errors="coerce").dropna()
-                if v.empty: return "—"
-                return f"{v.min():.2f} → {v.max():.2f}"
-            def _nnz(s):
-                if s not in recent.columns: return 0
-                v = pd.to_numeric(recent[s], errors="coerce").fillna(0)
-                return int((v.abs() > 1e-6).sum())
+        st.plotly_chart(
+            combined_chart(station, forecast, observation_hours, theme),
+            width="stretch",
+        )
+    if not forecast.empty:
+        st.markdown('<div class="section-kicker">Sintesi</div>', unsafe_allow_html=True)
+        st.subheader("I prossimi 7 giorni")
+        render_daily_cards(daily_forecast(forecast, CFG.local_timezone))
+        with st.expander("Come leggere fiducia e fascia azzurra"):
             st.write(
-                f"- Temp_C: {_rng('Temp_C')}\n"
-                f"- Pressure_hPa: {_rng('Pressure_hPa')}\n"
-                f"- Wind_kmh: {_rng('Wind_kmh')}\n"
-                f"- WindGust_kmh: {_rng('WindGust_kmh')}"
+                "La linea tratteggiata combina i provider e corregge gradualmente l'errore misurato dalla tua stazione. "
+                "La fascia azzurra cresce quando i modelli divergono; la fiducia considera anche numero di provider e distanza temporale."
             )
 
-        # funzione smoothing
-        def smooth(df, cols):
-            if df.empty: return df
-            n = len(df); eff = max(3, min(15, max(3, n//3)))
-            out = df.copy()
-            for c in cols:
-                if c in out.columns:
-                    out[c] = out[c].rolling(eff, min_periods=1, center=True).mean()
-            return out
+with tab_forecast:
+    st.markdown(
+        '<div class="section-kicker">Previsione calibrata localmente</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Dettaglio orario")
+    render_daily_cards(daily_forecast(forecast, CFG.local_timezone))
+    if forecast.empty:
+        st.info("La pipeline non ha ancora prodotto la previsione combinata.")
+    else:
+        now = pd.Timestamp.now(tz="UTC")
+        hourly = forecast[
+            (forecast["valid_time"] >= now)
+            & (forecast["valid_time"] <= now + pd.Timedelta(hours=72))
+        ].copy()
+        hourly["Ora"] = (
+            hourly["valid_time"]
+            .dt.tz_convert(CFG.local_timezone)
+            .dt.strftime("%a %d · %H:%M")
+        )
+        table = pd.DataFrame(
+            {
+                "Ora": hourly["Ora"],
+                "Cielo": hourly.get("description"),
+                "Temp °C": _numeric_series(hourly, "temp_c").round(1),
+                "Percepita °C": _numeric_series(hourly, "feels_like_c").round(1),
+                "Pioggia mm": _numeric_series(hourly, "rain_mm").round(1),
+                "Prob. %": _numeric_series(hourly, "precip_probability").round(0),
+                "Vento km/h": _numeric_series(hourly, "wind_kmh").round(1),
+                "Nuvole %": _numeric_series(hourly, "clouds").round(0),
+                "Fiducia %": _numeric_series(hourly, "confidence").round(0),
+            }
+        )
+        st.dataframe(table, hide_index=True, width="stretch", height=500)
 
-        # Temperatura (range dinamico)
-        if "Temperatura" in st.session_state["charts"] and "Temp_C" in recent.columns:
-            d = smooth(recent, ["Temp_C"])
-            fig = px.line(d, x="TimeLocal", y="Temp_C",
-                          template=("plotly_dark" if st.session_state["ui_theme"]=="Scuro" else "plotly_white"),
-                          title="Temperatura (°C)", markers=True)
-            try:
-                y = pd.to_numeric(d["Temp_C"], errors="coerce").dropna()
-                if not y.empty:
-                    ymin, ymax = float(y.min()), float(y.max())
-                    pad = max(0.5, (ymax - ymin) * 0.1)
-                    fig.update_yaxes(range=[ymin - pad, ymax + pad])
-            except Exception:
-                pass
-            st.plotly_chart(fig, use_container_width=True)
-
-        if "Umidità" in st.session_state["charts"] and "Humidity" in recent.columns:
-            d = smooth(recent, ["Humidity"])
-            st.plotly_chart(px.line(d, x="TimeLocal", y="Humidity", template=template, title="Umidità (%)", markers=True), use_container_width=True)
-
-        if "Pressione" in st.session_state["charts"] and "Pressure_hPa" in recent.columns:
-            d = smooth(recent, ["Pressure_hPa"])
-            st.plotly_chart(px.line(d, x="TimeLocal", y="Pressure_hPa", template=template, title="Pressione (hPa)", markers=True), use_container_width=True)
-
-        if "Vento" in st.session_state["charts"]:
-            cols = [c for c in ["Wind_kmh","WindGust_kmh"] if c in recent.columns]
-            if cols:
-                d = smooth(recent, cols)
-                fig_w = px.line(d, x="TimeLocal", y=cols, template=template, title="Vento (km/h)", markers=True)
-                try:
-                    y = pd.concat([pd.to_numeric(d[c], errors="coerce") for c in cols], axis=0).dropna()
-                    if not y.empty:
-                        ymin, ymax = float(y.min()), float(y.max())
-                        if abs(ymax - ymin) < 0.5:
-                            fig_w.update_yaxes(range=[ymin - 0.5, ymax + 0.5])
-                except Exception:
-                    pass
-                st.plotly_chart(fig_w, use_container_width=True)
+        scores = score_data()
+        with st.expander("Accuratezza misurata sulla stazione"):
+            if scores.empty:
+                st.caption(
+                    "Il confronto automatico inizierà quando previsioni archiviate e osservazioni avranno orari sovrapposti."
+                )
             else:
-                st.info("Nessuna colonna vento trovata (cerco Wind_kmh / WindGust_kmh). Colonne presenti: " + ", ".join(list(recent.columns)))
+                display = scores.rename(
+                    columns={
+                        "provider": "Provider",
+                        "variable": "Variabile",
+                        "horizon": "Orizzonte",
+                        "n": "Campioni",
+                        "bias": "Bias",
+                        "mae": "MAE",
+                        "rmse": "RMSE",
+                        "brier": "Brier",
+                    }
+                )[
+                    [
+                        "Provider",
+                        "Variabile",
+                        "Orizzonte",
+                        "Campioni",
+                        "Bias",
+                        "MAE",
+                        "RMSE",
+                        "Brier",
+                    ]
+                ]
+                st.dataframe(display.round(2), hide_index=True, width="stretch")
 
-        if "Pioggia" in st.session_state["charts"] and "Rain_mm" in recent.columns:
-            d = recent.copy(); d["Rain_mm"] = pd.to_numeric(d["Rain_mm"], errors="coerce").fillna(0)
-            st.plotly_chart(px.bar(d, x="TimeLocal", y="Rain_mm", template=template, title="Pioggia aggregata (mm / 3h)"), use_container_width=True)
-
-# -------- Previsioni --------
-with tab2:
-    df_fc = load_forecast()
-    if df_fc.empty:
-        st.info("Nessun dato previsione disponibile.")
+with tab_station:
+    st.markdown(
+        '<div class="section-kicker">Misure reali</div>', unsafe_allow_html=True
+    )
+    st.subheader(f"Ultime {observation_hours} ore")
+    if station.empty:
+        st.info("Nessun dato della stazione disponibile.")
     else:
-        fc = df_fc.copy(); fc["TimeLocal"] = fc["Time"].dt.tz_convert(LOCAL_TZ)
-        if "Wind_kmh" not in fc.columns and "Wind_mps" in fc.columns:
-            fc["Wind_kmh"] = pd.to_numeric(fc["Wind_mps"], errors="coerce") * 3.6
-        if "Temp_C" in fc.columns:
-            st.plotly_chart(px.line(fc, x="TimeLocal", y="Temp_C", title="Temperatura prevista (°C)", template=template, markers=True), use_container_width=True)
-        if "Pressure_hPa" in fc.columns:
-            st.plotly_chart(px.line(fc, x="TimeLocal", y="Pressure_hPa", title="Pressione prevista (hPa)", template=template, markers=True), use_container_width=True)
-        if "Wind_kmh" in fc.columns:
-            st.plotly_chart(px.line(fc, x="TimeLocal", y="Wind_kmh", title="Vento previsto (km/h)", template=template, markers=True), use_container_width=True)
-        if "Clouds" in fc.columns:
-            st.plotly_chart(px.line(fc, x="TimeLocal", y="Clouds", title="Copertura nuvolosa (%)", template=template, markers=True), use_container_width=True)
-        if "Rain_mm" in fc.columns:
-            st.plotly_chart(px.bar(fc, x="TimeLocal", y="Rain_mm", title="Pioggia prevista (mm / 3h)", template=template), use_container_width=True)
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=observation_hours)
+        recent = station[station["time"] >= cutoff].copy()
+        figure = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07)
+        figure.add_trace(
+            go.Scatter(
+                x=recent["time"],
+                y=recent.get("temp_c"),
+                name="Temperatura",
+                line={"color": "#ef4444", "width": 2.5},
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=recent["time"],
+                y=recent.get("humidity"),
+                name="Umidità",
+                line={"color": "#0ea5e9", "width": 2},
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=recent["time"],
+                y=recent.get("pressure_hpa"),
+                name="Pressione",
+                line={"color": "#8b5cf6", "width": 2.5},
+            ),
+            row=2,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=recent["time"],
+                y=recent.get("wind_kmh"),
+                name="Vento",
+                line={"color": "#10b981", "width": 2},
+            ),
+            row=3,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=recent["time"],
+                y=recent.get("windgust_kmh"),
+                name="Raffiche",
+                line={"color": "#f59e0b", "width": 1.5},
+            ),
+            row=3,
+            col=1,
+        )
+        figure.update_yaxes(title_text="°C / %", row=1, col=1)
+        figure.update_yaxes(title_text="hPa", row=2, col=1)
+        figure.update_yaxes(title_text="km/h", row=3, col=1)
+        figure.update_layout(
+            height=700,
+            template=theme,
+            hovermode="x unified",
+            margin={"l": 10, "r": 10, "t": 20, "b": 10},
+            legend={"orientation": "h"},
+        )
+        st.plotly_chart(figure, width="stretch")
 
-# -------- Radar & Nuvole --------
-with tab3:
-    st.markdown("**Timeline locale**: ~2h passato + ~1h nowcast (RainViewer).")
-    frames, now_idx = rv_frames()
-    if not frames:
-        st.info("Radar non disponibile al momento.")
+        rain_figure = go.Figure(
+            go.Bar(
+                x=recent["time"],
+                y=recent.get("rain_mm"),
+                name="Incremento",
+                marker_color="#38bdf8",
+            )
+        )
+        if "rain_rate_mm_h" in recent:
+            rain_figure.add_trace(
+                go.Scatter(
+                    x=recent["time"],
+                    y=recent["rain_rate_mm_h"],
+                    name="Intensità",
+                    line={"color": "#2563eb"},
+                )
+            )
+        rain_figure.update_layout(
+            height=330,
+            title="Pioggia: quantità per campione e intensità",
+            template=theme,
+            hovermode="x unified",
+        )
+        st.plotly_chart(rain_figure, width="stretch")
+
+        quality = recent.get("data_quality", pd.Series(dtype="object")).value_counts(
+            dropna=False
+        )
+        with st.expander("Qualità dati e ultime esecuzioni"):
+            left, right = st.columns(2)
+            left.write("Campioni per qualità")
+            left.dataframe(
+                quality.rename_axis("Qualità").reset_index(name="Campioni"),
+                hide_index=True,
+                width="stretch",
+            )
+            logs = log_data()
+            if not logs.empty:
+                safe_logs = logs[
+                    [
+                        column
+                        for column in [
+                            "started_at",
+                            "component",
+                            "status",
+                            "rows_written",
+                        ]
+                        if column in logs
+                    ]
+                ].copy()
+                if "started_at" in safe_logs:
+                    safe_logs["started_at"] = (
+                        safe_logs["started_at"]
+                        .dt.tz_convert(CFG.local_timezone)
+                        .dt.strftime("%d/%m %H:%M")
+                    )
+                right.write("Pipeline recenti")
+                right.dataframe(safe_logs, hide_index=True, width="stretch")
+
+with tab_astro:
+    st.markdown(
+        '<div class="section-kicker">Finestre osservative</div>', unsafe_allow_html=True
+    )
+    st.subheader("Qualità del cielo notturno")
+    astro = prepare_astronomy(forecast, CFG)
+    if astro.empty:
+        st.info("Servono le previsioni V3 per calcolare le condizioni astronomiche.")
     else:
-        if "rv_idx" not in st.session_state: st.session_state["rv_idx"] = now_idx
-        if st.session_state.get("rv_force_now"): st.session_state["rv_idx"] = now_idx; st.session_state["rv_force_now"] = False
-
-        rv_idx = st.slider("Orario frame (locale)", 0, len(frames)-1, value=st.session_state["rv_idx"], key="rv_slider")
-        st.session_state["rv_idx"] = rv_idx
-        current = frames[rv_idx]
-        ts = current["ts"]
-        dt = pd.to_datetime(ts, unit="s", utc=True)
-
-        if st.session_state.get("play_toggle", False) and len(frames) > 1:
-            last_tick = st.session_state.get("rv_last_tick", 0.0); now = time.time()
-            if now - last_tick >= (st.session_state["speed_ms"]/1000.0):
-                st.session_state["rv_last_tick"] = now
-                st.session_state["rv_idx"] = (st.session_state["rv_idx"] + 1) % len(frames)
-                st.rerun()
-
-        palette_idx = RADAR_PALETTES.get(st.session_state["radar_palette"], 5)
-        radar_url = rv_tile(ts, palette_idx, st.session_state["radar_smooth"], st.session_state["radar_snow"])
-
-        clouds_url = None
-        if st.session_state["show_clouds"]:
-            clouds_url = ow_clouds_tile(OW_API_KEY) if st.session_state["clouds_provider"].startswith("OpenWeather") else gibs_truecolor_tile(dt)
-
-        lat = float(st.session_state["lat"]); lon = float(st.session_state["lon"]); zoom = int(st.session_state["zoom"])
-
-        if st.session_state["renderer"].startswith("WebGL"):
-            layers = []
-            if st.session_state["show_radar"]:
-                layers.append(pdk.Layer("TileLayer", data=radar_url, min_zoom=0, max_zoom=18, tile_size=256, opacity=st.session_state["radar_opacity"]))
-            if clouds_url:
-                layers.append(pdk.Layer("TileLayer", data=clouds_url, min_zoom=0, max_zoom=18, tile_size=256, opacity=st.session_state["clouds_opacity"]))
-            if st.session_state["show_marker"]:
-                layers.append(pdk.Layer("ScatterplotLayer", data=[{"lat":lat,"lon":lon}], get_position="[lon, lat]", get_radius=10000, pickable=False))
-            deck = pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=zoom), map_style=None, tooltip={"text": f"Radar: {current['label_local']}"})
-            st.pydeck_chart(deck, use_container_width=True)
+        windows = best_observing_windows(astro)
+        if windows.empty:
+            st.warning(
+                "Nessuna finestra di almeno 2 ore con punteggio ≥ 65 nei prossimi giorni."
+            )
         else:
-            if not HAS_FOLIUM:
-                st.error("Renderer di compatibilità non disponibile: installa 'folium' e 'streamlit-folium'.")
-            else:
-                base = "CartoDB positron" if st.session_state["basemap"]=="Carto Positron" else "OpenStreetMap"
-                m = folium.Map(location=[lat, lon], zoom_start=zoom, tiles=base, control_scale=True)
-                if st.session_state["show_radar"]:
-                    folium.raster_layers.TileLayer(tiles=radar_url, name=f"Radar {current['label_local']}", attr="RainViewer", overlay=True, control=True, opacity=st.session_state["radar_opacity"]).add_to(m)
-                if clouds_url:
-                    src = "OpenWeatherMap" if "openweathermap" in (clouds_url or "") else "NASA GIBS"
-                    folium.raster_layers.TileLayer(tiles=clouds_url, name=f"Nuvole ({src})", attr=src, overlay=True, control=True, opacity=st.session_state["clouds_opacity"]).add_to(m)
-                if st.session_state["show_marker"]:
-                    folium.CircleMarker(location=[lat,lon], radius=6, color="#0ea5e9", fill=True).add_to(m)
-                folium.LayerControl(collapsed=False).add_to(m)
-                st_folium(m, height=660, use_container_width=True, key="compat_map")
+            cols = st.columns(min(3, len(windows)))
+            for position, (_, window) in enumerate(windows.head(3).iterrows()):
+                cols[position].metric(
+                    f"{window['start']:%a %d · %H:%M}–{window['end']:%H:%M}",
+                    f"{window['score']:.0f}/100",
+                    f"{int(window['hours'])} h · nuvole {window['clouds']:.0f}%",
+                )
+        night = astro[astro["is_night"]].copy()
+        figure = make_subplots(specs=[[{"secondary_y": True}]])
+        figure.add_trace(
+            go.Scatter(
+                x=night["local_time"],
+                y=night["astro_score"],
+                name="Qualità cielo",
+                fill="tozeroy",
+                line={"color": "#8b5cf6", "width": 3},
+            ),
+            secondary_y=False,
+        )
+        for column, name, color in (
+            ("cloud_low", "Nuvole basse", "#0ea5e9"),
+            ("cloud_mid", "Nuvole medie", "#64748b"),
+            ("cloud_high", "Nuvole alte", "#f59e0b"),
+        ):
+            if column in night:
+                figure.add_trace(
+                    go.Scatter(
+                        x=night["local_time"],
+                        y=night[column],
+                        name=name,
+                        line={"color": color, "width": 1.5, "dash": "dot"},
+                    ),
+                    secondary_y=True,
+                )
+        figure.update_yaxes(
+            title_text="Punteggio /100", range=[0, 105], secondary_y=False
+        )
+        figure.update_yaxes(title_text="Nuvole %", range=[0, 105], secondary_y=True)
+        figure.update_layout(
+            height=450,
+            template=theme,
+            hovermode="x unified",
+            legend={"orientation": "h"},
+            margin={"l": 10, "r": 10, "t": 20, "b": 10},
+        )
+        st.plotly_chart(figure, width="stretch")
+        st.caption(
+            "Il punteggio penalizza nuvole basse/medie/alte, rischio pioggia, vento, visibilità e temperatura vicina al punto di rugiada."
+        )
 
-        st.caption(f"Frame: {current['label_local']} • {rv_idx+1}/{len(frames)}  | Radar: {'ON' if st.session_state['show_radar'] else 'OFF'}  • Nuvole: {'ON' if st.session_state['show_clouds'] else 'OFF'} ({st.session_state['clouds_provider']})")
+        events = astronomy_events(CFG)
+        if not events.empty:
+            table = pd.DataFrame(
+                {
+                    "Data": pd.to_datetime(events["date"]).dt.strftime("%a %d/%m"),
+                    "Tramonto": events["sunset"].map(
+                        lambda value: value.strftime("%H:%M")
+                    ),
+                    "Fine crepuscolo": events["dusk"].map(
+                        lambda value: value.strftime("%H:%M")
+                    ),
+                    "Inizio alba": events["dawn"].map(
+                        lambda value: value.strftime("%H:%M")
+                    ),
+                    "Luna sorge": events["moonrise"].map(
+                        lambda value: "—" if pd.isna(value) else value.strftime("%H:%M")
+                    ),
+                    "Luna tramonta": events["moonset"].map(
+                        lambda value: "—" if pd.isna(value) else value.strftime("%H:%M")
+                    ),
+                    "Luna illuminata": events["moon_illumination"].map(
+                        lambda value: f"{value:.0f}%"
+                    ),
+                }
+            )
+            st.dataframe(table, hide_index=True, width="stretch")
 
-# -------------------- Footer --------------------
-st.caption("© Meteo Dashboard • Radar RainViewer • Nuvole OWM/NASA • Cache 5 minuti")
+with tab_radar:
+    st.markdown(
+        '<div class="section-kicker">Precipitazioni osservate e nowcast</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Radar RainViewer")
+    frames = rainviewer_frames()
+    if not frames:
+        st.info("Radar temporaneamente non disponibile.")
+    else:
+        labels = [
+            pd.to_datetime(item["time"], unit="s", utc=True)
+            .tz_convert(CFG.local_timezone)
+            .strftime("%d/%m %H:%M")
+            for item in frames
+        ]
+        selected = st.select_slider(
+            "Fotogramma",
+            options=list(range(len(frames))),
+            value=max(0, len(frames) - 1),
+            format_func=lambda index: labels[index],
+        )
+        frame = frames[selected]
+        path = str(frame.get("path") or f"/v2/radar/{frame['time']}")
+        radar_url = (
+            f"https://tilecache.rainviewer.com{path}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
+        )
+        layers = [
+            pdk.Layer(
+                "TileLayer",
+                data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                min_zoom=0,
+                max_zoom=19,
+                tile_size=256,
+            ),
+            pdk.Layer(
+                "TileLayer",
+                data=radar_url,
+                min_zoom=0,
+                max_zoom=18,
+                tile_size=256,
+                opacity=0.72,
+            ),
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=[{"latitude": CFG.latitude, "longitude": CFG.longitude}],
+                get_position="[longitude, latitude]",
+                get_radius=3500,
+                get_fill_color=[239, 68, 68, 220],
+            ),
+        ]
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=pdk.ViewState(
+                latitude=CFG.latitude, longitude=CFG.longitude, zoom=7
+            ),
+            map_style=None,
+            tooltip={"text": CFG.location_name},
+        )
+        st.pydeck_chart(deck, width="stretch")
+        st.caption(
+            f"Fotogramma {labels[selected]} · dati radar © RainViewer · mappa © OpenStreetMap"
+        )
+
+st.caption(
+    "Meteo V3 · Open‑Meteo + OpenWeather · correzione locale sulla stazione · "
+    f"ultimo dato reale {_local_time(health.get('station_time'))}"
+)

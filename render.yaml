@@ -1,22 +1,21 @@
-
 services:
-  - type: cron
-    name: weather-ingest-ecowitt
+  - type: web
+    name: weather-app-v3
     env: python
     plan: starter
-    schedule: "*/5 * * * *"        # ogni 5 minuti (UTC)
-    buildCommand: pip install -r requirements-ingest.txt
-    startCommand: python weather_ingest_ecowitt_cloud.py
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app_streamlit.py --server.address 0.0.0.0 --server.port $PORT
+    healthCheckPath: /_stcore/health
     envVars:
-      - key: DATABASE_URL          # incollalo dal tuo Postgres Render
+      - key: DATABASE_URL
         sync: false
-      - key: ECOWITT_APP_KEY
-        sync: false
-      - key: ECOWITT_API_KEY
-        sync: false
-      - key: ECOWITT_MAC
-        sync: false
-      - key: ECOWITT_TZ
+      - key: LOCAL_TZ
         value: Europe/Rome
-      - key: BACKFILL_HOURS
-        value: "24"
+      - key: LOCATION_NAME
+        value: Stazione meteo
+      - key: LAT
+        value: "41.9028"
+      - key: LON
+        value: "12.4964"
+      - key: ELEVATION_M
+        value: "20"

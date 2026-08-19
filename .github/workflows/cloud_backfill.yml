@@ -1,10 +1,10 @@
-name: Cloud Weather Backfill (manual)
+name: Meteo V3 - Backfill manuale
 
 on:
   workflow_dispatch:
     inputs:
       hours:
-        description: 'Quante ore di backfill (max 168 consigliato)'
+        description: 'Ore da recuperare (1-720; 168 consigliato)'
         required: true
         default: '24'
 
@@ -24,19 +24,31 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-ingest.txt
 
+      - name: Validate input
+        shell: bash
+        run: |
+          hours="${{ github.event.inputs.hours }}"
+          if ! [[ "$hours" =~ ^[0-9]+$ ]] || [ "$hours" -lt 1 ] || [ "$hours" -gt 720 ]; then
+            echo "::error::hours deve essere un intero tra 1 e 720"
+            exit 2
+          fi
+
       - name: Run backfill
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLITE_PATH: ./data/weather.db
           ECOWITT_APP_KEY: ${{ secrets.ECOWITT_APP_KEY }}
+          ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
-          ECOWITT_TZ: Europe/Rome
-          BACKFILL_HOURS: ${{ github.event.inputs.hours }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          LAT: ${{ vars.LAT || '41.9028' }}
+          LON: ${{ vars.LON || '12.4964' }}
+          ELEVATION_M: ${{ vars.ELEVATION_M || '20' }}
+          LOCAL_TZ: Europe/Rome
         run: |
-          python weather_ingest_ecowitt_cloud.py
+          python ingest_all.py --backfill-hours "${{ github.event.inputs.hours }}" --force-forecast

@@ -1,14 +1,40 @@
-# secrets
+# Secrets
 .env
 .env.*
+!.env.example
+*.env
 *.key
 *.pem
 *.p12
 .streamlit/secrets.toml
+
+# Virtual environments and Python caches
+.venv/
+venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
-*.env
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local observations, exports and databases
+data/
+historical/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
 *.xlsx
+*.xls
 *.csv
-*.sqlite*
-.cache/
+ecowitt_devices.json
+ecowitt_*_output.json
+*.log
+
+# Editors / operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
