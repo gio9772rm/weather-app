@@ -155,10 +155,9 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
     frame = _read(
         "SELECT "
         "(SELECT MAX(time) FROM station_raw) AS station_time,"
-        "COALESCE((SELECT MAX(issued_at) FROM forecast_blend),"
-        "         (SELECT MAX(time) FROM forecast_ow)) AS forecast_issued,"
-        "COALESCE((SELECT MAX(valid_time) FROM forecast_blend),"
-        "         (SELECT MAX(time) FROM forecast_ow)) AS forecast_until"
+        "(SELECT MAX(issued_at) FROM forecast_blend) AS blend_issued,"
+        "(SELECT MAX(valid_time) FROM forecast_blend) AS blend_until,"
+        "(SELECT MAX(time) FROM forecast_ow) AS legacy_time"
     )
     now = pd.Timestamp.now(tz="UTC")
     if frame.empty:
@@ -171,12 +170,18 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
         }
     row = frame.iloc[0]
     station_time = pd.to_datetime(row.get("station_time"), utc=True, errors="coerce")
-    forecast_issued = pd.to_datetime(
-        row.get("forecast_issued"), utc=True, errors="coerce"
+    blend_issued = pd.to_datetime(
+        row.get("blend_issued"), utc=True, errors="coerce"
     )
-    forecast_until = pd.to_datetime(
-        row.get("forecast_until"), utc=True, errors="coerce"
+    blend_until = pd.to_datetime(row.get("blend_until"), utc=True, errors="coerce")
+    legacy_time = pd.to_datetime(
+        row.get("legacy_time"), utc=True, errors="coerce"
     )
+    # Existing PostgreSQL installations can have native timestamp columns in the
+    # legacy table while V3 uses portable text timestamps. Choosing the fallback
+    # in Python avoids a PostgreSQL COALESCE type mismatch.
+    forecast_issued = blend_issued if not pd.isna(blend_issued) else legacy_time
+    forecast_until = blend_until if not pd.isna(blend_until) else legacy_time
     station_age = (
         (now - station_time).total_seconds() / 60
         if not pd.isna(station_time)
