@@ -24,6 +24,7 @@ from data_access import (
     load_recent_logs,
     load_station,
 )
+from weather_display import compass_direction
 
 st.set_page_config(
     page_title="Meteo V3",
@@ -38,36 +39,53 @@ st.markdown(
     """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
-:root { --ink:#10243d; --muted:#64748b; --line:rgba(148,163,184,.22); --blue:#2563eb; }
+:root {
+  color-scheme:light;
+  --page-bg:#f6f8fb; --sidebar-bg:#edf6fc; --surface:#ffffff; --surface-soft:#f8fafc;
+  --ink:#10243d; --muted:#64748b; --subtle:#475569; --line:rgba(148,163,184,.28);
+  --blue:#2563eb; --card-bg:linear-gradient(155deg,rgba(255,255,255,.98),rgba(241,245,249,.9));
+  --control-bg:#ffffff; --shadow:0 7px 22px rgba(15,23,42,.055);
+}
 html, body, [class*="css"] { font-family:'DM Sans',system-ui,sans-serif; }
+.stApp { background:var(--page-bg); color:var(--ink); }
+section[data-testid="stSidebar"] { background:var(--sidebar-bg); border-right:1px solid var(--line); }
+.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,
+.stApp label,[data-testid="stCaptionContainer"] { color:var(--ink); }
 .block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
 .hero { position:relative; overflow:hidden; color:white; padding:1.7rem 1.9rem; border-radius:24px;
   background:radial-gradient(circle at 85% 20%,rgba(255,255,255,.24),transparent 24%),
   linear-gradient(125deg,#0f3d78 0%,#0b76b7 48%,#10a6a0 100%); box-shadow:0 18px 45px rgba(15,61,120,.20); }
 .hero h1 { margin:0; font-size:clamp(1.8rem,4vw,3rem); letter-spacing:-.045em; }
 .hero p { margin:.45rem 0 0; opacity:.86; font-size:1rem; }
+.hero,.hero * { color:#fff !important; }
 .eyebrow { font-size:.72rem; letter-spacing:.13em; text-transform:uppercase; font-weight:700; opacity:.76; }
 .health-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.75rem 0 1.15rem; }
 .pill { display:inline-flex; align-items:center; gap:.38rem; padding:.42rem .72rem; border-radius:999px;
-  font-size:.78rem; font-weight:700; border:1px solid var(--line); background:rgba(255,255,255,.72); }
+  font-size:.78rem; font-weight:700; border:1px solid var(--line); background:var(--surface); color:var(--ink); }
 .dot { width:.48rem; height:.48rem; border-radius:99px; display:inline-block; }
 .online .dot { background:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,.12); }
 .delayed .dot { background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.12); }
 .offline .dot { background:#ef4444; box-shadow:0 0 0 4px rgba(239,68,68,.12); }
 .forecast-grid { display:grid; grid-template-columns:repeat(7,minmax(145px,1fr)); gap:.7rem; margin:.3rem 0 1.2rem; }
-.day-card { border:1px solid var(--line); border-radius:17px; padding:.92rem; background:linear-gradient(155deg,rgba(255,255,255,.96),rgba(241,245,249,.82));
-  box-shadow:0 7px 22px rgba(15,23,42,.055); min-height:174px; }
-.day-name { color:#0f3d78; font-size:.76rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; }
+.day-card { border:1px solid var(--line); border-radius:17px; padding:.92rem; background:var(--card-bg);
+  box-shadow:var(--shadow); min-height:205px; }
+.day-name { color:var(--blue); font-size:.76rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; }
 .day-icon { font-size:1.75rem; margin:.32rem 0; }.day-temp { font-size:1.18rem; font-weight:700; color:var(--ink); }
 .day-desc { color:var(--muted); font-size:.76rem; min-height:2.1rem; line-height:1.3; }
-.day-meta { margin-top:.55rem; color:#475569; font-size:.72rem; line-height:1.55; }
+.day-meta { margin-top:.55rem; color:var(--subtle); font-size:.72rem; line-height:1.55; }
+.hour-grid { display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:.75rem; margin:.5rem 0 1.25rem; }
+.hour-card { border:1px solid var(--line); border-radius:16px; padding:1rem; background:var(--surface); box-shadow:var(--shadow); }
+.hour-title { color:var(--blue); font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.hour-weather { color:var(--ink); font-size:1.05rem; font-weight:700; margin:.35rem 0; }
+.hour-meta { color:var(--subtle); font-size:.8rem; line-height:1.65; }
 .section-kicker { color:#0b76b7; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.11em; margin-top:.25rem; }
-.empty { border:1px dashed #94a3b8; background:#f8fafc; padding:1rem 1.1rem; border-radius:15px; color:#475569; }
-[data-testid="stMetric"] { border:1px solid var(--line); border-radius:17px; padding:.8rem 1rem; background:rgba(255,255,255,.72); }
-[data-testid="stMetricLabel"] { color:#64748b; } [data-testid="stMetricValue"] { color:#10243d; }
+.empty { border:1px dashed #94a3b8; background:var(--surface-soft); padding:1rem 1.1rem; border-radius:15px; color:var(--subtle); }
+[data-testid="stMetric"] { border:1px solid var(--line); border-radius:17px; padding:.8rem 1rem; background:var(--surface); }
+[data-testid="stMetricLabel"] { color:var(--muted); } [data-testid="stMetricValue"] { color:var(--ink); }
 div[data-baseweb="tab-list"] { gap:.25rem; } button[data-baseweb="tab"] { border-radius:11px; padding:.45rem .8rem; }
+[data-baseweb="select"] > div,[data-testid="stExpander"],.stButton > button { background:var(--control-bg); color:var(--ink); border-color:var(--line); }
 @media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
-@media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:160px}}
+@media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}.hour-grid{grid-template-columns:1fr}}
 </style>
 """,
     unsafe_allow_html=True,
@@ -110,8 +128,13 @@ def rainviewer_frames() -> list[dict[str, Any]]:
         response.raise_for_status()
         payload = response.json()
         radar = payload.get("radar") or {}
-        frames = (radar.get("past") or []) + (radar.get("nowcast") or [])
-        return [item for item in frames if isinstance(item, dict) and item.get("time")]
+        host = str(payload.get("host") or "https://tilecache.rainviewer.com")
+        frames = radar.get("past") or []
+        return [
+            {**item, "host": host}
+            for item in frames
+            if isinstance(item, dict) and item.get("time")
+        ]
     except (requests.RequestException, ValueError, AttributeError):
         return []
 
@@ -129,6 +152,39 @@ def _refresh_controller(enabled: bool) -> None:
         st.session_state["last_full_refresh"] = now
         st.cache_data.clear()
         st.rerun()
+
+
+def _apply_theme(dark_mode: bool) -> None:
+    """Apply a complete high-contrast palette after the sidebar choice is known."""
+    if not dark_mode:
+        return
+    st.markdown(
+        """
+<style>
+:root {
+  color-scheme:dark;
+  --page-bg:#05070b; --sidebar-bg:#0b111b; --surface:#101826; --surface-soft:#0d1522;
+  --ink:#f8fafc; --muted:#b6c2d1; --subtle:#d5deea; --line:rgba(226,232,240,.2);
+  --blue:#60a5fa; --card-bg:linear-gradient(155deg,#111b2b,#0b1320);
+  --control-bg:#111827; --shadow:0 9px 28px rgba(0,0,0,.28);
+}
+.stApp,[data-testid="stAppViewContainer"],[data-testid="stHeader"] { background:#05070b !important; color:var(--ink) !important; }
+section[data-testid="stSidebar"] { background:#0b111b !important; }
+.stApp p,.stApp li,.stApp label,.stApp span,.stApp div { border-color:var(--line); }
+.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,
+.stApp label,.stApp p,[data-testid="stCaptionContainer"],button[data-baseweb="tab"] { color:var(--ink); }
+.hero,.hero * { color:#fff !important; }
+[data-testid="stMetric"],[data-testid="stExpander"],.stButton > button,
+[data-baseweb="select"] > div,[data-testid="stTextInput"] input { background:var(--surface) !important; color:var(--ink) !important; }
+[data-testid="stMetricLabel"],[data-testid="stMetricLabel"] p { color:var(--muted) !important; }
+[data-testid="stMetricValue"],[data-testid="stMetricValue"] div { color:var(--ink) !important; }
+[data-testid="stDataFrame"] { background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+[data-testid="stSidebarCollapseButton"] button,[data-testid="stBaseButton-headerNoPadding"] { color:var(--ink) !important; }
+hr { border-color:var(--line) !important; }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def _local_time(value: Any, pattern: str = "%d/%m %H:%M") -> str:
@@ -197,7 +253,7 @@ def _delta(
 def _health_pill(label: str, status: str, detail: str) -> str:
     return (
         f'<span class="pill {status}"><span class="dot"></span>{html.escape(label)}: '
-        f'{html.escape(status.upper())}</span><span style="color:#64748b;font-size:.78rem">{html.escape(detail)}</span>'
+        f'{html.escape(status.upper())}</span><span style="color:var(--muted);font-size:.78rem">{html.escape(detail)}</span>'
     )
 
 
@@ -218,12 +274,45 @@ def render_daily_cards(daily: pd.DataFrame) -> None:
             f'<div class="day-icon">{_weather_icon(description)}</div>'
             f'<div class="day-temp">{_number(row.get("temp_min"), 0, "°")} / {_number(row.get("temp_max"), 0, "°")}</div>'
             f'<div class="day-desc">{html.escape(description)}</div>'
-            f'<div class="day-meta">💧 {_number(row.get("rain_mm"), 1, " mm")} · rischio {_number(row.get("pop_max"), 0, "%")}'
-            f"<br>💨 raffiche {_number(row.get('wind_max'), 0, ' km/h')}<br>◎ fiducia {_number(row.get('confidence'), 0, '%')}</div>"
+            f'<div class="day-meta">☔ {_number(row.get("rain_mm"), 1, " mm")} · rischio {_number(row.get("pop_max"), 0, "%")}'
+            f"<br>💧 umidità media {_number(row.get('humidity_mean'), 0, '%')}"
+            f"<br>💨 vento {_number(row.get('wind_mean'), 0, ' km/h')} · raffiche {_number(row.get('wind_max'), 0, ' km/h')}"
+            f"<br>◎ fiducia {_number(row.get('confidence'), 0, '%')}</div>"
             "</div>"
         )
     st.markdown(
         '<div class="forecast-grid">' + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_three_hour_forecast(forecast: pd.DataFrame) -> None:
+    """Render the next three hourly forecast points as an explicit local outlook."""
+    if forecast.empty:
+        st.info("La previsione a 3 ore comparirà al prossimo aggiornamento dei dati.")
+        return
+    now = pd.Timestamp.now(tz="UTC")
+    next_hours = forecast[forecast["valid_time"] >= now].sort_values(
+        "valid_time"
+    ).head(3)
+    if next_hours.empty:
+        st.info("Nessun punto di previsione futuro disponibile.")
+        return
+    cards = []
+    for position, (_, row) in enumerate(next_hours.iterrows(), start=1):
+        local_time = pd.Timestamp(row["valid_time"]).tz_convert(CFG.local_timezone)
+        description = str(row.get("description") or "Variabile")
+        cards.append(
+            '<div class="hour-card">'
+            f'<div class="hour-title">+{position} h · {local_time:%H:%M}</div>'
+            f'<div class="hour-weather">{_weather_icon(description)} {html.escape(description)}</div>'
+            f'<div class="hour-meta">☁️ nuvole {_number(row.get("clouds"), 0, "%")}'
+            f'<br>☔ {_number(row.get("rain_mm"), 1, " mm")} · rischio {_number(row.get("precip_probability"), 0, "%")}'
+            f'<br>💨 {_number(row.get("wind_kmh"), 0, " km/h")} · {compass_direction(row.get("wind_dir"))}</div>'
+            "</div>"
+        )
+    st.markdown(
+        '<div class="hour-grid">' + "".join(cards) + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -360,6 +449,134 @@ def combined_chart(
     return figure
 
 
+def weather_details_chart(
+    station: pd.DataFrame, forecast: pd.DataFrame, hours: int, theme: str
+) -> go.Figure:
+    """Join observed and forecast humidity, pressure, wind and direction."""
+    now = pd.Timestamp.now(tz="UTC")
+    observations = (
+        station[station["time"] >= now - pd.Timedelta(hours=hours)].copy()
+        if not station.empty
+        else station
+    )
+    future = (
+        forecast[
+            (forecast["valid_time"] >= now - pd.Timedelta(hours=1))
+            & (forecast["valid_time"] <= now + pd.Timedelta(hours=72))
+        ].copy()
+        if not forecast.empty
+        else forecast
+    )
+    figure = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        specs=[[{}], [{}], [{"secondary_y": True}]],
+    )
+
+    for frame, time_column, suffix, dash in (
+        (observations, "time", "stazione", "solid"),
+        (future, "valid_time", "previsione", "dash"),
+    ):
+        if frame.empty:
+            continue
+        if "humidity" in frame:
+            figure.add_trace(
+                go.Scatter(
+                    x=frame[time_column],
+                    y=frame["humidity"],
+                    name=f"Umidità · {suffix}",
+                    mode="lines",
+                    line={"color": "#0ea5e9", "width": 2.5, "dash": dash},
+                ),
+                row=1,
+                col=1,
+            )
+        if "pressure_hpa" in frame:
+            figure.add_trace(
+                go.Scatter(
+                    x=frame[time_column],
+                    y=frame["pressure_hpa"],
+                    name=f"Pressione · {suffix}",
+                    mode="lines",
+                    line={"color": "#8b5cf6", "width": 2.5, "dash": dash},
+                ),
+                row=2,
+                col=1,
+            )
+        wind_column = "wind_kmh"
+        gust_column = "windgust_kmh" if suffix == "stazione" else "wind_gust_kmh"
+        direction_column = "winddir" if suffix == "stazione" else "wind_dir"
+        if wind_column in frame:
+            figure.add_trace(
+                go.Scatter(
+                    x=frame[time_column],
+                    y=frame[wind_column],
+                    name=f"Vento · {suffix}",
+                    mode="lines",
+                    line={"color": "#10b981", "width": 2.5, "dash": dash},
+                ),
+                row=3,
+                col=1,
+                secondary_y=False,
+            )
+        if gust_column in frame:
+            figure.add_trace(
+                go.Scatter(
+                    x=frame[time_column],
+                    y=frame[gust_column],
+                    name=f"Raffiche · {suffix}",
+                    mode="lines",
+                    line={"color": "#f59e0b", "width": 1.7, "dash": dash},
+                ),
+                row=3,
+                col=1,
+                secondary_y=False,
+            )
+        if direction_column in frame:
+            figure.add_trace(
+                go.Scatter(
+                    x=frame[time_column],
+                    y=frame[direction_column],
+                    name=f"Direzione · {suffix}",
+                    mode="lines",
+                    line={"color": "#ec4899", "width": 1.5, "dash": dash},
+                    opacity=0.72,
+                    hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.0f}°<extra></extra>",
+                ),
+                row=3,
+                col=1,
+                secondary_y=True,
+            )
+
+    figure.add_vline(
+        x=now.timestamp() * 1000, line_dash="dot", line_color="#f97316", opacity=0.9
+    )
+    figure.update_yaxes(title_text="Umidità %", range=[0, 105], row=1, col=1)
+    figure.update_yaxes(title_text="Pressione hPa", row=2, col=1)
+    figure.update_yaxes(
+        title_text="Vento km/h", rangemode="tozero", row=3, col=1, secondary_y=False
+    )
+    figure.update_yaxes(
+        title_text="Direzione",
+        range=[0, 360],
+        tickvals=[0, 45, 90, 135, 180, 225, 270, 315, 360],
+        ticktext=["N", "NE", "E", "SE", "S", "SO", "O", "NO", "N"],
+        row=3,
+        col=1,
+        secondary_y=True,
+    )
+    figure.update_layout(
+        height=760,
+        margin={"l": 15, "r": 15, "t": 45, "b": 10},
+        hovermode="x unified",
+        legend={"orientation": "h", "y": 1.09, "x": 0},
+        template=theme,
+    )
+    return figure
+
+
 def forecast_alerts(forecast: pd.DataFrame) -> None:
     if forecast.empty:
         return
@@ -393,7 +610,7 @@ with st.sidebar:
         value=24,
         format_func=lambda value: f"{value} ore",
     )
-    dark_mode = st.toggle("Grafici scuri", value=False)
+    dark_mode = st.toggle("Tema scuro", value=False)
     auto_refresh = st.toggle("Aggiorna la pagina ogni 5 min", value=True)
     st.divider()
     st.caption(
@@ -404,6 +621,7 @@ with st.sidebar:
         st.rerun()
 
 _refresh_controller(auto_refresh)
+_apply_theme(dark_mode)
 
 station = station_data(max(observation_hours + 24, 240))
 forecast = forecast_data()
@@ -425,7 +643,7 @@ st.markdown(
     '<div class="health-row">'
     + _health_pill("Stazione", health["station_status"], station_detail)
     + _health_pill("Previsioni", health["forecast_status"], forecast_detail)
-    + f'<span style="color:#64748b;font-size:.78rem">Dati stazione: {_local_time(health.get("station_time"))} · copertura prevista fino al {_local_time(health.get("forecast_until"), "%d/%m %H:%M")}</span>'
+    + f'<span style="color:var(--muted);font-size:.78rem">Dati stazione: {_local_time(health.get("station_time"))} · copertura prevista fino al {_local_time(health.get("forecast_until"), "%d/%m %H:%M")}</span>'
     + "</div>",
     unsafe_allow_html=True,
 )
@@ -459,7 +677,7 @@ if not station.empty:
     cols[3].metric(
         "Vento",
         _number(current.get("wind_kmh"), 1, " km/h"),
-        f"raffica {_number(current.get('windgust_kmh'), 1, ' km/h')}",
+        f"{compass_direction(current.get('winddir'))} · raffica {_number(current.get('windgust_kmh'), 1, ' km/h')}",
     )
     cols[4].metric(
         "Pioggia 24 h",
@@ -497,6 +715,15 @@ with tab_overview:
     else:
         st.plotly_chart(
             combined_chart(station, forecast, observation_hours, theme),
+            width="stretch",
+        )
+        st.markdown(
+            '<div class="section-kicker">Atmosfera e vento</div>',
+            unsafe_allow_html=True,
+        )
+        st.subheader("Umidità, pressione, forza e direzione del vento")
+        st.plotly_chart(
+            weather_details_chart(station, forecast, observation_hours, theme),
             width="stretch",
         )
     if not forecast.empty:
@@ -537,7 +764,12 @@ with tab_forecast:
                 "Percepita °C": _numeric_series(hourly, "feels_like_c").round(1),
                 "Pioggia mm": _numeric_series(hourly, "rain_mm").round(1),
                 "Prob. %": _numeric_series(hourly, "precip_probability").round(0),
+                "Umidità %": _numeric_series(hourly, "humidity").round(0),
                 "Vento km/h": _numeric_series(hourly, "wind_kmh").round(1),
+                "Raffiche km/h": _numeric_series(hourly, "wind_gust_kmh").round(1),
+                "Direzione": hourly.get(
+                    "wind_dir", pd.Series(np.nan, index=hourly.index)
+                ).map(compass_direction),
                 "Nuvole %": _numeric_series(hourly, "clouds").round(0),
                 "Fiducia %": _numeric_series(hourly, "confidence").round(0),
             }
@@ -586,7 +818,7 @@ with tab_station:
     else:
         cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=observation_hours)
         recent = station[station["time"] >= cutoff].copy()
-        figure = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07)
+        figure = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.055)
         figure.add_trace(
             go.Scatter(
                 x=recent["time"],
@@ -604,7 +836,7 @@ with tab_station:
                 name="Umidità",
                 line={"color": "#0ea5e9", "width": 2},
             ),
-            row=1,
+            row=2,
             col=1,
         )
         figure.add_trace(
@@ -614,7 +846,7 @@ with tab_station:
                 name="Pressione",
                 line={"color": "#8b5cf6", "width": 2.5},
             ),
-            row=2,
+            row=3,
             col=1,
         )
         figure.add_trace(
@@ -624,7 +856,7 @@ with tab_station:
                 name="Vento",
                 line={"color": "#10b981", "width": 2},
             ),
-            row=3,
+            row=4,
             col=1,
         )
         figure.add_trace(
@@ -634,14 +866,15 @@ with tab_station:
                 name="Raffiche",
                 line={"color": "#f59e0b", "width": 1.5},
             ),
-            row=3,
+            row=4,
             col=1,
         )
-        figure.update_yaxes(title_text="°C / %", row=1, col=1)
-        figure.update_yaxes(title_text="hPa", row=2, col=1)
-        figure.update_yaxes(title_text="km/h", row=3, col=1)
+        figure.update_yaxes(title_text="Temperatura °C", row=1, col=1)
+        figure.update_yaxes(title_text="Umidità %", range=[0, 105], row=2, col=1)
+        figure.update_yaxes(title_text="Pressione hPa", row=3, col=1)
+        figure.update_yaxes(title_text="Vento km/h", row=4, col=1)
         figure.update_layout(
-            height=700,
+            height=850,
             template=theme,
             hovermode="x unified",
             margin={"l": 10, "r": 10, "t": 20, "b": 10},
@@ -802,13 +1035,32 @@ with tab_astro:
 
 with tab_radar:
     st.markdown(
-        '<div class="section-kicker">Precipitazioni osservate e nowcast</div>',
+        '<div class="section-kicker">Satellite e precipitazioni osservate</div>',
         unsafe_allow_html=True,
     )
-    st.subheader("Radar RainViewer")
+    st.subheader("Satellite reale e radar")
+    today_utc = pd.Timestamp.now(tz="UTC").normalize()
+    satellite_dates = [today_utc - pd.Timedelta(days=offset) for offset in range(4)]
+    selected_satellite_date = st.selectbox(
+        "Giorno dell'immagine satellitare",
+        options=satellite_dates,
+        index=1,
+        format_func=lambda value: value.strftime("%d/%m/%Y")
+        + (" · oggi, parziale" if value == today_utc else ""),
+    )
+    satellite_date = selected_satellite_date.strftime("%Y-%m-%d")
+    satellite_url = (
+        "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
+        "VIIRS_SNPP_CorrectedReflectance_TrueColor/default/"
+        f"{satellite_date}/GoogleMapsCompatible_Level9/{{z}}/{{y}}/{{x}}.jpg"
+    )
     frames = rainviewer_frames()
+    selected_frame: dict[str, Any] | None = None
+    selected_label = "radar non disponibile"
     if not frames:
-        st.info("Radar temporaneamente non disponibile.")
+        st.info(
+            "Il radar è temporaneamente non disponibile; l'immagine satellitare resta consultabile."
+        )
     else:
         labels = [
             pd.to_datetime(item["time"], unit="s", utc=True)
@@ -822,47 +1074,89 @@ with tab_radar:
             value=max(0, len(frames) - 1),
             format_func=lambda index: labels[index],
         )
-        frame = frames[selected]
-        path = str(frame.get("path") or f"/v2/radar/{frame['time']}")
-        radar_url = (
-            f"https://tilecache.rainviewer.com{path}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
+        selected_frame = frames[selected]
+        selected_label = labels[selected]
+
+    layers: list[pdk.Layer] = [
+        pdk.Layer(
+            "TileLayer",
+            data=satellite_url,
+            min_zoom=0,
+            max_zoom=9,
+            tile_size=256,
+            opacity=1.0,
+        ),
+        pdk.Layer(
+            "TileLayer",
+            data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            min_zoom=0,
+            max_zoom=19,
+            tile_size=256,
+            opacity=0.2,
+        ),
+    ]
+    if selected_frame is not None:
+        path = str(
+            selected_frame.get("path")
+            or f"/v2/radar/{selected_frame['time']}"
         )
-        layers = [
-            pdk.Layer(
-                "TileLayer",
-                data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                min_zoom=0,
-                max_zoom=19,
-                tile_size=256,
-            ),
+        host = str(
+            selected_frame.get("host") or "https://tilecache.rainviewer.com"
+        ).rstrip("/")
+        radar_url = f"{host}{path}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
+        layers.append(
             pdk.Layer(
                 "TileLayer",
                 data=radar_url,
                 min_zoom=0,
-                max_zoom=18,
+                max_zoom=7,
                 tile_size=256,
                 opacity=0.72,
-            ),
-            pdk.Layer(
-                "ScatterplotLayer",
-                data=[{"latitude": CFG.latitude, "longitude": CFG.longitude}],
-                get_position="[longitude, latitude]",
-                get_radius=3500,
-                get_fill_color=[239, 68, 68, 220],
-            ),
-        ]
-        deck = pdk.Deck(
-            layers=layers,
-            initial_view_state=pdk.ViewState(
-                latitude=CFG.latitude, longitude=CFG.longitude, zoom=7
-            ),
-            map_style=None,
-            tooltip={"text": CFG.location_name},
+            )
         )
-        st.pydeck_chart(deck, width="stretch")
-        st.caption(
-            f"Fotogramma {labels[selected]} · dati radar © RainViewer · mappa © OpenStreetMap"
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=[{"latitude": CFG.latitude, "longitude": CFG.longitude}],
+            get_position="[longitude, latitude]",
+            get_radius=3500,
+            get_fill_color=[239, 68, 68, 230],
         )
+    )
+    deck = pdk.Deck(
+        layers=layers,
+        initial_view_state=pdk.ViewState(
+            latitude=CFG.latitude, longitude=CFG.longitude, zoom=7
+        ),
+        map_style=None,
+        tooltip={"text": CFG.location_name},
+    )
+    st.pydeck_chart(deck, width="stretch")
+    st.caption(
+        f"Satellite {satellite_date} · {selected_label} · immagini NASA GIBS/GSFC ESDIS · "
+        "radar © RainViewer · riferimenti © OpenStreetMap"
+    )
+
+    st.divider()
+    st.markdown(
+        '<div class="section-kicker">Previsione fino a +3 ore</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Evoluzione locale")
+    render_three_hour_forecast(forecast)
+
+    st.subheader("Nuvole previste sulla mappa")
+    windy_url = (
+        "https://embed.windy.com/embed.html?type=map&location=coordinates"
+        "&metricRain=mm&metricTemp=%C2%B0C&metricWind=km%2Fh&zoom=7"
+        f"&overlay=clouds&product=ecmwf&level=surface&lat={CFG.latitude:.4f}"
+        f"&lon={CFG.longitude:.4f}"
+    )
+    st.iframe(windy_url, height=560)
+    st.caption(
+        "Mappa previsionale Windy/ECMWF: usa la linea temporale interna per spostarti a +1, +2 e +3 ore. "
+        "Il radar sopra mostra invece precipitazioni realmente osservate."
+    )
 
 st.caption(
     "Meteo V3 · Open‑Meteo + OpenWeather · correzione locale sulla stazione · "

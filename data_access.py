@@ -229,6 +229,8 @@ def daily_forecast(frame: pd.DataFrame, timezone_name: str) -> pd.DataFrame:
         "temp_max": ("temp_c", "max"),
         "rain_mm": ("rain_mm", "sum"),
         "pop_max": ("precip_probability", "max"),
+        "humidity_mean": ("humidity", "mean"),
+        "wind_mean": ("wind_kmh", "mean"),
         "wind_max": ("wind_gust_kmh", "max"),
         "clouds_mean": ("clouds", "mean"),
         "confidence": ("confidence", "mean"),
