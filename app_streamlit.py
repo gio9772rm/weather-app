@@ -227,6 +227,11 @@ section[data-testid="stSidebar"] { background:#0b111b !important; }
 [data-testid="stBaseButton-headerNoPadding"] * { color:var(--ink) !important; }
 [data-testid="stHeader"] button svg,
 [data-testid="stSidebarCollapseButton"] svg { color:var(--ink) !important; fill:var(--ink) !important; }
+[data-testid="stPlotlyChart"] text.legendtext,
+[data-testid="stPlotlyChart"] text.legendtitletext,
+[data-testid="stPlotlyChart"] .gtitle,
+[data-testid="stPlotlyChart"] .annotation-text-g text { fill:var(--ink) !important; color:var(--ink) !important; }
+[data-testid="stPlotlyChart"] .modebar-btn path { fill:var(--ink) !important; }
 
 /* I menu BaseWeb vengono montati fuori da .stApp: per questo richiedono
    selettori globali e sono il caso che in precedenza restava bianco. */
@@ -309,9 +314,21 @@ def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
         paper_bgcolor=paper,
         plot_bgcolor=plot,
         font={"color": ink, "family": "DM Sans, system-ui, sans-serif"},
-        legend={"bgcolor": "rgba(0,0,0,0)"},
+        title={"font": {"color": ink}},
+        legend={
+            "bgcolor": "rgba(0,0,0,0)",
+            "font": {"color": ink},
+            "title": {"font": {"color": ink}},
+        },
+        modebar={
+            "bgcolor": "rgba(0,0,0,0)",
+            "color": ink,
+            "activecolor": "#60a5fa" if dark_mode else "#2563eb",
+        },
         hoverlabel={"bgcolor": hover_bg, "font_color": ink, "bordercolor": line},
     )
+    for annotation in figure.layout.annotations or ():
+        annotation.font.color = ink
     figure.update_xaxes(
         gridcolor=grid,
         linecolor=line,
@@ -969,6 +986,7 @@ with tab_overview:
                 dark_mode,
             ),
             width="stretch",
+            theme=None,
         )
         st.markdown(
             '<div class="section-kicker">Atmosfera e vento</div>',
@@ -981,6 +999,7 @@ with tab_overview:
                 dark_mode,
             ),
             width="stretch",
+            theme=None,
         )
     if not forecast.empty:
         st.markdown('<div class="section-kicker">Sintesi</div>', unsafe_allow_html=True)
@@ -1148,7 +1167,9 @@ with tab_station:
             margin={"l": 10, "r": 10, "t": 20, "b": 10},
             legend={"orientation": "h"},
         )
-        st.plotly_chart(_style_plotly(figure, dark_mode), width="stretch")
+        st.plotly_chart(
+            _style_plotly(figure, dark_mode), width="stretch", theme=None
+        )
 
         rain_figure = go.Figure(
             go.Bar(
@@ -1173,7 +1194,9 @@ with tab_station:
             template=theme,
             hovermode="x unified",
         )
-        st.plotly_chart(_style_plotly(rain_figure, dark_mode), width="stretch")
+        st.plotly_chart(
+            _style_plotly(rain_figure, dark_mode), width="stretch", theme=None
+        )
 
         quality = recent.get("data_quality", pd.Series(dtype="object")).value_counts(
             dropna=False
@@ -1277,7 +1300,9 @@ with tab_astro:
             legend={"orientation": "h"},
             margin={"l": 10, "r": 10, "t": 20, "b": 10},
         )
-        st.plotly_chart(_style_plotly(figure, dark_mode), width="stretch")
+        st.plotly_chart(
+            _style_plotly(figure, dark_mode), width="stretch", theme=None
+        )
         st.caption(
             "Il punteggio penalizza nuvole basse/medie/alte, rischio pioggia, vento, visibilità e temperatura vicina al punto di rugiada."
         )
