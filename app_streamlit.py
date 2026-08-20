@@ -9,8 +9,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import pydeck as pdk
-import requests
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -24,7 +22,7 @@ from data_access import (
     load_recent_logs,
     load_station,
 )
-from weather_display import compass_direction
+from weather_display import compass_direction, weather_cell_style
 
 st.set_page_config(
     page_title="Meteo V3",
@@ -78,12 +76,33 @@ section[data-testid="stSidebar"] { background:var(--sidebar-bg); border-right:1p
 .hour-title { color:var(--blue); font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
 .hour-weather { color:var(--ink); font-size:1.05rem; font-weight:700; margin:.35rem 0; }
 .hour-meta { color:var(--subtle); font-size:.8rem; line-height:1.65; }
+.color-legend { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem .85rem; margin:.45rem 0 .8rem;
+  padding:.72rem .85rem; border:1px solid var(--line); border-radius:13px; background:var(--surface); }
+.legend-item { display:inline-flex; align-items:center; gap:.34rem; color:var(--subtle); font-size:.74rem; font-weight:600; }
+.legend-swatch { width:.68rem; height:.68rem; border-radius:4px; box-shadow:inset 0 0 0 1px rgba(15,23,42,.12); }
+.legend-green { background:#bbf7d0; }.legend-yellow { background:#fef3c7; }.legend-orange { background:#fed7aa; }
+.legend-red { background:#fecaca; }.legend-blue { background:#60a5fa; }.legend-grey { background:#cbd5e1; }
+.legend-note { flex-basis:100%; color:var(--muted); font-size:.68rem; margin-top:.05rem; }
 .section-kicker { color:#0b76b7; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.11em; margin-top:.25rem; }
 .empty { border:1px dashed #94a3b8; background:var(--surface-soft); padding:1rem 1.1rem; border-radius:15px; color:var(--subtle); }
 [data-testid="stMetric"] { border:1px solid var(--line); border-radius:17px; padding:.8rem 1rem; background:var(--surface); }
 [data-testid="stMetricLabel"] { color:var(--muted); } [data-testid="stMetricValue"] { color:var(--ink); }
 div[data-baseweb="tab-list"] { gap:.25rem; } button[data-baseweb="tab"] { border-radius:11px; padding:.45rem .8rem; }
-[data-baseweb="select"] > div,[data-testid="stExpander"],.stButton > button { background:var(--control-bg); color:var(--ink); border-color:var(--line); }
+[data-baseweb="select"],[data-baseweb="select"] > div,[data-baseweb="select"] input,
+[data-baseweb="select"] span { background-color:var(--control-bg) !important; color:var(--ink) !important; }
+[data-baseweb="select"] svg { fill:var(--ink) !important; }
+[data-baseweb="popover"] > div,ul[role="listbox"],div[role="listbox"] {
+  background:var(--control-bg) !important; color:var(--ink) !important; border-color:var(--line) !important; }
+li[role="option"],div[role="option"] { background:var(--control-bg) !important; color:var(--ink) !important; }
+li[role="option"]:hover,div[role="option"]:hover,
+li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"] {
+  background:#1d4ed8 !important; color:#fff !important; }
+[data-testid="stExpander"],[data-testid="stExpander"] details,
+[data-testid="stExpander"] summary,[data-testid="stExpander"] summary:hover {
+  background:var(--surface) !important; color:var(--ink) !important; border-color:var(--line) !important; }
+[data-testid="stExpander"] summary * { color:var(--ink) !important; }
+.stButton > button { background:var(--control-bg) !important; color:var(--ink) !important; border-color:var(--line) !important; }
+[data-testid="stDataFrame"] { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
 @media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
 @media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}.hour-grid{grid-template-columns:1fr}}
 </style>
@@ -115,28 +134,6 @@ def score_data() -> pd.DataFrame:
 @st.cache_data(ttl=180, show_spinner=False)
 def log_data() -> pd.DataFrame:
     return load_recent_logs()
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def rainviewer_frames() -> list[dict[str, Any]]:
-    try:
-        response = requests.get(
-            "https://api.rainviewer.com/public/weather-maps.json",
-            timeout=(5, 15),
-            headers={"User-Agent": "weather-app-v3/1.0"},
-        )
-        response.raise_for_status()
-        payload = response.json()
-        radar = payload.get("radar") or {}
-        host = str(payload.get("host") or "https://tilecache.rainviewer.com")
-        frames = radar.get("past") or []
-        return [
-            {**item, "host": host}
-            for item in frames
-            if isinstance(item, dict) and item.get("time")
-        ]
-    except (requests.RequestException, ValueError, AttributeError):
-        return []
 
 
 @st.fragment(run_every=300)
@@ -178,7 +175,7 @@ section[data-testid="stSidebar"] { background:#0b111b !important; }
 [data-baseweb="select"] > div,[data-testid="stTextInput"] input { background:var(--surface) !important; color:var(--ink) !important; }
 [data-testid="stMetricLabel"],[data-testid="stMetricLabel"] p { color:var(--muted) !important; }
 [data-testid="stMetricValue"],[data-testid="stMetricValue"] div { color:var(--ink) !important; }
-[data-testid="stDataFrame"] { background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+[data-testid="stDataFrame"],[data-testid="stDataFrame"] [role="grid"] { background:var(--surface) !important; color:var(--ink) !important; }
 [data-testid="stSidebarCollapseButton"] button,[data-testid="stBaseButton-headerNoPadding"] { color:var(--ink) !important; }
 hr { border-color:var(--line) !important; }
 </style>
@@ -217,6 +214,183 @@ def _numeric_series(
     if column not in frame:
         return pd.Series(default, index=frame.index, dtype=float)
     return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
+    """Keep every Plotly surface and label aligned with the selected app theme."""
+    if dark_mode:
+        paper, plot, ink = "#05070b", "#0b111b", "#f8fafc"
+        grid, line = "rgba(148,163,184,.18)", "rgba(226,232,240,.28)"
+        hover_bg = "#111827"
+        template = "plotly_dark"
+    else:
+        paper, plot, ink = "#f6f8fb", "#ffffff", "#10243d"
+        grid, line = "rgba(100,116,139,.16)", "rgba(100,116,139,.3)"
+        hover_bg = "#ffffff"
+        template = "plotly_white"
+    figure.update_layout(
+        template=template,
+        paper_bgcolor=paper,
+        plot_bgcolor=plot,
+        font={"color": ink, "family": "DM Sans, system-ui, sans-serif"},
+        legend={"bgcolor": "rgba(0,0,0,0)"},
+        hoverlabel={"bgcolor": hover_bg, "font_color": ink, "bordercolor": line},
+    )
+    figure.update_xaxes(
+        gridcolor=grid,
+        linecolor=line,
+        tickfont={"color": ink},
+        title_font={"color": ink},
+        zerolinecolor=line,
+    )
+    figure.update_yaxes(
+        gridcolor=grid,
+        linecolor=line,
+        tickfont={"color": ink},
+        title_font={"color": ink},
+        zerolinecolor=line,
+    )
+    return figure
+
+
+def _base_table_style(frame: pd.DataFrame, dark_mode: bool) -> Any:
+    background = "#0b111b" if dark_mode else "#ffffff"
+    foreground = "#e5edf7" if dark_mode else "#10243d"
+    header = "#162235" if dark_mode else "#e8f1f8"
+    return frame.style.set_properties(
+        **{"background-color": background, "color": foreground}
+    ).set_table_styles(
+        [
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", header),
+                    ("color", foreground),
+                    ("font-weight", "700"),
+                ],
+            }
+        ]
+    )
+
+
+def _style_hourly_table(table: pd.DataFrame, dark_mode: bool) -> Any:
+    styler = _base_table_style(table, dark_mode)
+    metric_columns = {
+        "temperature": ["Temp °C", "Percepita °C"],
+        "humidity": ["Umidità %"],
+        "pressure": ["Pressione hPa"],
+        "rain": ["Pioggia mm"],
+        "rain_probability": ["Prob. %"],
+        "wind": ["Vento km/h"],
+        "gust": ["Raffiche km/h"],
+        "clouds": ["Nuvole %"],
+        "confidence": ["Fiducia %"],
+    }
+    for metric, columns in metric_columns.items():
+        available = [column for column in columns if column in table]
+        if available:
+            styler = styler.map(
+                lambda value, metric=metric: weather_cell_style(value, metric),
+                subset=available,
+            )
+    formats = {
+        "Temp °C": "{:.1f}",
+        "Percepita °C": "{:.1f}",
+        "Pioggia mm": "{:.1f}",
+        "Prob. %": "{:.0f}",
+        "Umidità %": "{:.0f}",
+        "Pressione hPa": "{:.0f}",
+        "Vento km/h": "{:.1f}",
+        "Raffiche km/h": "{:.1f}",
+        "Nuvole %": "{:.0f}",
+        "Fiducia %": "{:.0f}",
+    }
+    return styler.format(
+        {key: value for key, value in formats.items() if key in table}, na_rep="—"
+    )
+
+
+def _style_status_table(
+    table: pd.DataFrame, dark_mode: bool, status_column: str | None = None
+) -> Any:
+    styler = _base_table_style(table, dark_mode)
+    if status_column and status_column in table:
+        styler = styler.map(
+            lambda value: (
+                weather_cell_style(80, "confidence")
+                if str(value).lower() in {"ok", "success", "online"}
+                else weather_cell_style(20, "confidence")
+                if str(value).lower() in {"error", "failed", "failure", "offline"}
+                else weather_cell_style(55, "confidence")
+            ),
+            subset=[status_column],
+        )
+    return styler
+
+
+def _style_score_table(table: pd.DataFrame, dark_mode: bool) -> Any:
+    """Colour forecast errors relative to the values currently being compared."""
+    styler = _base_table_style(table, dark_mode)
+    for column in ("Bias", "MAE", "RMSE", "Brier"):
+        if column not in table:
+            continue
+        values = pd.to_numeric(table[column], errors="coerce").abs().dropna()
+        if values.empty:
+            continue
+        median = float(values.quantile(0.5))
+        high = float(values.quantile(0.8))
+
+        def relative_style(value: Any, median: float = median, high: float = high) -> str:
+            number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            if pd.isna(number):
+                return ""
+            magnitude = abs(float(number))
+            if magnitude <= median:
+                return weather_cell_style(80, "confidence")
+            if magnitude <= high:
+                return weather_cell_style(55, "confidence")
+            return weather_cell_style(20, "confidence")
+
+        styler = styler.map(relative_style, subset=[column])
+    return styler.format(precision=2, na_rep="—")
+
+
+def render_color_legend(kind: str = "weather") -> None:
+    """Render a compact, theme-aware explanation of semantic table colours."""
+    if kind == "scores":
+        items = (
+            ("green", "Errore minore"),
+            ("yellow", "Errore intermedio"),
+            ("red", "Errore maggiore"),
+        )
+        note = "Confronto relativo tra i provider e gli orizzonti presenti nella tabella."
+    elif kind == "status":
+        items = (
+            ("green", "Esecuzione regolare"),
+            ("yellow", "Da controllare / dato storico"),
+            ("red", "Errore o servizio offline"),
+        )
+        note = "La colorazione aiuta a individuare rapidamente anomalie nella pipeline."
+    else:
+        items = (
+            ("green", "Regolare"),
+            ("yellow", "Da monitorare"),
+            ("orange", "Vicino alla soglia"),
+            ("red", "Oltre soglia"),
+            ("blue", "Pioggia probabile"),
+            ("grey", "Molte nuvole"),
+        )
+        note = "Soglie indicative per la lettura rapida: non sostituiscono allerte ufficiali."
+    chips = "".join(
+        '<span class="legend-item">'
+        f'<span class="legend-swatch legend-{colour}"></span>{html.escape(label)}'
+        "</span>"
+        for colour, label in items
+    )
+    st.markdown(
+        f'<div class="color-legend">{chips}<div class="legend-note">{html.escape(note)}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _weather_icon(description: Any) -> str:
@@ -714,7 +888,10 @@ with tab_overview:
         )
     else:
         st.plotly_chart(
-            combined_chart(station, forecast, observation_hours, theme),
+            _style_plotly(
+                combined_chart(station, forecast, observation_hours, theme),
+                dark_mode,
+            ),
             width="stretch",
         )
         st.markdown(
@@ -723,7 +900,10 @@ with tab_overview:
         )
         st.subheader("Umidità, pressione, forza e direzione del vento")
         st.plotly_chart(
-            weather_details_chart(station, forecast, observation_hours, theme),
+            _style_plotly(
+                weather_details_chart(station, forecast, observation_hours, theme),
+                dark_mode,
+            ),
             width="stretch",
         )
     if not forecast.empty:
@@ -765,6 +945,7 @@ with tab_forecast:
                 "Pioggia mm": _numeric_series(hourly, "rain_mm").round(1),
                 "Prob. %": _numeric_series(hourly, "precip_probability").round(0),
                 "Umidità %": _numeric_series(hourly, "humidity").round(0),
+                "Pressione hPa": _numeric_series(hourly, "pressure_hpa").round(0),
                 "Vento km/h": _numeric_series(hourly, "wind_kmh").round(1),
                 "Raffiche km/h": _numeric_series(hourly, "wind_gust_kmh").round(1),
                 "Direzione": hourly.get(
@@ -774,7 +955,13 @@ with tab_forecast:
                 "Fiducia %": _numeric_series(hourly, "confidence").round(0),
             }
         )
-        st.dataframe(table, hide_index=True, width="stretch", height=500)
+        render_color_legend("weather")
+        st.dataframe(
+            _style_hourly_table(table, dark_mode),
+            hide_index=True,
+            width="stretch",
+            height=520,
+        )
 
         scores = score_data()
         with st.expander("Accuratezza misurata sulla stazione"):
@@ -806,7 +993,12 @@ with tab_forecast:
                         "Brier",
                     ]
                 ]
-                st.dataframe(display.round(2), hide_index=True, width="stretch")
+                render_color_legend("scores")
+                st.dataframe(
+                    _style_score_table(display.round(2), dark_mode),
+                    hide_index=True,
+                    width="stretch",
+                )
 
 with tab_station:
     st.markdown(
@@ -880,7 +1072,7 @@ with tab_station:
             margin={"l": 10, "r": 10, "t": 20, "b": 10},
             legend={"orientation": "h"},
         )
-        st.plotly_chart(figure, width="stretch")
+        st.plotly_chart(_style_plotly(figure, dark_mode), width="stretch")
 
         rain_figure = go.Figure(
             go.Bar(
@@ -905,16 +1097,20 @@ with tab_station:
             template=theme,
             hovermode="x unified",
         )
-        st.plotly_chart(rain_figure, width="stretch")
+        st.plotly_chart(_style_plotly(rain_figure, dark_mode), width="stretch")
 
         quality = recent.get("data_quality", pd.Series(dtype="object")).value_counts(
             dropna=False
         )
         with st.expander("Qualità dati e ultime esecuzioni"):
+            render_color_legend("status")
             left, right = st.columns(2)
             left.write("Campioni per qualità")
+            quality_table = quality.rename_axis("Qualità").reset_index(
+                name="Campioni"
+            )
             left.dataframe(
-                quality.rename_axis("Qualità").reset_index(name="Campioni"),
+                _style_status_table(quality_table, dark_mode, "Qualità"),
                 hide_index=True,
                 width="stretch",
             )
@@ -939,7 +1135,11 @@ with tab_station:
                         .dt.strftime("%d/%m %H:%M")
                     )
                 right.write("Pipeline recenti")
-                right.dataframe(safe_logs, hide_index=True, width="stretch")
+                right.dataframe(
+                    _style_status_table(safe_logs, dark_mode, "status"),
+                    hide_index=True,
+                    width="stretch",
+                )
 
 with tab_astro:
     st.markdown(
@@ -1001,7 +1201,7 @@ with tab_astro:
             legend={"orientation": "h"},
             margin={"l": 10, "r": 10, "t": 20, "b": 10},
         )
-        st.plotly_chart(figure, width="stretch")
+        st.plotly_chart(_style_plotly(figure, dark_mode), width="stretch")
         st.caption(
             "Il punteggio penalizza nuvole basse/medie/alte, rischio pioggia, vento, visibilità e temperatura vicina al punto di rugiada."
         )
@@ -1031,110 +1231,36 @@ with tab_astro:
                     ),
                 }
             )
-            st.dataframe(table, hide_index=True, width="stretch")
+            st.dataframe(
+                _base_table_style(table, dark_mode),
+                hide_index=True,
+                width="stretch",
+            )
 
 with tab_radar:
     st.markdown(
         '<div class="section-kicker">Satellite e precipitazioni osservate</div>',
         unsafe_allow_html=True,
     )
-    st.subheader("Satellite reale e radar")
-    today_utc = pd.Timestamp.now(tz="UTC").normalize()
-    satellite_dates = [today_utc - pd.Timedelta(days=offset) for offset in range(4)]
-    selected_satellite_date = st.selectbox(
-        "Giorno dell'immagine satellitare",
-        options=satellite_dates,
-        index=1,
-        format_func=lambda value: value.strftime("%d/%m/%Y")
-        + (" · oggi, parziale" if value == today_utc else ""),
+    st.subheader("Satellite e radar osservato")
+    observed_layer = st.radio(
+        "Livello osservativo",
+        options=("Satellite", "Radar precipitazioni"),
+        horizontal=True,
     )
-    satellite_date = selected_satellite_date.strftime("%Y-%m-%d")
-    satellite_url = (
-        "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
-        "VIIRS_SNPP_CorrectedReflectance_TrueColor/default/"
-        f"{satellite_date}/GoogleMapsCompatible_Level9/{{z}}/{{y}}/{{x}}.jpg"
+    observed_overlay = "satellite" if observed_layer == "Satellite" else "radar"
+    observed_product = "satellite" if observed_layer == "Satellite" else "radar"
+    observed_url = (
+        "https://embed.windy.com/embed.html?type=map&location=coordinates"
+        "&metricRain=mm&metricTemp=%C2%B0C&metricWind=km%2Fh&zoom=7"
+        f"&overlay={observed_overlay}&product={observed_product}&level=surface"
+        f"&lat={CFG.latitude:.4f}&lon={CFG.longitude:.4f}"
+        "&marker=true&play=1"
     )
-    frames = rainviewer_frames()
-    selected_frame: dict[str, Any] | None = None
-    selected_label = "radar non disponibile"
-    if not frames:
-        st.info(
-            "Il radar è temporaneamente non disponibile; l'immagine satellitare resta consultabile."
-        )
-    else:
-        labels = [
-            pd.to_datetime(item["time"], unit="s", utc=True)
-            .tz_convert(CFG.local_timezone)
-            .strftime("%d/%m %H:%M")
-            for item in frames
-        ]
-        selected = st.select_slider(
-            "Fotogramma",
-            options=list(range(len(frames))),
-            value=max(0, len(frames) - 1),
-            format_func=lambda index: labels[index],
-        )
-        selected_frame = frames[selected]
-        selected_label = labels[selected]
-
-    layers: list[pdk.Layer] = [
-        pdk.Layer(
-            "TileLayer",
-            data=satellite_url,
-            min_zoom=0,
-            max_zoom=9,
-            tile_size=256,
-            opacity=1.0,
-        ),
-        pdk.Layer(
-            "TileLayer",
-            data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            min_zoom=0,
-            max_zoom=19,
-            tile_size=256,
-            opacity=0.2,
-        ),
-    ]
-    if selected_frame is not None:
-        path = str(
-            selected_frame.get("path")
-            or f"/v2/radar/{selected_frame['time']}"
-        )
-        host = str(
-            selected_frame.get("host") or "https://tilecache.rainviewer.com"
-        ).rstrip("/")
-        radar_url = f"{host}{path}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
-        layers.append(
-            pdk.Layer(
-                "TileLayer",
-                data=radar_url,
-                min_zoom=0,
-                max_zoom=7,
-                tile_size=256,
-                opacity=0.72,
-            )
-        )
-    layers.append(
-        pdk.Layer(
-            "ScatterplotLayer",
-            data=[{"latitude": CFG.latitude, "longitude": CFG.longitude}],
-            get_position="[longitude, latitude]",
-            get_radius=3500,
-            get_fill_color=[239, 68, 68, 230],
-        )
-    )
-    deck = pdk.Deck(
-        layers=layers,
-        initial_view_state=pdk.ViewState(
-            latitude=CFG.latitude, longitude=CFG.longitude, zoom=7
-        ),
-        map_style=None,
-        tooltip={"text": CFG.location_name},
-    )
-    st.pydeck_chart(deck, width="stretch")
+    st.iframe(observed_url, height=620)
     st.caption(
-        f"Satellite {satellite_date} · {selected_label} · immagini NASA GIBS/GSFC ESDIS · "
-        "radar © RainViewer · riferimenti © OpenStreetMap"
+        "Immagini osservative Windy: scegli Satellite oppure Radar precipitazioni. "
+        "Nel radar l'assenza di aree colorate indica che non sono rilevate precipitazioni."
     )
 
     st.divider()
