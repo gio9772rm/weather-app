@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from data_access import daily_forecast
-from weather_display import compass_direction
+from weather_display import compass_direction, weather_cell_style
 
 
 def test_compass_direction_normalizes_degrees() -> None:
@@ -41,3 +41,12 @@ def test_daily_forecast_includes_humidity_and_mean_wind() -> None:
     assert result.loc[0, "humidity_mean"] == 70.0
     assert result.loc[0, "wind_mean"] == 9.0
     assert result.loc[0, "wind_max"] == 18.0
+
+
+def test_weather_cell_styles_flag_thresholds() -> None:
+    assert "#bbf7d0" in weather_cell_style(22, "temperature")
+    assert "#fecaca" in weather_cell_style(36, "temperature")
+    assert "#fed7aa" in weather_cell_style(82, "humidity")
+    assert "#fecaca" in weather_cell_style(70, "gust")
+    assert "#60a5fa" in weather_cell_style(90, "rain_probability")
+    assert weather_cell_style(None, "wind") == ""
