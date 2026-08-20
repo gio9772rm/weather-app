@@ -169,14 +169,90 @@ def _apply_theme(dark_mode: bool) -> None:
 section[data-testid="stSidebar"] { background:#0b111b !important; }
 .stApp p,.stApp li,.stApp label,.stApp span,.stApp div { border-color:var(--line); }
 .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,
-.stApp label,.stApp p,[data-testid="stCaptionContainer"],button[data-baseweb="tab"] { color:var(--ink); }
-.hero,.hero * { color:#fff !important; }
+.stApp label,.stApp p,[data-testid="stCaptionContainer"],button[data-baseweb="tab"] { color:var(--ink) !important; }
+
+/* Streamlit assegna colori propri ai discendenti dei widget. Li riallineiamo
+   esplicitamente al tema, evitando le celle delle tabelle con colori semantici. */
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] li,
+.stApp [data-testid="stWidgetLabel"] p,
+.stApp [data-testid="stWidgetLabel"] span,
+.stApp [data-testid="stCaptionContainer"] p,
+.stApp [data-testid="stCaptionContainer"] span,
+.stApp [data-testid="stToggle"] label,
+.stApp [data-testid="stToggle"] label p,
+.stApp [data-testid="stToggle"] label span,
+.stApp [data-testid="stSlider"] label,
+.stApp [data-testid="stSlider"] label p,
+.stApp [data-testid="stSlider"] [data-testid="stTickBar"] *,
+.stApp [role="radiogroup"] label,
+.stApp [role="radiogroup"] label p,
+.stApp [role="radiogroup"] label span,
+.stApp button[data-baseweb="tab"],
+.stApp button[data-baseweb="tab"] p,
+.stApp button[data-baseweb="tab"] span,
+.stApp [data-testid="stExpander"] summary,
+.stApp [data-testid="stExpander"] summary p,
+.stApp [data-testid="stExpander"] summary span,
+.stApp [data-testid="stExpanderDetails"] p,
+.stApp [data-testid="stAlert"] p,
+.stApp [data-testid="stAlert"] span,
+.stApp .stButton > button,
+.stApp .stButton > button p,
+.stApp .stButton > button span {
+  color:var(--ink) !important;
+}
+.stApp [data-testid="stCaptionContainer"],
+.stApp [data-testid="stCaptionContainer"] p,
+.stApp [data-testid="stCaptionContainer"] span { color:var(--muted) !important; }
+.stApp a:not(.hero a) { color:#7dd3fc !important; }
+.stApp button[data-baseweb="tab"][aria-selected="true"],
+.stApp button[data-baseweb="tab"][aria-selected="true"] * { color:var(--blue) !important; }
+.stApp .hero,.stApp .hero * { color:#fff !important; }
 [data-testid="stMetric"],[data-testid="stExpander"],.stButton > button,
 [data-baseweb="select"] > div,[data-testid="stTextInput"] input { background:var(--surface) !important; color:var(--ink) !important; }
 [data-testid="stMetricLabel"],[data-testid="stMetricLabel"] p { color:var(--muted) !important; }
 [data-testid="stMetricValue"],[data-testid="stMetricValue"] div { color:var(--ink) !important; }
+[data-testid="stAlert"] { background:var(--surface) !important; color:var(--ink) !important; border-color:var(--line) !important; }
 [data-testid="stDataFrame"],[data-testid="stDataFrame"] [role="grid"] { background:var(--surface) !important; color:var(--ink) !important; }
-[data-testid="stSidebarCollapseButton"] button,[data-testid="stBaseButton-headerNoPadding"] { color:var(--ink) !important; }
+[data-testid="stDataFrame"] [role="columnheader"],
+[data-testid="stDataFrame"] [role="columnheader"] *,
+[data-testid="stDataFrame"] [data-testid="stElementToolbar"] button,
+[data-testid="stDataFrame"] [data-testid="stElementToolbar"] button * { color:var(--ink) !important; }
+[data-testid="stDataFrame"] button svg,
+[data-testid="stElementToolbar"] button svg { color:var(--ink) !important; fill:var(--ink) !important; }
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapseButton"] button *,
+[data-testid="stBaseButton-headerNoPadding"],
+[data-testid="stBaseButton-headerNoPadding"] * { color:var(--ink) !important; }
+[data-testid="stHeader"] button svg,
+[data-testid="stSidebarCollapseButton"] svg { color:var(--ink) !important; fill:var(--ink) !important; }
+
+/* I menu BaseWeb vengono montati fuori da .stApp: per questo richiedono
+   selettori globali e sono il caso che in precedenza restava bianco. */
+body [data-baseweb="popover"] > div,
+body [data-baseweb="menu"],
+body ul[role="listbox"],
+body div[role="listbox"],
+body [data-baseweb="calendar"] {
+  background:var(--control-bg) !important;
+  color:var(--ink) !important;
+  border-color:var(--line) !important;
+}
+body [data-baseweb="popover"] [role="option"],
+body [data-baseweb="popover"] [role="option"] *,
+body [data-baseweb="menu"] li,
+body [data-baseweb="menu"] li *,
+body [data-baseweb="calendar"] * { color:var(--ink) !important; }
+body [data-baseweb="popover"] [role="option"] { background:var(--control-bg) !important; }
+body [data-baseweb="popover"] [role="option"]:hover,
+body [data-baseweb="popover"] [role="option"][aria-selected="true"] { background:#1d4ed8 !important; }
+body [data-baseweb="popover"] [role="option"]:hover *,
+body [data-baseweb="popover"] [role="option"][aria-selected="true"] * { color:#fff !important; }
+body [data-baseweb="tooltip"],body [role="tooltip"] {
+  background:#111827 !important; color:var(--ink) !important; border:1px solid var(--line) !important;
+}
+body [data-baseweb="tooltip"] *,body [role="tooltip"] * { color:var(--ink) !important; }
 hr { border-color:var(--line) !important; }
 </style>
 """,
