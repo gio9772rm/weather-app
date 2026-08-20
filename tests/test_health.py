@@ -1,33 +1,41 @@
 from __future__ import annotations
 
 import pandas as pd
+from sqlalchemy.exc import SQLAlchemyError
 
 import data_access
 from config import Settings
 
 
-def test_health_snapshot_keeps_database_timestamp_types_separate(monkeypatch):
+def test_health_snapshot_reads_v3_sources_independently(monkeypatch):
     current = pd.Timestamp.now(tz="UTC")
-    captured: dict[str, str] = {}
+    queries: list[str] = []
 
     def fake_read(query: str, params=None):
-        captured["query"] = query
-        return pd.DataFrame(
-            [
-                {
-                    "station_time": current - pd.Timedelta(minutes=5),
-                    "blend_issued": (current - pd.Timedelta(minutes=10)).isoformat(),
-                    "blend_until": current + pd.Timedelta(days=7),
-                    "legacy_time": (current - pd.Timedelta(hours=1)).to_pydatetime(),
-                }
-            ]
-        )
+        queries.append(query)
+        if "station_raw" in query:
+            return pd.DataFrame(
+                [{"station_time": current - pd.Timedelta(minutes=5)}]
+            )
+        if "forecast_blend" in query:
+            return pd.DataFrame(
+                [
+                    {
+                        "forecast_issued": (
+                            current - pd.Timedelta(minutes=10)
+                        ).isoformat(),
+                        "forecast_until": current + pd.Timedelta(days=7),
+                    }
+                ]
+            )
+        raise AssertionError("The legacy table must not be queried for V3 data")
 
     monkeypatch.setattr(data_access, "_read", fake_read)
 
     snapshot = data_access.health_snapshot(Settings.from_env())
 
-    assert "COALESCE" not in captured["query"].upper()
+    assert all("COALESCE" not in query.upper() for query in queries)
+    assert all("forecast_ow" not in query for query in queries)
     assert snapshot["station_status"] == "online"
     assert snapshot["forecast_status"] == "online"
     assert snapshot["forecast_until"] == current + pd.Timedelta(days=7)
@@ -38,16 +46,17 @@ def test_health_snapshot_falls_back_to_legacy_forecast(monkeypatch):
     legacy_time = current - pd.Timedelta(minutes=20)
 
     def fake_read(query: str, params=None):
-        return pd.DataFrame(
-            [
-                {
-                    "station_time": current - pd.Timedelta(minutes=5),
-                    "blend_issued": None,
-                    "blend_until": pd.NaT,
-                    "legacy_time": legacy_time,
-                }
-            ]
-        )
+        if "station_raw" in query:
+            return pd.DataFrame(
+                [{"station_time": current - pd.Timedelta(minutes=5)}]
+            )
+        if "forecast_blend" in query:
+            return pd.DataFrame(
+                [{"forecast_issued": None, "forecast_until": pd.NaT}]
+            )
+        if "forecast_ow" in query:
+            return pd.DataFrame([{"legacy_time": legacy_time}])
+        raise AssertionError(f"Unexpected query: {query}")
 
     monkeypatch.setattr(data_access, "_read", fake_read)
 
@@ -56,3 +65,12 @@ def test_health_snapshot_falls_back_to_legacy_forecast(monkeypatch):
     assert snapshot["forecast_status"] == "online"
     assert snapshot["forecast_issued"] == legacy_time
     assert snapshot["forecast_until"] == legacy_time
+
+
+def test_read_handles_database_outage_during_schema_check(monkeypatch):
+    def unavailable():
+        raise SQLAlchemyError("temporary database outage")
+
+    monkeypatch.setattr(data_access, "ensure_schema", unavailable)
+
+    assert data_access._read("SELECT 1").empty

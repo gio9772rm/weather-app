@@ -14,8 +14,8 @@ from db import ensure_schema, get_engine
 
 
 def _read(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
-    ensure_schema()
     try:
+        ensure_schema()
         with get_engine().connect() as connection:
             frame = pd.read_sql(text(query), connection, params=params or {})
     except SQLAlchemyError:
@@ -152,36 +152,31 @@ def load_recent_logs(limit: int = 12) -> pd.DataFrame:
 
 
 def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
-    frame = _read(
-        "SELECT "
-        "(SELECT MAX(time) FROM station_raw) AS station_time,"
-        "(SELECT MAX(issued_at) FROM forecast_blend) AS blend_issued,"
-        "(SELECT MAX(valid_time) FROM forecast_blend) AS blend_until,"
-        "(SELECT MAX(time) FROM forecast_ow) AS legacy_time"
+    station_frame = _read(
+        "SELECT MAX(time) AS station_time FROM station_raw"
+    )
+    blend_frame = _read(
+        "SELECT MAX(issued_at) AS forecast_issued, "
+        "MAX(valid_time) AS forecast_until FROM forecast_blend"
     )
     now = pd.Timestamp.now(tz="UTC")
-    if frame.empty:
-        return {
-            "station_status": "offline",
-            "forecast_status": "offline",
-            "station_time": pd.NaT,
-            "forecast_issued": pd.NaT,
-            "forecast_until": pd.NaT,
-        }
-    row = frame.iloc[0]
-    station_time = pd.to_datetime(row.get("station_time"), utc=True, errors="coerce")
-    blend_issued = pd.to_datetime(
-        row.get("blend_issued"), utc=True, errors="coerce"
-    )
-    blend_until = pd.to_datetime(row.get("blend_until"), utc=True, errors="coerce")
-    legacy_time = pd.to_datetime(
-        row.get("legacy_time"), utc=True, errors="coerce"
-    )
-    # Existing PostgreSQL installations can have native timestamp columns in the
-    # legacy table while V3 uses portable text timestamps. Choosing the fallback
-    # in Python avoids a PostgreSQL COALESCE type mismatch.
-    forecast_issued = blend_issued if not pd.isna(blend_issued) else legacy_time
-    forecast_until = blend_until if not pd.isna(blend_until) else legacy_time
+
+    station_time = _timestamp_from_frame(station_frame, "station_time")
+    forecast_issued = _timestamp_from_frame(blend_frame, "forecast_issued")
+    forecast_until = _timestamp_from_frame(blend_frame, "forecast_until")
+
+    # Query the legacy table only when V3 has no usable timestamps. Keeping these
+    # reads independent prevents one incompatible legacy table from hiding the
+    # healthy station and V3 forecast status.
+    if pd.isna(forecast_issued) or pd.isna(forecast_until):
+        legacy_frame = _read(
+            "SELECT MAX(time) AS legacy_time FROM forecast_ow"
+        )
+        legacy_time = _timestamp_from_frame(legacy_frame, "legacy_time")
+        if pd.isna(forecast_issued):
+            forecast_issued = legacy_time
+        if pd.isna(forecast_until):
+            forecast_until = legacy_time
     station_age = (
         (now - station_time).total_seconds() / 60
         if not pd.isna(station_time)
@@ -215,6 +210,12 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
         "station_age_minutes": station_age,
         "forecast_age_minutes": forecast_age,
     }
+
+
+def _timestamp_from_frame(frame: pd.DataFrame, column: str) -> Any:
+    if frame.empty or column not in frame:
+        return pd.NaT
+    return pd.to_datetime(frame.iloc[0].get(column), utc=True, errors="coerce")
 
 
 def daily_forecast(frame: pd.DataFrame, timezone_name: str) -> pd.DataFrame:
