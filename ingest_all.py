@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings
@@ -33,8 +34,8 @@ log = logging.getLogger("ingest_all")
 
 
 class FileLock:
-    def __init__(self, stale_seconds: int = 1800):
-        self.path = Path(tempfile.gettempdir()) / "weather_app_v3_ingest.lock"
+    def __init__(self, stale_seconds: int = 1800, path: Path | None = None):
+        self.path = path or Path(tempfile.gettempdir()) / "weather_app_v3_ingest.lock"
         self.stale_seconds = stale_seconds
         self.file_descriptor: int | None = None
 
@@ -65,6 +66,59 @@ class FileLock:
             self.path.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+class PipelineLock:
+    """Prevent overlapping ingestion across Render, GitHub and local launches.
+
+    PostgreSQL advisory locks coordinate independent machines and disappear
+    automatically if a process is interrupted. SQLite keeps the existing local
+    file lock because it has no cross-process advisory-lock primitive.
+    """
+
+    advisory_key = 0x4D4554454F5633  # ASCII-ish stable key: ``METEOV3``.
+
+    def __init__(self, file_lock: FileLock | None = None):
+        self.file_lock = file_lock or FileLock()
+        self.connection: Connection | None = None
+        self.uses_database_lock = False
+
+    def acquire(self) -> bool:
+        engine = get_engine()
+        if engine.dialect.name != "postgresql":
+            return self.file_lock.acquire()
+
+        connection = engine.connect()
+        try:
+            acquired = bool(
+                connection.execute(
+                    text("SELECT pg_try_advisory_lock(:key)"),
+                    {"key": self.advisory_key},
+                ).scalar_one()
+            )
+        except Exception:
+            connection.close()
+            raise
+        if not acquired:
+            connection.close()
+            return False
+        self.connection = connection
+        self.uses_database_lock = True
+        return True
+
+    def release(self) -> None:
+        if self.uses_database_lock and self.connection is not None:
+            try:
+                self.connection.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": self.advisory_key},
+                )
+            finally:
+                self.connection.close()
+                self.connection = None
+                self.uses_database_lock = False
+            return
+        self.file_lock.release()
 
 
 def _safe_message(value: Any) -> str:
@@ -224,11 +278,25 @@ def adaptive_station_backfill_hours(
     return expanded
 
 
+def station_source_age_minutes(
+    latest_station_time: Any,
+    *,
+    now: pd.Timestamp | None = None,
+) -> float:
+    """Return the age of the newest source sample, never a negative value."""
+    latest = pd.to_datetime(latest_station_time, utc=True, errors="coerce")
+    if pd.isna(latest):
+        return float("inf")
+    current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    return max(0.0, (current - latest).total_seconds() / 60.0)
+
+
 def run_all(
     *,
     backfill_hours: int | None = None,
     skip_station: bool = False,
     force_forecast: bool = False,
+    max_station_age_minutes: int | None = None,
 ) -> dict[str, Any]:
     ensure_schema()
     cfg = Settings.from_env()
@@ -236,18 +304,32 @@ def run_all(
 
     if not skip_station:
         identifier, _ = _log_start("station")
+        rows_written = 0
         try:
             effective_backfill = adaptive_station_backfill_hours(cfg, backfill_hours)
             station = run_station_ingest(effective_backfill, cfg)
             station["backfill_hours"] = effective_backfill
+            station["source_age_minutes"] = station_source_age_minutes(
+                station.get("latest_station_time")
+            )
             result["station"] = station
+            rows_written = int(station.get("rows") or 0)
+            if (
+                max_station_age_minutes is not None
+                and station["source_age_minutes"] > max_station_age_minutes
+            ):
+                raise RuntimeError(
+                    "Ecowitt ha risposto, ma il campione più recente ha "
+                    f"{station['source_age_minutes']:.1f} minuti "
+                    f"(limite {max_station_age_minutes})"
+                )
             _log_finish(
                 identifier, "success", station["rows"], "; ".join(station["warnings"])
             )
         except Exception as exc:  # noqa: BLE001 - log the component and continue with forecast
             message = _safe_message(exc)
             result["errors"].append(message)
-            _log_finish(identifier, "error", 0, message)
+            _log_finish(identifier, "error", rows_written, message)
 
     if forecast_is_due(cfg, force_forecast):
         identifier, _ = _log_start("forecast")
@@ -282,9 +364,15 @@ def main() -> int:
     parser.add_argument("--backfill-hours", type=int, default=None)
     parser.add_argument("--skip-station", action="store_true")
     parser.add_argument("--force-forecast", action="store_true")
+    parser.add_argument(
+        "--max-station-age-minutes",
+        type=int,
+        default=Settings.from_env().station_max_source_age_minutes,
+        help="fallisce se Ecowitt non restituisce un campione abbastanza recente",
+    )
     args = parser.parse_args()
 
-    lock = FileLock()
+    lock = PipelineLock()
     if not lock.acquire():
         log.warning("Un'altra pipeline è già in esecuzione")
         return 0
@@ -293,6 +381,7 @@ def main() -> int:
             backfill_hours=args.backfill_hours,
             skip_station=args.skip_station,
             force_forecast=args.force_forecast,
+            max_station_age_minutes=args.max_station_age_minutes,
         )
     finally:
         lock.release()

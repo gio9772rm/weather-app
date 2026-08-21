@@ -12,23 +12,24 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
-- un'unica pipeline GitHub Actions, idempotente e compatibile con PostgreSQL/SQLite;
+- acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - migrazione additiva: lo schema esistente viene esteso senza cancellare le osservazioni.
 
 ## Architettura
 
 ```mermaid
 flowchart TD
-  E["Ecowitt Cloud"] --> P["Pipeline GitHub Actions"]
+  E["Ecowitt Cloud"] --> P["Cron Job Render · ogni 5 min"]
   OM["Open-Meteo"] --> P
   OW["OpenWeather"] --> P
   P --> DB["PostgreSQL / SQLite"]
+  GH["GitHub · riconciliazione 7 giorni"] --> DB
   DB --> UI["Dashboard Streamlit su Render"]
   DB --> Q["Verifica e calibrazione locale"]
   Q --> DB
 ```
 
-La pipeline gira ogni 10 minuti. I dati della stazione vengono aggiornati a ogni esecuzione; i provider di previsione vengono interrogati una volta l'ora, salvo aggiornamento manuale forzato.
+Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, perché i suoi eventi pianificati possono subire ritardi.
 
 ## Avvio rapido su Windows 11
 
@@ -78,7 +79,8 @@ Backfill Ecowitt di 7 giorni:
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
 | `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 168 ore (7 giorni) |
-| `STATION_STALE_MINUTES` | no | soglia stato stazione, default 45 |
+| `STATION_STALE_MINUTES` | no | soglia stato stazione, default 20 |
+| `STATION_MAX_SOURCE_AGE_MINUTES` | no | fa fallire l'ingest se l'ultimo campione Ecowitt è troppo vecchio; default 20 |
 | `SCORE_LOOKBACK_DAYS` | no | storico usato per valutare i provider, default 60 |
 
 ## Qualità della previsione
@@ -96,12 +98,14 @@ All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali
 
 ## Continuità e recupero dei dati
 
-L'apertura della dashboard non controlla l'archiviazione: GitHub Actions interroga Ecowitt e salva direttamente su PostgreSQL anche quando Render o il browser non sono attivi.
+L'apertura della dashboard non controlla l'archiviazione: il Cron Job Render interroga Ecowitt e salva direttamente su PostgreSQL anche quando il servizio web o il browser non sono attivi.
 
-- il recupero ordinario parte ogni 10 minuti ai minuti `03, 13, 23, 33, 43, 53` e rilegge almeno le ultime 2 ore;
+- il recupero ordinario parte ogni 5 minuti e rilegge almeno le ultime 2 ore;
 - se temperatura, umidità, pressione o vento risultano arretrati, la finestra cresce automaticamente fino a 168 ore;
-- ogni giorno alle `03:17 UTC` una riconciliazione rilegge almeno le ultime 48 ore, aggiornando le righe in modo idempotente;
+- ogni giorno alle `03:17 UTC` GitHub rilegge le ultime 168 ore, aggiornando le righe in modo idempotente;
 - il workflow manuale resta disponibile per recuperi straordinari fino a 720 ore.
+
+Render impedisce due esecuzioni contemporanee dello stesso Cron Job. In aggiunta, la pipeline usa un advisory lock PostgreSQL condiviso: un avvio manuale o la riconciliazione GitHub non possono sovrapporsi all'acquisizione Render. Un campione più vecchio di 20 minuti rende l'esecuzione rossa invece di registrare un falso successo.
 
 Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. Un'interruzione di corrente, sensori o connessione della console può richiedere il recupero dalla memoria locale del dispositivo, se disponibile.
 
@@ -159,4 +163,4 @@ Segui [MIGRAZIONE_PASSO_PASSO.md](MIGRAZIONE_PASSO_PASSO.md). Contiene la proced
 - Database locali, fogli storici, dump Ecowitt e cache non sono tracciati.
 - La loro eliminazione dalla versione corrente non riscrive automaticamente la vecchia cronologia Git; una eventuale bonifica storica va eseguita come operazione separata e coordinata.
 - Vengono conservati 120 giorni di emissioni, 180 giorni di punteggi e 30 giorni di log tecnici per limitare la crescita del database.
-- `render.yaml` definisce solo il servizio web: il vecchio cron Render deve essere sospeso manualmente dopo l'attivazione del workflow GitHub.
+- `render.yaml` descrive sia il servizio web sia il Cron Job Render; le chiavi restano variabili segrete e non vengono salvate nel repository.

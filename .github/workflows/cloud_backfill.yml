@@ -50,5 +50,6 @@ jobs:
           LON: ${{ vars.LON || '12.4964' }}
           ELEVATION_M: ${{ vars.ELEVATION_M || '20' }}
           LOCAL_TZ: Europe/Rome
+          STATION_MAX_SOURCE_AGE_MINUTES: "20"
         run: |
           python ingest_all.py --backfill-hours "${{ github.event.inputs.hours }}" --force-forecast

@@ -130,7 +130,7 @@ Su GitHub:
 5. apri **Files changed** e verifica che `.env`, database e fogli storici non siano presenti;
 6. fai **Merge pull request** solo quando il check è verde.
 
-## 6. Avvia la prima pipeline cloud
+## 6. Prova la riconciliazione GitHub
 
 Dopo il merge:
 
@@ -143,18 +143,26 @@ Dopo il merge:
 
 Il primo avvio crea le nuove tabelle e aggiunge colonne a quelle esistenti. L'operazione è idempotente: eseguirla più volte non duplica i record.
 
+GitHub resta la rete di sicurezza giornaliera e il recupero manuale. L'acquisizione frequente viene eseguita dal Cron Job Render, perché la pianificazione GitHub può essere ritardata.
+
 La calibrazione dei provider non appare immediatamente. Servono previsioni archiviate che siano poi diventate osservabili; i primi punteggi arrivano normalmente nelle ore successive.
 
-## 7. Disattiva il cron duplicato su Render
+## 7. Riattiva e configura il Cron Job Render
 
-Questa operazione è manuale e importante: evita che GitHub e Render scrivano contemporaneamente.
+Il Cron Job Render è l'acquisizione primaria. Il codice usa anche un lock PostgreSQL, quindi la riconciliazione GitHub può partire senza creare scritture concorrenti.
 
 1. apri **Render Dashboard**;
-2. seleziona il vecchio servizio cron, normalmente `weather-ingest-ecowitt`;
+2. seleziona il Cron Job esistente, normalmente `weather-app`;
 3. apri **Settings**;
-4. scegli **Suspend** per le prime 24 ore; non cancellarlo subito;
-5. non sospendere il PostgreSQL e non cancellare il servizio web;
-6. dopo 24 ore di pipeline GitHub regolare, puoi eliminare definitivamente il vecchio cron.
+4. imposta branch `main` e auto-deploy dopo i check CI;
+5. usa build command `pip install -r requirements-ingest.txt`;
+6. usa command `python ingest_all.py --backfill-hours 2 --max-station-age-minutes 20`;
+7. imposta schedule `*/5 * * * *` (orari cron in UTC);
+8. verifica le variabili `DATABASE_URL`, le tre Ecowitt, `OPENWEATHER_API_KEY`, coordinate e fuso;
+9. scegli **Resume service**, poi **Trigger Run**;
+10. nei log verifica `Stazione: ... righe; ultimo dato ...` e l'assenza di errori.
+
+Il file `render.yaml` conserva questa configurazione senza contenere i valori dei secret. Se il servizio è già esistente, controlla comunque le variabili nel pannello: i placeholder `sync: false` non sostituiscono i secret già configurati.
 
 ## 8. Aggiorna il servizio web Render
 
@@ -164,22 +172,23 @@ Se il servizio esiste già:
 2. verifica che punti al ramo `main`;
 3. usa build command `pip install -r requirements.txt`;
 4. usa start command `streamlit run app_streamlit.py --server.address 0.0.0.0 --server.port $PORT`;
-5. lascia come secret soltanto `DATABASE_URL`;
+5. per il servizio web lascia come secret soltanto `DATABASE_URL`;
 6. configura `LOCATION_NAME`, `LAT`, `LON`, `ELEVATION_M` e `LOCAL_TZ=Europe/Rome`;
 7. premi **Manual Deploy → Deploy latest commit**.
 
-Le chiavi Ecowitt e OpenWeather servono al workflow GitHub, non alla dashboard pubblica Render.
+Le chiavi Ecowitt e OpenWeather servono al Cron Job Render e alla riconciliazione GitHub, non alla dashboard pubblica Render.
 
-Se gestisci Render tramite Blueprint, sincronizza il nuovo `render.yaml`: contiene soltanto il servizio web e non crea un secondo cron.
+Se gestisci Render tramite Blueprint, sincronizza il nuovo `render.yaml`: descrive il servizio web e il Cron Job `weather-app`. Non creare un secondo cron con un nome diverso.
 
 ## 9. Verifica finale
 
 Nelle prime 24 ore controlla:
 
-- GitHub Actions ogni 10 minuti senza errori ripetuti;
-- orario dell'ultimo dato stazione inferiore a 45 minuti;
+- Cron Job Render ogni 5 minuti senza errori ripetuti;
+- orario dell'ultimo dato stazione normalmente inferiore a 10 minuti e sempre sotto 20;
+- riconciliazione GitHub giornaliera verde;
 - emissione previsione inferiore a 3 ore;
-- nessun cron Render ancora attivo;
+- un solo Cron Job Render attivo;
 - crescita regolare delle tabelle `forecast_runs`, `forecast_scores` e `forecast_blend`;
 - assenza di `.env`, `.db`, `.xlsx` e dump Ecowitt nella scheda **Code** di GitHub.
 
@@ -211,7 +220,7 @@ Verifica che `DATABASE_URL` sia l'URL esterno del PostgreSQL, che il database si
 
 ### Dashboard online ma dati vecchi
 
-Controlla prima GitHub Actions. Se il job è verde, verifica che Actions e Render usino la stessa `DATABASE_URL`.
+Controlla prima i **Runs** del Cron Job Render. Se sono verdi, verifica che Cron Job, GitHub Actions e servizio web usino lo stesso `DATABASE_URL` e che l'ultimo campione nei log abbia meno di 20 minuti.
 
 ### Il patch non si applica
 
@@ -228,8 +237,8 @@ Poi riparti da un clone pulito di `main` oppure usa il sorgente completo incluso
 
 Se la pipeline cloud presenta un problema:
 
-1. sospendi **Meteo V3 - Pipeline** da GitHub Actions;
-2. riattiva temporaneamente il vecchio cron Render, se lo avevi soltanto sospeso;
+1. sospendi temporaneamente il Cron Job Render;
+2. avvia manualmente **Meteo V3 - Pipeline** da GitHub Actions per recuperare i dati;
 3. su GitHub usa **Revert** sulla pull request V3 oppure crea un revert con Git;
 4. ridistribuisci l'ultimo commit stabile su Render.
 

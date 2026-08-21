@@ -127,7 +127,7 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
 )
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def station_data(hours: int) -> pd.DataFrame:
     return load_station(hours)
 
@@ -137,7 +137,7 @@ def forecast_data() -> pd.DataFrame:
     return load_forecast()
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def health_data() -> dict[str, Any]:
     return health_snapshot(Settings.from_env())
 
@@ -147,7 +147,7 @@ def score_data() -> pd.DataFrame:
     return load_provider_scores()
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def log_data() -> pd.DataFrame:
     return load_recent_logs()
 
@@ -1078,7 +1078,8 @@ with st.sidebar:
     auto_refresh = st.toggle("Aggiorna la pagina ogni 5 min", value=True)
     st.divider()
     st.caption(
-        "I dati vengono aggiornati dal workflow GitHub. Il pulsante ricarica solo la pagina e non espone chiavi API."
+        "I dati vengono acquisiti dal Cron Job Render ogni 5 minuti e riconciliati "
+        "ogni giorno da GitHub. Il pulsante ricarica soltanto la pagina."
     )
     if st.button("Ricarica dati", width="stretch"):
         st.cache_data.clear()

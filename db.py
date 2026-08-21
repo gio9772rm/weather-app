@@ -45,11 +45,16 @@ def get_engine(echo: bool = False) -> Engine:
     connect_args: dict[str, object] = {}
     if db_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
+    elif db_url.startswith("postgresql"):
+        # Fail quickly on a sleeping/restarting database. The five-minute cron
+        # and the idempotent backfill will retry safely on the next execution.
+        connect_args["connect_timeout"] = 15
 
     engine = create_engine(
         db_url,
         echo=echo,
         pool_pre_ping=True,
+        pool_recycle=300,
         future=True,
         connect_args=connect_args,
     )
