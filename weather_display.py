@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import pandas as pd
+
 
 def compass_direction(value: Any) -> str:
     """Return an Italian eight-point compass label and normalized degrees."""
@@ -112,3 +114,13 @@ def weather_cell_style(value: Any, metric: str) -> str:
             return orange
         return red
     return ""
+
+
+def forecast_interval(frame: pd.DataFrame, hours: int) -> pd.DataFrame:
+    """Keep the first forecast row and then one row every requested interval."""
+    if frame.empty:
+        return frame.copy()
+    step = max(1, int(hours))
+    if step == 1:
+        return frame.copy()
+    return frame.iloc[::step].copy()

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from data_access import daily_forecast
-from weather_display import compass_direction, weather_cell_style
+from weather_display import compass_direction, forecast_interval, weather_cell_style
 
 
 def test_compass_direction_normalizes_degrees() -> None:
@@ -54,3 +54,11 @@ def test_weather_cell_styles_flag_thresholds() -> None:
     assert "#bbf7d0" in weather_cell_style(2, "bortle")
     assert "#fecaca" in weather_cell_style(8, "bortle")
     assert weather_cell_style(None, "wind") == ""
+
+
+def test_forecast_interval_keeps_first_row_and_requested_step() -> None:
+    frame = pd.DataFrame({"value": list(range(8))})
+
+    assert forecast_interval(frame, 1)["value"].tolist() == list(range(8))
+    assert forecast_interval(frame, 3)["value"].tolist() == [0, 3, 6]
+    assert forecast_interval(frame, 6)["value"].tolist() == [0, 6]
