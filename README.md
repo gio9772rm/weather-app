@@ -11,6 +11,7 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 - combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
+- stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - un'unica pipeline GitHub Actions, idempotente e compatibile con PostgreSQL/SQLite;
 - migrazione additiva: lo schema esistente viene esteso senza cancellare le osservazioni.
 
@@ -76,6 +77,7 @@ Backfill Ecowitt di 7 giorni:
 | `LOCATION_NAME`, `LOCAL_TZ` | sì | intestazione e orari locali |
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
+| `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 24 ore |
 | `STATION_STALE_MINUTES` | no | soglia stato stazione, default 45 |
 | `SCORE_LOOKBACK_DAYS` | no | storico usato per valutare i provider, default 60 |
 
@@ -101,6 +103,19 @@ La V3 separa:
 - `rain_mm`: incremento realmente caduto nel singolo campione.
 
 I dati V1/V2 privi di sorgente non vengono sommati come quantità di pioggia, perché in quelle versioni il campo poteva contenere un tasso. Temperatura, umidità, pressione e vento storici restano disponibili.
+
+Pioggia, neve e probabilità vengono inoltre vincolate ai rispettivi limiti fisici durante la combinazione e durante la lettura: eventuali piccoli valori negativi prodotti dalla correzione del bias vengono riportati a zero.
+
+## SQM e inquinamento luminoso
+
+La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario dell'[Atlante dell'inquinamento luminoso 2025 di David Lorenz](https://djlorenz.github.io/astronomy/lp/). Mostra:
+
+- luminosità zenitale stimata in mag/arcsec² (indicata come SQM stimato);
+- indice e zona LP;
+- classe Bortle indicativa;
+- riepilogo giornaliero con qualità meteo notturna, nuvole, vento e illuminazione lunare.
+
+Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale serve un fotometro SQM calibrato. Anche la Bortle è una valutazione visuale dell'intero cielo e la conversione dalla sola luminosità zenitale è necessariamente approssimativa.
 
 ## Test
 

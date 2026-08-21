@@ -49,6 +49,7 @@ class Settings:
     station_backfill_hours: int
     station_stale_minutes: int
     admin_token: str
+    station_auto_backfill_max_hours: int = 24
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -71,6 +72,13 @@ class Settings:
             score_lookback_days=max(7, _as_int(_first_env("SCORE_LOOKBACK_DAYS"), 60)),
             station_backfill_hours=max(
                 1, _as_int(_first_env("STATION_BACKFILL_HOURS"), 2)
+            ),
+            station_auto_backfill_max_hours=max(
+                2,
+                min(
+                    168,
+                    _as_int(_first_env("STATION_AUTO_BACKFILL_MAX_HOURS"), 24),
+                ),
             ),
             station_stale_minutes=max(
                 10, _as_int(_first_env("STATION_STALE_MINUTES"), 45)

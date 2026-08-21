@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import tempfile
 import time
@@ -15,6 +16,7 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings
 from db import ensure_schema, get_engine, get_meta, set_meta
@@ -164,6 +166,64 @@ def prune_derived_history() -> None:
         )
 
 
+def adaptive_station_backfill_hours(
+    cfg: Settings,
+    requested_hours: int | None = None,
+    *,
+    now: pd.Timestamp | None = None,
+) -> int:
+    """Expand the Ecowitt history window when a primary sensor has gone stale."""
+    base = (
+        cfg.station_backfill_hours
+        if requested_hours is None
+        else max(0, int(requested_hours))
+    )
+    cap = max(base, cfg.station_auto_backfill_max_hours)
+    current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    query = text(
+        "SELECT MAX(CASE WHEN temp_c IS NOT NULL THEN time END) AS temperature_time, "
+        "MAX(CASE WHEN humidity IS NOT NULL THEN time END) AS humidity_time, "
+        "MAX(CASE WHEN pressure_hpa IS NOT NULL THEN time END) AS pressure_time, "
+        "MAX(CASE WHEN wind_kmh IS NOT NULL THEN time END) AS wind_time "
+        "FROM station_raw"
+    )
+    try:
+        with get_engine().connect() as connection:
+            latest = connection.execute(query).mappings().first()
+    except SQLAlchemyError as exc:
+        log.warning(
+            "Backfill adattivo non calcolabile, uso %s ore: %s",
+            base,
+            _safe_message(exc),
+        )
+        return base
+    if not latest:
+        return cap
+
+    timestamps = [
+        pd.to_datetime(latest.get(column), utc=True, errors="coerce")
+        for column in (
+            "temperature_time",
+            "humidity_time",
+            "pressure_time",
+            "wind_time",
+        )
+    ]
+    if any(pd.isna(timestamp) for timestamp in timestamps):
+        expanded = cap
+    else:
+        oldest = min(timestamps)
+        age_hours = max(0.0, (current - oldest).total_seconds() / 3600)
+        expanded = min(cap, max(base, math.ceil(age_hours) + 1))
+    if expanded > base:
+        log.warning(
+            "Dati primari incompleti o arretrati: backfill Ecowitt ampliato da %s a %s ore",
+            base,
+            expanded,
+        )
+    return expanded
+
+
 def run_all(
     *,
     backfill_hours: int | None = None,
@@ -177,7 +237,9 @@ def run_all(
     if not skip_station:
         identifier, _ = _log_start("station")
         try:
-            station = run_station_ingest(backfill_hours, cfg)
+            effective_backfill = adaptive_station_backfill_hours(cfg, backfill_hours)
+            station = run_station_ingest(effective_backfill, cfg)
+            station["backfill_hours"] = effective_backfill
             result["station"] = station
             _log_finish(
                 identifier, "success", station["rows"], "; ".join(station["warnings"])

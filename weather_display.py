@@ -95,4 +95,20 @@ def weather_cell_style(value: Any, metric: str) -> str:
         if number < 65:
             return yellow
         return green
+    if metric == "sqm":
+        if number >= 21.3:
+            return green
+        if number >= 20.2:
+            return yellow
+        if number >= 19.0:
+            return orange
+        return red
+    if metric == "bortle":
+        if number <= 3:
+            return green
+        if number <= 5:
+            return yellow
+        if number <= 7:
+            return orange
+        return red
     return ""

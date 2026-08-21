@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from astro_weather import astronomy_score, best_observing_windows, prepare_astronomy
+from astro_weather import (
+    astronomy_score,
+    best_observing_windows,
+    daily_astronomy_summary,
+    prepare_astronomy,
+)
 from config import Settings
 
 
@@ -21,6 +26,7 @@ def _settings() -> Settings:
         forecast_refresh_minutes=60,
         score_lookback_days=60,
         station_backfill_hours=2,
+        station_auto_backfill_max_hours=24,
         station_stale_minutes=45,
         admin_token="",
     )
@@ -68,3 +74,35 @@ def test_best_window_groups_consecutive_night_hours():
     windows = best_observing_windows(prepared)
     assert len(windows) == 1
     assert windows.iloc[0]["hours"] == 4
+
+
+def test_daily_astronomy_summary_combines_weather_and_moon():
+    times = pd.date_range("2026-08-21T20:00:00Z", periods=3, freq="h")
+    frame = pd.DataFrame(
+        {
+            "valid_time": times,
+            "is_day": 0,
+            "clouds": [10, 20, 30],
+            "precip_probability": 0,
+            "wind_kmh": [5, 10, 15],
+            "wind_gust_kmh": 18,
+            "visibility_m": 20000,
+            "temp_c": 18,
+            "dewpoint_c": 10,
+        }
+    )
+    prepared = prepare_astronomy(frame, _settings())
+    events = pd.DataFrame(
+        {
+            "date": [prepared.iloc[0]["local_time"].date()],
+            "moon_illumination": [42.0],
+        }
+    )
+
+    daily = daily_astronomy_summary(prepared, events)
+
+    assert len(daily) == 1
+    assert daily.iloc[0]["clouds_mean"] == 20
+    assert daily.iloc[0]["wind_mean"] == 10
+    assert daily.iloc[0]["visibility_km"] == 20
+    assert daily.iloc[0]["moon_illumination"] == 42
