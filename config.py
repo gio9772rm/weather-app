@@ -60,7 +60,9 @@ class Settings:
             elevation_m=_as_float(_first_env("ELEVATION_M"), 20.0),
             local_timezone=_first_env("LOCAL_TZ", default="Europe/Rome"),
             location_name=_first_env("LOCATION_NAME", default="Stazione meteo"),
-            openweather_api_key=_first_env("OPENWEATHER_API_KEY", "OWM_API_KEY"),
+            openweather_api_key=_first_env(
+                "OPENWEATHER_API_KEY", "OWM_API_KEY", "OW_API_KEY"
+            ),
             ecowitt_application_key=_first_env(
                 "ECOWITT_APPLICATION_KEY", "ECOWITT_APP_KEY", "APPLICATION_KEY"
             ),

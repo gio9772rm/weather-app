@@ -73,7 +73,7 @@ Backfill Ecowitt di 7 giorni:
 | `ECOWITT_APPLICATION_KEY` | stazione | application key Ecowitt |
 | `ECOWITT_API_KEY` | stazione | API key Ecowitt |
 | `ECOWITT_MAC` | stazione | MAC della console/gateway |
-| `OPENWEATHER_API_KEY` | consigliata | abilita il secondo provider; Open‑Meteo non richiede chiave |
+| `OPENWEATHER_API_KEY` | consigliata | abilita il secondo provider; sono accettati anche i nomi precedenti `OWM_API_KEY` e `OW_API_KEY` |
 | `LAT`, `LON`, `ELEVATION_M` | sì | posizione usata dai modelli e dall'astronomia |
 | `LOCATION_NAME`, `LOCAL_TZ` | sì | intestazione e orari locali |
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
