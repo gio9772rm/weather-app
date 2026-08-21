@@ -6,7 +6,12 @@ import pandas as pd
 from sqlalchemy import text
 
 from config import Settings
-from ingest_all import adaptive_station_backfill_hours
+from ingest_all import (
+    FileLock,
+    PipelineLock,
+    adaptive_station_backfill_hours,
+    station_source_age_minutes,
+)
 
 
 def _settings() -> Settings:
@@ -102,3 +107,30 @@ def test_default_automatic_recovery_window_is_seven_days(monkeypatch):
     monkeypatch.delenv("STATION_AUTO_BACKFILL_MAX_HOURS", raising=False)
 
     assert Settings.from_env().station_auto_backfill_max_hours == 168
+
+
+def test_station_source_age_detects_stale_and_future_samples():
+    now = pd.Timestamp("2026-08-21T12:00:00Z")
+
+    assert station_source_age_minutes(
+        "2026-08-21T11:42:30Z", now=now
+    ) == 17.5
+    assert station_source_age_minutes(
+        "2026-08-21T12:01:00Z", now=now
+    ) == 0.0
+    assert station_source_age_minutes("invalid", now=now) == float("inf")
+
+
+def test_sqlite_pipeline_lock_prevents_overlapping_local_runs(
+    sqlite_engine,
+    tmp_path,
+):
+    path = tmp_path / "pipeline.lock"
+    first = PipelineLock(FileLock(path=path))
+    second = PipelineLock(FileLock(path=path))
+
+    assert first.acquire() is True
+    assert second.acquire() is False
+    first.release()
+    assert second.acquire() is True
+    second.release()

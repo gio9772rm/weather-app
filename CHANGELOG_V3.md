@@ -1,5 +1,14 @@
 # Changelog Meteo V3
 
+## Acquisizione stabile su Render
+
+- il Cron Job Render torna a essere la sorgente primaria ogni 5 minuti;
+- GitHub Actions conserva una riconciliazione giornaliera idempotente di 7 giorni;
+- un advisory lock PostgreSQL impedisce sovrapposizioni fra Render, GitHub e avvii locali;
+- l'ingest fallisce se Ecowitt restituisce un campione più vecchio della soglia configurata;
+- la dashboard riduce a 60 secondi la cache di osservazioni, stato e log;
+- Python è fissato alla serie 3.11 per avere lo stesso runtime in CI e su Render.
+
 ## Previsioni
 
 - aggiunto Open‑Meteo `best_match` con passo orario e orizzonte configurabile fino a 7 giorni;

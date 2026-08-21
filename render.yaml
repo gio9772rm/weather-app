@@ -1,8 +1,11 @@
 services:
   - type: web
     name: weather-app-v3
-    env: python
-    plan: starter
+    runtime: python
+    region: frankfurt
+    plan: free
+    branch: main
+    autoDeployTrigger: checksPass
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app_streamlit.py --server.address 0.0.0.0 --server.port $PORT
     healthCheckPath: /_stcore/health
@@ -12,10 +15,56 @@ services:
       - key: LOCAL_TZ
         value: Europe/Rome
       - key: LOCATION_NAME
-        value: Stazione meteo
+        value: Stazione meteo Roma
       - key: LAT
-        value: "41.9028"
+        value: "41.9067235"
       - key: LON
-        value: "12.4964"
+        value: "12.3899144"
       - key: ELEVATION_M
         value: "20"
+      - key: STATION_STALE_MINUTES
+        value: "20"
+
+  # Acquisizione primaria: Render garantisce una sola esecuzione attiva per
+  # questo Cron Job. Il lock PostgreSQL protegge anche da avvii GitHub/locali.
+  - type: cron
+    name: weather-app
+    runtime: python
+    region: frankfurt
+    plan: starter
+    branch: main
+    autoDeployTrigger: checksPass
+    schedule: "*/5 * * * *"
+    buildCommand: pip install -r requirements-ingest.txt
+    startCommand: python ingest_all.py --backfill-hours 2 --max-station-age-minutes 20
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ECOWITT_APPLICATION_KEY
+        sync: false
+      - key: ECOWITT_API_KEY
+        sync: false
+      - key: ECOWITT_MAC
+        sync: false
+      - key: OPENWEATHER_API_KEY
+        sync: false
+      - key: LOCAL_TZ
+        value: Europe/Rome
+      - key: LOCATION_NAME
+        value: Stazione meteo Roma
+      - key: LAT
+        value: "41.9067235"
+      - key: LON
+        value: "12.3899144"
+      - key: ELEVATION_M
+        value: "20"
+      - key: STATION_BACKFILL_HOURS
+        value: "2"
+      - key: STATION_AUTO_BACKFILL_MAX_HOURS
+        value: "168"
+      - key: STATION_MAX_SOURCE_AGE_MINUTES
+        value: "20"
+      - key: FORECAST_REFRESH_MINUTES
+        value: "60"
+      - key: LOG_LEVEL
+        value: INFO

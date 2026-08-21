@@ -50,6 +50,7 @@ class Settings:
     station_stale_minutes: int
     admin_token: str
     station_auto_backfill_max_hours: int = 168
+    station_max_source_age_minutes: int = 20
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -81,9 +82,13 @@ class Settings:
                 ),
             ),
             station_stale_minutes=max(
-                10, _as_int(_first_env("STATION_STALE_MINUTES"), 45)
+                10, _as_int(_first_env("STATION_STALE_MINUTES"), 20)
             ),
             admin_token=_first_env("ADMIN_TOKEN"),
+            station_max_source_age_minutes=max(
+                10,
+                _as_int(_first_env("STATION_MAX_SOURCE_AGE_MINUTES"), 20),
+            ),
         )
 
     @property
