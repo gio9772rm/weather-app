@@ -77,7 +77,7 @@ Backfill Ecowitt di 7 giorni:
 | `LOCATION_NAME`, `LOCAL_TZ` | sì | intestazione e orari locali |
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
-| `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 24 ore |
+| `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 168 ore (7 giorni) |
 | `STATION_STALE_MINUTES` | no | soglia stato stazione, default 45 |
 | `SCORE_LOOKBACK_DAYS` | no | storico usato per valutare i provider, default 60 |
 
@@ -93,6 +93,17 @@ Il risultato combina quattro livelli:
 4. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
 
 All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali. La calibrazione inizia automaticamente appena previsioni archiviate e osservazioni si sovrappongono.
+
+## Continuità e recupero dei dati
+
+L'apertura della dashboard non controlla l'archiviazione: GitHub Actions interroga Ecowitt e salva direttamente su PostgreSQL anche quando Render o il browser non sono attivi.
+
+- il recupero ordinario parte ogni 10 minuti ai minuti `03, 13, 23, 33, 43, 53` e rilegge almeno le ultime 2 ore;
+- se temperatura, umidità, pressione o vento risultano arretrati, la finestra cresce automaticamente fino a 168 ore;
+- ogni giorno alle `03:17 UTC` una riconciliazione rilegge almeno le ultime 48 ore, aggiornando le righe in modo idempotente;
+- il workflow manuale resta disponibile per recuperi straordinari fino a 720 ore.
+
+Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. Un'interruzione di corrente, sensori o connessione della console può richiedere il recupero dalla memoria locale del dispositivo, se disponibile.
 
 ## Pioggia
 
