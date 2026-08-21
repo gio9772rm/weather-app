@@ -49,4 +49,8 @@ def test_weather_cell_styles_flag_thresholds() -> None:
     assert "#fed7aa" in weather_cell_style(82, "humidity")
     assert "#fecaca" in weather_cell_style(70, "gust")
     assert "#60a5fa" in weather_cell_style(90, "rain_probability")
+    assert "#bbf7d0" in weather_cell_style(21.7, "sqm")
+    assert "#fecaca" in weather_cell_style(18.2, "sqm")
+    assert "#bbf7d0" in weather_cell_style(2, "bortle")
+    assert "#fecaca" in weather_cell_style(8, "bortle")
     assert weather_cell_style(None, "wind") == ""

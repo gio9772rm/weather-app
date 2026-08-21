@@ -12,7 +12,13 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from astro_weather import astronomy_events, best_observing_windows, prepare_astronomy
+from astro_weather import (
+    astronomy_events,
+    best_observing_windows,
+    daily_astronomy_summary,
+    prepare_astronomy,
+)
+from chart_data import clip_forecast, merge_intervals, missing_forecast_segments
 from config import Settings
 from data_access import (
     daily_forecast,
@@ -21,6 +27,11 @@ from data_access import (
     load_provider_scores,
     load_recent_logs,
     load_station,
+)
+from light_pollution import (
+    LightPollutionError,
+    LightPollutionEstimate,
+    fetch_light_pollution,
 )
 from weather_display import compass_direction, weather_cell_style
 
@@ -60,6 +71,11 @@ section[data-testid="stSidebar"] { background:var(--sidebar-bg); border-right:1p
 .health-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.75rem 0 1.15rem; }
 .pill { display:inline-flex; align-items:center; gap:.38rem; padding:.42rem .72rem; border-radius:999px;
   font-size:.78rem; font-weight:700; border:1px solid var(--line); background:var(--surface); color:var(--ink); }
+.freshness-row { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem; margin:-.65rem 0 1rem; }
+.freshness-label { color:var(--muted); font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.freshness-chip { display:inline-flex; align-items:center; gap:.32rem; padding:.3rem .52rem; border-radius:9px;
+  border:1px solid var(--line); background:var(--surface-soft); color:var(--subtle); font-size:.71rem; }
+.freshness-chip .dot { width:.4rem; height:.4rem; }
 .dot { width:.48rem; height:.48rem; border-radius:99px; display:inline-block; }
 .online .dot { background:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,.12); }
 .delayed .dot { background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.12); }
@@ -134,6 +150,14 @@ def score_data() -> pd.DataFrame:
 @st.cache_data(ttl=180, show_spinner=False)
 def log_data() -> pd.DataFrame:
     return load_recent_logs()
+
+
+@st.cache_data(ttl=21_600, show_spinner=False)
+def light_pollution_data() -> tuple[LightPollutionEstimate | None, str | None]:
+    try:
+        return fetch_light_pollution(CFG.latitude, CFG.longitude), None
+    except LightPollutionError as exc:
+        return None, str(exc)
 
 
 @st.fragment(run_every=300)
@@ -448,6 +472,36 @@ def _style_score_table(table: pd.DataFrame, dark_mode: bool) -> Any:
     return styler.format(precision=2, na_rep="—")
 
 
+def _style_astronomy_table(table: pd.DataFrame, dark_mode: bool) -> Any:
+    styler = _base_table_style(table, dark_mode)
+    metrics = {
+        "SQM stimato": "sqm",
+        "Bortle ≈": "bortle",
+        "Qualità media": "confidence",
+        "Qualità migliore": "confidence",
+        "Nuvole notte %": "clouds",
+        "Vento notte km/h": "wind",
+    }
+    for column, metric in metrics.items():
+        if column in table:
+            styler = styler.map(
+                lambda value, metric=metric: weather_cell_style(value, metric),
+                subset=[column],
+            )
+    formats = {
+        "SQM stimato": "{:.2f}",
+        "Qualità media": "{:.0f}",
+        "Qualità migliore": "{:.0f}",
+        "Nuvole notte %": "{:.0f}",
+        "Vento notte km/h": "{:.1f}",
+        "Luna illuminata %": "{:.0f}",
+    }
+    return styler.format(
+        {column: pattern for column, pattern in formats.items() if column in table},
+        na_rep="—",
+    )
+
+
 def render_color_legend(kind: str = "weather") -> None:
     """Render a compact, theme-aware explanation of semantic table colours."""
     if kind == "scores":
@@ -464,6 +518,17 @@ def render_color_legend(kind: str = "weather") -> None:
             ("red", "Errore o servizio offline"),
         )
         note = "La colorazione aiuta a individuare rapidamente anomalie nella pipeline."
+    elif kind == "astronomy":
+        items = (
+            ("green", "Cielo più scuro / condizioni buone"),
+            ("yellow", "Condizioni intermedie"),
+            ("orange", "Inquinamento o meteo sfavorevole"),
+            ("red", "Cielo urbano / condizioni critiche"),
+        )
+        note = (
+            "Per SQM un numero più alto indica un cielo più scuro; per Bortle è "
+            "l'opposto: 1 è il cielo migliore, 9 il più luminoso."
+        )
     else:
         items = (
             ("green", "Regolare"),
@@ -522,6 +587,49 @@ def _health_pill(label: str, status: str, detail: str) -> str:
         f'<span class="pill {status}"><span class="dot"></span>{html.escape(label)}: '
         f'{html.escape(status.upper())}</span><span style="color:var(--muted);font-size:.78rem">{html.escape(detail)}</span>'
     )
+
+
+def _measurement_freshness_row(health: dict[str, Any]) -> str:
+    labels = {
+        "temperature": "Temperatura",
+        "humidity": "Umidità",
+        "pressure": "Pressione",
+        "wind": "Vento",
+    }
+    freshness = health.get("measurement_freshness") or {}
+    chips = []
+    for key, label in labels.items():
+        details = freshness.get(key) or {}
+        status = str(details.get("status") or "offline")
+        chips.append(
+            f'<span class="freshness-chip {html.escape(status)}">'
+            f'<span class="dot"></span>{html.escape(label)}: '
+            f'{html.escape(_age_text(details.get("age_minutes")))}</span>'
+        )
+    return (
+        '<div class="freshness-row"><span class="freshness-label">Ultime misure reali</span>'
+        + "".join(chips)
+        + "</div>"
+    )
+
+
+def _stale_measurement_labels(health: dict[str, Any], minutes: int = 30) -> list[str]:
+    labels = {
+        "temperature": "temperatura",
+        "humidity": "umidità",
+        "pressure": "pressione",
+        "wind": "vento",
+    }
+    freshness = health.get("measurement_freshness") or {}
+    stale = []
+    for key, label in labels.items():
+        value = pd.to_numeric(
+            pd.Series([(freshness.get(key) or {}).get("age_minutes")]),
+            errors="coerce",
+        ).iloc[0]
+        if pd.isna(value) or not np.isfinite(value) or value > minutes:
+            stale.append(label)
+    return stale
 
 
 def render_daily_cards(daily: pd.DataFrame) -> None:
@@ -588,19 +696,13 @@ def combined_chart(
     station: pd.DataFrame, forecast: pd.DataFrame, hours: int, theme: str
 ) -> go.Figure:
     now = pd.Timestamp.now(tz="UTC")
+    history_start = now - pd.Timedelta(hours=hours)
     observations = (
-        station[station["time"] >= now - pd.Timedelta(hours=hours)].copy()
+        station[station["time"] >= history_start].copy()
         if not station.empty
         else station
     )
-    future = (
-        forecast[
-            (forecast["valid_time"] >= now - pd.Timedelta(hours=1))
-            & (forecast["valid_time"] <= now + pd.Timedelta(hours=72))
-        ].copy()
-        if not forecast.empty
-        else forecast
-    )
+    future = clip_forecast(forecast, now, now + pd.Timedelta(hours=72))
     figure = make_subplots(
         rows=2,
         cols=1,
@@ -614,13 +716,72 @@ def combined_chart(
             go.Scatter(
                 x=observations["time"],
                 y=observations["temp_c"],
-                name="Stazione",
+                name="Temperatura misurata",
                 mode="lines",
                 line={"color": "#0b76b7", "width": 3},
-                hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.1f} °C<extra>Stazione</extra>",
+                connectgaps=False,
+                hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.1f} °C<extra>Misurata dalla stazione</extra>",
             ),
             row=1,
             col=1,
+        )
+
+    missing_temperature = missing_forecast_segments(
+        observations,
+        forecast,
+        "temp_c",
+        "temp_c",
+        now,
+        lookback_hours=min(hours, 3),
+    )
+    for position, gap in enumerate(missing_temperature):
+        figure.add_vrect(
+            x0=gap.start.to_pydatetime(),
+            x1=gap.end.to_pydatetime(),
+            fillcolor="rgba(244,63,94,.13)",
+            line_width=0,
+            layer="below",
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=gap.points["valid_time"],
+                y=gap.points["temp_c"],
+                name="Stima per perdita dati · non misurata",
+                legendgroup="missing-data",
+                showlegend=position == 0,
+                mode="lines",
+                line={"color": "#f43f5e", "width": 3, "dash": "dashdot"},
+                hovertemplate=(
+                    "%{x|%d/%m %H:%M}<br>%{y:.1f} °C"
+                    "<br><b>DATO MANCANTE: valore stimato</b>"
+                    "<extra>Non misurato</extra>"
+                ),
+            ),
+            row=1,
+            col=1,
+        )
+
+    if not observations.empty and "rain_rate_mm_h" in observations:
+        measured_rain = pd.to_numeric(
+            observations["rain_rate_mm_h"], errors="coerce"
+        ).clip(lower=0)
+        figure.add_trace(
+            go.Bar(
+                x=observations["time"],
+                y=measured_rain,
+                name="Pioggia misurata",
+                marker_color="#0284c7",
+                opacity=0.78,
+                hovertemplate=(
+                    "%{x|%d/%m %H:%M}<br>%{y:.1f} mm/h"
+                    "<extra>Misurata dalla stazione</extra>"
+                ),
+            ),
+            row=2,
+            col=1,
+            secondary_y=False,
         )
     if not future.empty and "temp_c" in future:
         uncertainty = pd.to_numeric(
@@ -658,7 +819,7 @@ def combined_chart(
             go.Scatter(
                 x=future["valid_time"],
                 y=future["temp_c"],
-                name="Previsione corretta",
+                name="Previsione futura",
                 mode="lines",
                 line={"color": "#2563eb", "width": 3, "dash": "dash"},
                 customdata=np.stack(
@@ -674,8 +835,10 @@ def combined_chart(
             figure.add_trace(
                 go.Bar(
                     x=future["valid_time"],
-                    y=future["rain_mm"],
-                    name="Pioggia",
+                    y=pd.to_numeric(future["rain_mm"], errors="coerce").clip(
+                        lower=0
+                    ),
+                    name="Pioggia prevista",
                     marker_color="#38bdf8",
                     opacity=0.72,
                 ),
@@ -687,8 +850,10 @@ def combined_chart(
             figure.add_trace(
                 go.Scatter(
                     x=future["valid_time"],
-                    y=future["precip_probability"],
-                    name="Prob. pioggia",
+                    y=pd.to_numeric(
+                        future["precip_probability"], errors="coerce"
+                    ).clip(0, 100),
+                    name="Prob. pioggia futura",
                     line={"color": "#7c3aed", "width": 2},
                 ),
                 row=2,
@@ -700,7 +865,11 @@ def combined_chart(
     )
     figure.update_yaxes(title_text="Temperatura °C", row=1, col=1)
     figure.update_yaxes(
-        title_text="Pioggia mm/h", rangemode="tozero", row=2, col=1, secondary_y=False
+        title_text="Pioggia mm/h",
+        rangemode="nonnegative",
+        row=2,
+        col=1,
+        secondary_y=False,
     )
     figure.update_yaxes(
         title_text="Probabilità %", range=[0, 105], row=2, col=1, secondary_y=True
@@ -719,21 +888,14 @@ def combined_chart(
 def weather_details_chart(
     station: pd.DataFrame, forecast: pd.DataFrame, hours: int, theme: str
 ) -> go.Figure:
-    """Join observed and forecast humidity, pressure, wind and direction."""
+    """Join observations and future forecasts, highlighting sensor data loss."""
     now = pd.Timestamp.now(tz="UTC")
     observations = (
         station[station["time"] >= now - pd.Timedelta(hours=hours)].copy()
         if not station.empty
         else station
     )
-    future = (
-        forecast[
-            (forecast["valid_time"] >= now - pd.Timedelta(hours=1))
-            & (forecast["valid_time"] <= now + pd.Timedelta(hours=72))
-        ].copy()
-        if not forecast.empty
-        else forecast
-    )
+    future = clip_forecast(forecast, now, now + pd.Timedelta(hours=72))
     figure = make_subplots(
         rows=3,
         cols=1,
@@ -742,79 +904,114 @@ def weather_details_chart(
         specs=[[{}], [{}], [{"secondary_y": True}]],
     )
 
-    for frame, time_column, suffix, dash in (
-        (observations, "time", "stazione", "solid"),
-        (future, "valid_time", "previsione", "dash"),
-    ):
-        if frame.empty:
-            continue
-        if "humidity" in frame:
+    metrics = (
+        ("Umidità", "humidity", "humidity", 1, False, "#0ea5e9", "%"),
+        ("Pressione", "pressure_hpa", "pressure_hpa", 2, False, "#8b5cf6", "hPa"),
+        ("Vento", "wind_kmh", "wind_kmh", 3, False, "#10b981", "km/h"),
+        (
+            "Raffiche",
+            "windgust_kmh",
+            "wind_gust_kmh",
+            3,
+            False,
+            "#f59e0b",
+            "km/h",
+        ),
+        ("Direzione", "winddir", "wind_dir", 3, True, "#ec4899", "°"),
+    )
+    fallback_intervals: dict[int, list[tuple[pd.Timestamp, pd.Timestamp]]] = {
+        1: [],
+        2: [],
+        3: [],
+    }
+    fallback_legend_shown = False
+    for (
+        label,
+        station_column,
+        forecast_column,
+        row,
+        secondary_y,
+        colour,
+        unit,
+    ) in metrics:
+        if not observations.empty and station_column in observations:
             figure.add_trace(
                 go.Scatter(
-                    x=frame[time_column],
-                    y=frame["humidity"],
-                    name=f"Umidità · {suffix}",
+                    x=observations["time"],
+                    y=observations[station_column],
+                    name=f"{label} · misurata",
                     mode="lines",
-                    line={"color": "#0ea5e9", "width": 2.5, "dash": dash},
+                    connectgaps=False,
+                    line={"color": colour, "width": 2.5},
+                    hovertemplate=(
+                        f"%{{x|%d/%m %H:%M}}<br>%{{y:.1f}} {unit}"
+                        f"<extra>{label} misurata</extra>"
+                    ),
                 ),
-                row=1,
+                row=row,
                 col=1,
+                secondary_y=secondary_y,
             )
-        if "pressure_hpa" in frame:
+        if not future.empty and forecast_column in future:
             figure.add_trace(
                 go.Scatter(
-                    x=frame[time_column],
-                    y=frame["pressure_hpa"],
-                    name=f"Pressione · {suffix}",
+                    x=future["valid_time"],
+                    y=future[forecast_column],
+                    name=f"{label} · previsione futura",
                     mode="lines",
-                    line={"color": "#8b5cf6", "width": 2.5, "dash": dash},
+                    line={"color": colour, "width": 2.2, "dash": "dash"},
+                    opacity=0.86,
+                    hovertemplate=(
+                        f"%{{x|%d/%m %H:%M}}<br>%{{y:.1f}} {unit}"
+                        f"<extra>{label} prevista</extra>"
+                    ),
                 ),
-                row=2,
+                row=row,
                 col=1,
+                secondary_y=secondary_y,
             )
-        wind_column = "wind_kmh"
-        gust_column = "windgust_kmh" if suffix == "stazione" else "wind_gust_kmh"
-        direction_column = "winddir" if suffix == "stazione" else "wind_dir"
-        if wind_column in frame:
+
+        gaps = missing_forecast_segments(
+            observations,
+            forecast,
+            station_column,
+            forecast_column,
+            now,
+            lookback_hours=min(hours, 3),
+        )
+        for gap in gaps:
+            fallback_intervals[row].append((gap.start, gap.end))
             figure.add_trace(
                 go.Scatter(
-                    x=frame[time_column],
-                    y=frame[wind_column],
-                    name=f"Vento · {suffix}",
+                    x=gap.points["valid_time"],
+                    y=gap.points[forecast_column],
+                    name="Stima per perdita dati · non misurata",
+                    legendgroup="missing-data",
+                    showlegend=not fallback_legend_shown,
                     mode="lines",
-                    line={"color": "#10b981", "width": 2.5, "dash": dash},
+                    line={"color": "#f43f5e", "width": 2.8, "dash": "dashdot"},
+                    hovertemplate=(
+                        f"%{{x|%d/%m %H:%M}}<br>%{{y:.1f}} {unit}"
+                        f"<br><b>{label.upper()} NON MISURATA: valore stimato</b>"
+                        "<extra>Perdita dati</extra>"
+                    ),
                 ),
-                row=3,
+                row=row,
                 col=1,
-                secondary_y=False,
+                secondary_y=secondary_y,
             )
-        if gust_column in frame:
-            figure.add_trace(
-                go.Scatter(
-                    x=frame[time_column],
-                    y=frame[gust_column],
-                    name=f"Raffiche · {suffix}",
-                    mode="lines",
-                    line={"color": "#f59e0b", "width": 1.7, "dash": dash},
-                ),
-                row=3,
+            fallback_legend_shown = True
+
+    for row, intervals in fallback_intervals.items():
+        for start, end in merge_intervals(intervals):
+            figure.add_vrect(
+                x0=start.to_pydatetime(),
+                x1=end.to_pydatetime(),
+                fillcolor="rgba(244,63,94,.12)",
+                line_width=0,
+                layer="below",
+                row=row,
                 col=1,
-                secondary_y=False,
-            )
-        if direction_column in frame:
-            figure.add_trace(
-                go.Scatter(
-                    x=frame[time_column],
-                    y=frame[direction_column],
-                    name=f"Direzione · {suffix}",
-                    mode="lines",
-                    line={"color": "#ec4899", "width": 1.5, "dash": dash},
-                    opacity=0.72,
-                    hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.0f}°<extra></extra>",
-                ),
-                row=3,
-                col=1,
-                secondary_y=True,
             )
 
     figure.add_vline(
@@ -914,6 +1111,16 @@ st.markdown(
     + "</div>",
     unsafe_allow_html=True,
 )
+st.markdown(_measurement_freshness_row(health), unsafe_allow_html=True)
+
+stale_measurements = _stale_measurement_labels(health)
+if stale_measurements:
+    st.warning(
+        "Misure reali mancanti o ferme per: "
+        + ", ".join(stale_measurements)
+        + ". Nel tratto precedente alla linea arancione, la fascia rosa e la linea "
+        "corallo tratteggiata indicano una stima di emergenza: non sono dati misurati."
+    )
 
 if not station.empty:
     current = station.iloc[-1]
@@ -971,7 +1178,7 @@ tab_overview, tab_forecast, tab_station, tab_astro, tab_radar = st.tabs(
 
 with tab_overview:
     st.markdown(
-        '<div class="section-kicker">Passato e futuro, senza interruzioni</div>',
+        '<div class="section-kicker">Passato misurato e futuro previsto</div>',
         unsafe_allow_html=True,
     )
     st.subheader("Temperatura e precipitazioni")
@@ -987,6 +1194,10 @@ with tab_overview:
             ),
             width="stretch",
             theme=None,
+        )
+        st.caption(
+            "Linea continua: misura reale · linea arancione: adesso · blu tratteggiato: "
+            "previsione futura · fascia rosa e corallo tratteggiato: perdita dati, valore stimato."
         )
         st.markdown(
             '<div class="section-kicker">Atmosfera e vento</div>',
@@ -1005,10 +1216,15 @@ with tab_overview:
         st.markdown('<div class="section-kicker">Sintesi</div>', unsafe_allow_html=True)
         st.subheader("I prossimi 7 giorni")
         render_daily_cards(daily_forecast(forecast, CFG.local_timezone))
-        with st.expander("Come leggere fiducia e fascia azzurra"):
+        with st.expander("Come leggere misure, stime, fiducia e fascia azzurra"):
             st.write(
-                "La linea tratteggiata combina i provider e corregge gradualmente l'errore misurato dalla tua stazione. "
-                "La fascia azzurra cresce quando i modelli divergono; la fiducia considera anche numero di provider e distanza temporale."
+                "A sinistra della linea arancione la linea continua proviene dalla stazione. "
+                "A destra, la linea blu tratteggiata combina i provider e corregge gradualmente "
+                "l'errore misurato localmente. Se una misura reale manca per oltre 30 minuti, "
+                "solo quel buco può essere coperto dalla linea corallo tratteggiata e dalla fascia "
+                "rosa: è una stima di emergenza, non una misura. La fascia azzurra rappresenta "
+                "l'incertezza e cresce quando i modelli divergono; la fiducia considera anche "
+                "numero di provider e distanza temporale."
             )
 
 with tab_forecast:
@@ -1174,7 +1390,7 @@ with tab_station:
         rain_figure = go.Figure(
             go.Bar(
                 x=recent["time"],
-                y=recent.get("rain_mm"),
+                y=_numeric_series(recent, "rain_mm", 0).clip(lower=0),
                 name="Incremento",
                 marker_color="#38bdf8",
             )
@@ -1183,7 +1399,9 @@ with tab_station:
             rain_figure.add_trace(
                 go.Scatter(
                     x=recent["time"],
-                    y=recent["rain_rate_mm_h"],
+                    y=pd.to_numeric(
+                        recent["rain_rate_mm_h"], errors="coerce"
+                    ).clip(lower=0),
                     name="Intensità",
                     line={"color": "#2563eb"},
                 )
@@ -1194,6 +1412,7 @@ with tab_station:
             template=theme,
             hovermode="x unified",
         )
+        rain_figure.update_yaxes(rangemode="nonnegative", title_text="Pioggia mm")
         st.plotly_chart(
             _style_plotly(rain_figure, dark_mode), width="stretch", theme=None
         )
@@ -1249,6 +1468,76 @@ with tab_astro:
     if astro.empty:
         st.info("Servono le previsioni V3 per calcolare le condizioni astronomiche.")
     else:
+        events = astronomy_events(CFG)
+        light_pollution, light_pollution_error = light_pollution_data()
+        if light_pollution is not None:
+            sqm_cols = st.columns(3)
+            sqm_cols[0].metric(
+                f"SQM stimato · atlante {light_pollution.year}",
+                f"{light_pollution.sqm:.2f} mag/arcsec²",
+                "zenit sereno e senza Luna · non misurato",
+                delta_color="off",
+            )
+            sqm_cols[1].metric(
+                "Bortle indicativa",
+                f"≈ {light_pollution.approximate_bortle}",
+                "classe visuale approssimata",
+                delta_color="off",
+            )
+            sqm_cols[2].metric(
+                "Zona inquinamento luminoso",
+                light_pollution.lp_zone,
+                f"indice LP {light_pollution.lp_index:.1f}× il cielo naturale",
+                delta_color="off",
+            )
+
+            daily_astro = daily_astronomy_summary(astro, events).head(7)
+            if not daily_astro.empty:
+                daily_astro["sqm"] = light_pollution.sqm
+                daily_astro["bortle"] = light_pollution.approximate_bortle
+                daily_astro["lp_zone"] = light_pollution.lp_zone
+                daily_table = pd.DataFrame(
+                    {
+                        "Data": pd.to_datetime(daily_astro["date"]).dt.strftime(
+                            "%a %d/%m"
+                        ),
+                        "SQM stimato": daily_astro["sqm"],
+                        "Bortle ≈": daily_astro["bortle"],
+                        "Zona LP": daily_astro["lp_zone"],
+                        "Qualità media": daily_astro["weather_score_mean"],
+                        "Qualità migliore": daily_astro["weather_score_best"],
+                        "Ore buone": daily_astro["good_hours"],
+                        "Nuvole notte %": daily_astro["clouds_mean"],
+                        "Vento notte km/h": daily_astro["wind_mean"],
+                        "Luna illuminata %": _numeric_series(
+                            daily_astro, "moon_illumination"
+                        ),
+                    }
+                )
+                st.markdown(
+                    '<div class="section-kicker">Riepilogo giornaliero</div>',
+                    unsafe_allow_html=True,
+                )
+                st.subheader("SQM, inquinamento luminoso e meteo astronomico")
+                render_color_legend("astronomy")
+                st.dataframe(
+                    _style_astronomy_table(daily_table, dark_mode),
+                    hide_index=True,
+                    width="stretch",
+                )
+            st.caption(
+                f"SQM e zona LP sono stime zenitali geolocalizzate dell'Atlante {light_pollution.year} "
+                f"per {CFG.latitude:.4f}, {CFG.longitude:.4f}; restano uguali nei giorni perché "
+                "descrivono il sito. Meteo e Luna cambiano ogni notte. Un valore SQM reale richiede "
+                f"un fotometro calibrato. [Apri la fonte]({light_pollution.source_url})."
+            )
+        else:
+            st.info(
+                "La stima geolocalizzata SQM non è disponibile in questo momento: "
+                + (light_pollution_error or "fonte non raggiungibile")
+                + ". Le altre previsioni astronomiche restano utilizzabili."
+            )
+
         windows = best_observing_windows(astro)
         if windows.empty:
             st.warning(
@@ -1307,7 +1596,6 @@ with tab_astro:
             "Il punteggio penalizza nuvole basse/medie/alte, rischio pioggia, vento, visibilità e temperatura vicina al punto di rugiada."
         )
 
-        events = astronomy_events(CFG)
         if not events.empty:
             table = pd.DataFrame(
                 {

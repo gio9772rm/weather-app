@@ -14,6 +14,7 @@ from sqlalchemy.engine import Engine
 from config import Settings, settings
 from db import get_engine
 from forecast_providers import FORECAST_COLUMNS
+from forecast_quality import enforce_physical_bounds
 
 NUMERIC_COLUMNS = [
     "temp_c",
@@ -505,6 +506,7 @@ def build_blend(engine: Engine | None = None) -> pd.DataFrame:
     ]
     result["method"] = "inverse_mae+bias+station_decay_v1"
     result["issued_at"] = issued_at
+    result = enforce_physical_bounds(result)
     result = result.reset_index(names="valid_time")
 
     db_columns = [

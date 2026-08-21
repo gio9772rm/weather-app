@@ -134,6 +134,52 @@ def best_observing_windows(
     )
 
 
+def daily_astronomy_summary(
+    frame: pd.DataFrame, events: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Summarise forecast conditions per local observing night."""
+    if frame.empty or "local_time" not in frame or "is_night" not in frame:
+        return pd.DataFrame()
+    night = frame[frame["is_night"]].copy()
+    if night.empty:
+        return pd.DataFrame()
+    # An observing night crosses midnight: shifting by twelve hours keeps the
+    # hours after midnight attached to the preceding evening.
+    night["date"] = (night["local_time"] - pd.Timedelta(hours=12)).dt.date
+    rows: list[dict[str, Any]] = []
+    for observing_date, group in night.groupby("date", sort=True):
+        scores = pd.to_numeric(group.get("astro_score"), errors="coerce")
+        clouds = pd.to_numeric(
+            group.get("clouds", pd.Series(np.nan, index=group.index)),
+            errors="coerce",
+        )
+        wind = pd.to_numeric(
+            group.get("wind_kmh", pd.Series(np.nan, index=group.index)),
+            errors="coerce",
+        )
+        visibility = pd.to_numeric(
+            group.get("visibility_m", pd.Series(np.nan, index=group.index)),
+            errors="coerce",
+        )
+        rows.append(
+            {
+                "date": observing_date,
+                "weather_score_mean": float(scores.mean()),
+                "weather_score_best": float(scores.max()),
+                "good_hours": int(scores.ge(65).sum()),
+                "clouds_mean": float(clouds.mean()),
+                "wind_mean": float(wind.mean()),
+                "visibility_km": float(visibility.mean() / 1000.0),
+            }
+        )
+    summary = pd.DataFrame(rows)
+    if events is not None and not events.empty and "date" in events:
+        lunar = events[["date", "moon_illumination"]].copy()
+        lunar["date"] = pd.to_datetime(lunar["date"], errors="coerce").dt.date
+        summary = summary.merge(lunar, on="date", how="left")
+    return summary
+
+
 def astronomy_events(
     cfg: Settings = settings, days: int = 7, start_date: date | None = None
 ) -> pd.DataFrame:

@@ -5,6 +5,7 @@ import pandas as pd
 
 from forecast_blend import _to_hourly, archive_forecast, build_blend
 from forecast_providers import FORECAST_COLUMNS
+from forecast_quality import enforce_physical_bounds
 
 
 def provider_frame(provider: str, temperatures: list[float]) -> pd.DataFrame:
@@ -66,3 +67,21 @@ def test_blend_combines_two_providers_and_tracks_uncertainty(sqlite_engine):
     timeline = pd.date_range(issued, issued + pd.Timedelta(hours=6), freq="h")
     distributed = _to_hourly(three_hour, timeline)
     assert distributed["rain_mm"].sum() == 9.0
+
+
+def test_physical_bounds_remove_negative_rain_and_invalid_percentages():
+    frame = pd.DataFrame(
+        {
+            "rain_mm": [-0.008, 1.2],
+            "snow_mm": [-1.0, 0.0],
+            "precip_probability": [-5.0, 120.0],
+            "humidity": [-1.0, 101.0],
+        }
+    )
+
+    bounded = enforce_physical_bounds(frame)
+
+    assert bounded["rain_mm"].tolist() == [0.0, 1.2]
+    assert bounded["snow_mm"].tolist() == [0.0, 0.0]
+    assert bounded["precip_probability"].tolist() == [0.0, 100.0]
+    assert bounded["humidity"].tolist() == [0.0, 100.0]

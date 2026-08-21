@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings, settings
 from db import ensure_schema, get_engine
+from forecast_quality import enforce_physical_bounds
 
 
 def _read(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -51,6 +52,9 @@ def load_station(hours: int = 240) -> pd.DataFrame:
     for column in numeric:
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    for column in ("rain_mm", "rain_rate_mm_h", "rain_total_mm"):
+        if column in frame:
+            frame[column] = frame[column].clip(lower=0)
     # V1/V2 stored rain rate in Rain_mm. Never present it as an amount.
     if "source" in frame and "rain_mm" in frame:
         legacy = frame["source"].isna() | frame["source"].astype(
@@ -81,7 +85,7 @@ def _legacy_forecast() -> pd.DataFrame:
     frame["provider_count"] = 1
     frame["description"] = "Previsione precedente"
     frame["method"] = "legacy_openweather"
-    return frame
+    return enforce_physical_bounds(frame)
 
 
 def load_forecast(hours: int = 192) -> pd.DataFrame:
@@ -124,7 +128,9 @@ def load_forecast(hours: int = 192) -> pd.DataFrame:
     for column in numeric:
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    return frame.dropna(subset=["valid_time"]).sort_values("valid_time")
+    return enforce_physical_bounds(
+        frame.dropna(subset=["valid_time"]).sort_values("valid_time")
+    )
 
 
 def load_provider_scores() -> pd.DataFrame:
@@ -153,7 +159,12 @@ def load_recent_logs(limit: int = 12) -> pd.DataFrame:
 
 def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
     station_frame = _read(
-        "SELECT MAX(time) AS station_time FROM station_raw"
+        "SELECT MAX(time) AS station_time, "
+        "MAX(CASE WHEN temp_c IS NOT NULL THEN time END) AS temperature_time, "
+        "MAX(CASE WHEN humidity IS NOT NULL THEN time END) AS humidity_time, "
+        "MAX(CASE WHEN pressure_hpa IS NOT NULL THEN time END) AS pressure_time, "
+        "MAX(CASE WHEN wind_kmh IS NOT NULL THEN time END) AS wind_time "
+        "FROM station_raw"
     )
     blend_frame = _read(
         "SELECT MAX(issued_at) AS forecast_issued, "
@@ -162,6 +173,14 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
     now = pd.Timestamp.now(tz="UTC")
 
     station_time = _timestamp_from_frame(station_frame, "station_time")
+    measurement_times = {
+        "temperature": _metric_timestamp(
+            station_frame, "temperature_time", station_time
+        ),
+        "humidity": _metric_timestamp(station_frame, "humidity_time", station_time),
+        "pressure": _metric_timestamp(station_frame, "pressure_time", station_time),
+        "wind": _metric_timestamp(station_frame, "wind_time", station_time),
+    }
     forecast_issued = _timestamp_from_frame(blend_frame, "forecast_issued")
     forecast_until = _timestamp_from_frame(blend_frame, "forecast_until")
 
@@ -177,22 +196,32 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
             forecast_issued = legacy_time
         if pd.isna(forecast_until):
             forecast_until = legacy_time
-    station_age = (
-        (now - station_time).total_seconds() / 60
-        if not pd.isna(station_time)
-        else float("inf")
+    measurement_stale_minutes = min(cfg.station_stale_minutes, 30)
+    measurement_freshness = {
+        name: {
+            "time": timestamp,
+            "age_minutes": _age_minutes(now, timestamp),
+            "status": _freshness_status(
+                _age_minutes(now, timestamp), measurement_stale_minutes
+            ),
+        }
+        for name, timestamp in measurement_times.items()
+    }
+    station_age = max(
+        (details["age_minutes"] for details in measurement_freshness.values()),
+        default=float("inf"),
     )
+    station_sample_age = _age_minutes(now, station_time)
     forecast_age = (
         (now - forecast_issued).total_seconds() / 60
         if not pd.isna(forecast_issued)
         else float("inf")
     )
-    station_status = (
-        "online"
-        if station_age <= cfg.station_stale_minutes
-        else "delayed"
-        if station_age <= cfg.station_stale_minutes * 3
-        else "offline"
+    status_rank = {"online": 0, "delayed": 1, "offline": 2}
+    station_status = max(
+        (details["status"] for details in measurement_freshness.values()),
+        key=status_rank.get,
+        default="offline",
     )
     forecast_status = (
         "online"
@@ -208,7 +237,10 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
         "forecast_issued": forecast_issued,
         "forecast_until": forecast_until,
         "station_age_minutes": station_age,
+        "station_sample_age_minutes": station_sample_age,
         "forecast_age_minutes": forecast_age,
+        "measurement_stale_minutes": measurement_stale_minutes,
+        "measurement_freshness": measurement_freshness,
     }
 
 
@@ -216,6 +248,31 @@ def _timestamp_from_frame(frame: pd.DataFrame, column: str) -> Any:
     if frame.empty or column not in frame:
         return pd.NaT
     return pd.to_datetime(frame.iloc[0].get(column), utc=True, errors="coerce")
+
+
+def _metric_timestamp(
+    frame: pd.DataFrame, column: str, legacy_fallback: pd.Timestamp
+) -> pd.Timestamp:
+    """Read a metric timestamp, preserving compatibility with older test/query data."""
+    if column not in frame:
+        return legacy_fallback
+    return _timestamp_from_frame(frame, column)
+
+
+def _age_minutes(now: pd.Timestamp, timestamp: Any) -> float:
+    return (
+        (now - timestamp).total_seconds() / 60
+        if not pd.isna(timestamp)
+        else float("inf")
+    )
+
+
+def _freshness_status(age_minutes: float, stale_minutes: int) -> str:
+    if age_minutes <= stale_minutes:
+        return "online"
+    if age_minutes <= stale_minutes * 3:
+        return "delayed"
+    return "offline"
 
 
 def daily_forecast(frame: pd.DataFrame, timezone_name: str) -> pd.DataFrame:
