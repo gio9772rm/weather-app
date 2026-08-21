@@ -9,14 +9,18 @@ on:
         type: boolean
         default: true
   schedule:
-    - cron: "*/10 * * * *"
+    # Aggiornamento ordinario fuori dal minuto zero, quando i runner sono più congestionati.
+    - cron: "3-59/10 * * * *"
+    # Riconcilia ogni giorno le ultime 48 ore (03:17 UTC).
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: meteo-v3-pipeline
-  cancel-in-progress: true
+  # La riconciliazione ha una coda separata: un job ordinario non può sostituirla.
+  group: meteo-v3-${{ github.event.schedule == '17 3 * * *' && 'reconciliation' || 'pipeline' }}
+  cancel-in-progress: false
 
 jobs:
   ingest:
@@ -70,11 +74,19 @@ jobs:
           LOCATION_NAME: ${{ vars.LOCATION_NAME || 'Stazione meteo' }}
           LOCAL_TZ: Europe/Rome
           STATION_BACKFILL_HOURS: "2"
+          STATION_AUTO_BACKFILL_MAX_HOURS: "168"
           FORECAST_REFRESH_MINUTES: "60"
+          RECONCILIATION_HOURS: "48"
+          SCHEDULE_EXPRESSION: ${{ github.event.schedule }}
         shell: bash
         run: |
           extra=""
+          backfill_hours="$STATION_BACKFILL_HOURS"
+          if [ "$SCHEDULE_EXPRESSION" = "17 3 * * *" ]; then
+            backfill_hours="$RECONCILIATION_HOURS"
+            echo "Riconciliazione giornaliera: recupero delle ultime ${backfill_hours} ore"
+          fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_forecast }}" = "true" ]; then
             extra="--force-forecast"
           fi
-          python ingest_all.py --backfill-hours 2 $extra
+          python ingest_all.py --backfill-hours "$backfill_hours" $extra

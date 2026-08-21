@@ -49,7 +49,7 @@ class Settings:
     station_backfill_hours: int
     station_stale_minutes: int
     admin_token: str
-    station_auto_backfill_max_hours: int = 24
+    station_auto_backfill_max_hours: int = 168
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -77,7 +77,7 @@ class Settings:
                 2,
                 min(
                     168,
-                    _as_int(_first_env("STATION_AUTO_BACKFILL_MAX_HOURS"), 24),
+                    _as_int(_first_env("STATION_AUTO_BACKFILL_MAX_HOURS"), 168),
                 ),
             ),
             station_stale_minutes=max(

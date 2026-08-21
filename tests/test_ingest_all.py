@@ -13,7 +13,7 @@ def _settings() -> Settings:
     return replace(
         Settings.from_env(),
         station_backfill_hours=2,
-        station_auto_backfill_max_hours=24,
+        station_auto_backfill_max_hours=168,
     )
 
 
@@ -79,4 +79,26 @@ def test_adaptive_backfill_uses_safe_cap_when_a_sensor_has_never_been_saved(
         pressure_hpa=1012,
     )
 
-    assert adaptive_station_backfill_hours(_settings(), now=now) == 24
+    assert adaptive_station_backfill_hours(_settings(), now=now) == 168
+
+
+def test_daily_reconciliation_keeps_at_least_the_requested_48_hours(
+    sqlite_engine,
+):
+    now = pd.Timestamp("2026-08-21T12:00:00Z")
+    _insert_station_row(
+        sqlite_engine,
+        now - pd.Timedelta(minutes=10),
+        temp_c=25,
+        humidity=65,
+        pressure_hpa=1012,
+        wind_kmh=8,
+    )
+
+    assert adaptive_station_backfill_hours(_settings(), 48, now=now) == 48
+
+
+def test_default_automatic_recovery_window_is_seven_days(monkeypatch):
+    monkeypatch.delenv("STATION_AUTO_BACKFILL_MAX_HOURS", raising=False)
+
+    assert Settings.from_env().station_auto_backfill_max_hours == 168
