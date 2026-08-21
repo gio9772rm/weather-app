@@ -1,5 +1,11 @@
 # Changelog Meteo V3
 
+## Affidabilità del meteo città
+
+- aggiunto fallback automatico MET Norway quando Open‑Meteo non è raggiungibile da Render;
+- uniformati dati orari e giornalieri del fallback alle stesse tabelle e grafici dell'app;
+- indicata nell'interfaccia la fonte effettivamente usata per ogni città.
+
 ## Ricerca città e rifiniture dell'interfaccia
 
 - aggiunta al menu laterale la modalità Meteo città con ricerca mondiale per nome o CAP;

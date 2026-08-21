@@ -1005,7 +1005,7 @@ def render_city_dashboard(
         f'<div class="city-current-icon">{_weather_icon(description)}</div>'
         '<div class="city-current-copy">'
         f"<strong>{html.escape(description)}</strong>"
-        f'<div>Aggiornato {"—" if pd.isna(current_time) else current_time.strftime("%d/%m alle %H:%M")} · fonte Open‑Meteo</div>'
+        f'<div>Aggiornato {"—" if pd.isna(current_time) else current_time.strftime("%d/%m alle %H:%M")} · fonte {html.escape(city.source)}</div>'
         "</div></div>",
         unsafe_allow_html=True,
     )
@@ -1124,7 +1124,7 @@ def render_city_dashboard(
         )
 
     st.caption(
-        "Meteo città fornito da Open‑Meteo · i valori non includono misure, correzioni "
+        f"Meteo città fornito da {city.source} · i valori non includono misure, correzioni "
         "o dati della tua stazione Ecowitt."
     )
 
