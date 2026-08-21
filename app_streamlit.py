@@ -19,6 +19,13 @@ from astro_weather import (
     prepare_astronomy,
 )
 from chart_data import clip_forecast, merge_intervals, missing_forecast_segments
+from city_weather import (
+    CityForecast,
+    CityLocation,
+    CityWeatherError,
+    fetch_city_forecast,
+    search_cities,
+)
 from config import Settings
 from data_access import (
     daily_forecast,
@@ -33,7 +40,7 @@ from light_pollution import (
     LightPollutionEstimate,
     fetch_light_pollution,
 )
-from weather_display import compass_direction, weather_cell_style
+from weather_display import compass_direction, forecast_interval, weather_cell_style
 
 st.set_page_config(
     page_title="Meteo V3",
@@ -42,6 +49,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 CFG = Settings.from_env()
+ITALIAN_WEEKDAYS = ("Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom")
 
 
 st.markdown(
@@ -119,8 +127,30 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
 [data-testid="stExpander"] summary * { color:var(--ink) !important; }
 .stButton > button { background:var(--control-bg) !important; color:var(--ink) !important; border-color:var(--line) !important; }
 [data-testid="stDataFrame"] { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.weather-table-wrap { width:100%; overflow:auto; border:1px solid var(--line); border-radius:14px;
+  background:var(--surface); box-shadow:var(--shadow); margin:.35rem 0 .8rem; }
+.weather-table-wrap table { width:100%; min-width:760px; border-collapse:separate; border-spacing:0;
+  font-size:.79rem; line-height:1.35; }
+.weather-table-wrap thead th { position:sticky; top:0; z-index:2; padding:.68rem .62rem !important;
+  background:#e8f1f8 !important; color:#10243d !important; border:0 !important;
+  border-bottom:1px solid var(--line) !important; text-align:left; white-space:nowrap; }
+.weather-table-wrap tbody td { padding:.58rem .62rem !important; border:0 !important;
+  border-bottom:1px solid var(--line) !important; white-space:nowrap; }
+.weather-table-wrap tbody tr:last-child td { border-bottom:0 !important; }
+.weather-table-wrap tbody tr:hover td { box-shadow:inset 0 0 0 999px rgba(96,165,250,.08); }
+.weather-table-tools { display:flex; justify-content:space-between; align-items:center; gap:.7rem;
+  margin:.2rem 0 .35rem; color:var(--muted); font-size:.74rem; }
+.city-current { display:flex; align-items:center; gap:.85rem; padding:.9rem 1rem; margin:.7rem 0 1rem;
+  border:1px solid var(--line); border-radius:17px; background:var(--surface); box-shadow:var(--shadow); }
+.city-current-icon { font-size:2.4rem; line-height:1; }.city-current-copy strong { color:var(--ink); font-size:1.05rem; }
+.city-current-copy div { color:var(--muted); font-size:.78rem; margin-top:.15rem; }
+[data-testid="stForm"] { border-color:var(--line) !important; background:var(--surface-soft) !important; border-radius:16px; }
+[data-testid="stTextInput"] input,[data-baseweb="input"] { background:var(--control-bg) !important;
+  color:var(--ink) !important; border-color:var(--line) !important; }
+[data-testid="stDownloadButton"] button { background:var(--control-bg) !important; color:var(--ink) !important;
+  border-color:var(--line) !important; }
 @media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
-@media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}.hour-grid{grid-template-columns:1fr}}
+@media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}.hour-grid{grid-template-columns:1fr}.weather-table-wrap table{font-size:.74rem}.city-current{align-items:flex-start}}
 </style>
 """,
     unsafe_allow_html=True,
@@ -150,6 +180,16 @@ def score_data() -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def log_data() -> pd.DataFrame:
     return load_recent_logs()
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def city_search_data(query: str) -> list[CityLocation]:
+    return search_cities(query)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def city_forecast_data(location: CityLocation) -> CityForecast:
+    return fetch_city_forecast(location)
 
 
 @st.cache_data(ttl=21_600, show_spinner=False)
@@ -256,6 +296,14 @@ section[data-testid="stSidebar"] { background:#0b111b !important; }
 [data-testid="stPlotlyChart"] .gtitle,
 [data-testid="stPlotlyChart"] .annotation-text-g text { fill:var(--ink) !important; color:var(--ink) !important; }
 [data-testid="stPlotlyChart"] .modebar-btn path { fill:var(--ink) !important; }
+.weather-table-wrap thead th { background:#162235 !important; color:#f8fafc !important;
+  border-bottom-color:rgba(226,232,240,.2) !important; }
+.weather-table-wrap { background:#0b111b !important; }
+.weather-table-wrap tbody td { border-bottom-color:rgba(226,232,240,.14) !important; }
+[data-testid="stForm"],[data-testid="stTextInput"] > div > div,[data-baseweb="input"] {
+  background:var(--surface) !important; color:var(--ink) !important; border-color:var(--line) !important; }
+[data-testid="stTextInput"] input::placeholder { color:#94a3b8 !important; opacity:1; }
+[data-testid="stDownloadButton"] button,[data-testid="stDownloadButton"] button * { color:var(--ink) !important; }
 
 /* I menu BaseWeb vengono montati fuori da .stApp: per questo richiedono
    selettori globali e sono il caso che in precedenza restava bianco. */
@@ -298,6 +346,20 @@ def _local_time(value: Any, pattern: str = "%d/%m %H:%M") -> str:
     )
 
 
+def _hour_label(value: Any) -> str:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return "—"
+    return f"{ITALIAN_WEEKDAYS[timestamp.weekday()]} {timestamp:%d · %H:%M}"
+
+
+def _day_label(value: Any) -> str:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return "—"
+    return f"{ITALIAN_WEEKDAYS[timestamp.weekday()]} {timestamp:%d/%m}"
+
+
 def _age_text(minutes: Any) -> str:
     if minutes is None or not np.isfinite(minutes):
         return "mai"
@@ -311,6 +373,11 @@ def _age_text(minutes: Any) -> str:
 def _number(value: Any, digits: int = 1, suffix: str = "") -> str:
     number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     return "—" if pd.isna(number) else f"{number:.{digits}f}{suffix}"
+
+
+def _filename_slug(value: str) -> str:
+    slug = "".join(character if character.isalnum() else "-" for character in value)
+    return "-".join(part for part in slug.casefold().split("-") if part) or "meteo"
 
 
 def _numeric_series(
@@ -374,7 +441,7 @@ def _base_table_style(frame: pd.DataFrame, dark_mode: bool) -> Any:
     background = "#0b111b" if dark_mode else "#ffffff"
     foreground = "#e5edf7" if dark_mode else "#10243d"
     header = "#162235" if dark_mode else "#e8f1f8"
-    return frame.style.set_properties(
+    return frame.style.hide(axis="index").set_properties(
         **{"background-color": background, "color": foreground}
     ).set_table_styles(
         [
@@ -499,6 +566,65 @@ def _style_astronomy_table(table: pd.DataFrame, dark_mode: bool) -> Any:
     return styler.format(
         {column: pattern for column, pattern in formats.items() if column in table},
         na_rep="—",
+    )
+
+
+def _style_city_daily_table(table: pd.DataFrame, dark_mode: bool) -> Any:
+    styler = _base_table_style(table, dark_mode)
+    metrics = {
+        "Min °C": "temperature",
+        "Max °C": "temperature",
+        "Pioggia mm": "rain",
+        "Prob. %": "rain_probability",
+        "Vento max km/h": "wind",
+        "Raffiche km/h": "gust",
+    }
+    for column, metric in metrics.items():
+        if column in table:
+            styler = styler.map(
+                lambda value, metric=metric: weather_cell_style(value, metric),
+                subset=[column],
+            )
+    formats = {
+        "Min °C": "{:.1f}",
+        "Max °C": "{:.1f}",
+        "Pioggia mm": "{:.1f}",
+        "Prob. %": "{:.0f}",
+        "Vento max km/h": "{:.1f}",
+        "Raffiche km/h": "{:.1f}",
+        "UV max": "{:.1f}",
+    }
+    return styler.format(
+        {column: pattern for column, pattern in formats.items() if column in table},
+        na_rep="—",
+    )
+
+
+def render_styled_table(
+    styler: Any,
+    *,
+    height: int | None = None,
+    container: Any = st,
+) -> None:
+    """Render a responsive semantic table with a theme-aware sticky header."""
+    max_height = f"max-height:{max(180, int(height))}px;" if height else ""
+    table_html = styler.to_html(table_attributes='class="weather-table"')
+    container.markdown(
+        f'<div class="weather-table-wrap" style="{max_height}">{table_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def interval_selector(label: str, key: str, default: int = 3) -> int:
+    return int(
+        st.radio(
+            label,
+            options=(1, 3, 6),
+            index=(1, 3, 6).index(default),
+            horizontal=True,
+            format_func=lambda value: "Ogni ora" if value == 1 else f"Ogni {value} ore",
+            key=key,
+        )
     )
 
 
@@ -638,14 +764,13 @@ def render_daily_cards(daily: pd.DataFrame) -> None:
             "La previsione giornaliera comparirà dopo il primo aggiornamento della pipeline V3."
         )
         return
-    names = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
     cards = []
     for _, row in daily.head(7).iterrows():
         day = pd.Timestamp(row["date"])
         description = str(row.get("description") or "Variabile")
         cards.append(
             '<div class="day-card">'
-            f'<div class="day-name">{names[day.weekday()]} {day.day}</div>'
+            f'<div class="day-name">{ITALIAN_WEEKDAYS[day.weekday()]} {day.day}</div>'
             f'<div class="day-icon">{_weather_icon(description)}</div>'
             f'<div class="day-temp">{_number(row.get("temp_min"), 0, "°")} / {_number(row.get("temp_max"), 0, "°")}</div>'
             f'<div class="day-desc">{html.escape(description)}</div>'
@@ -689,6 +814,318 @@ def render_three_hour_forecast(forecast: pd.DataFrame) -> None:
     st.markdown(
         '<div class="hour-grid">' + "".join(cards) + "</div>",
         unsafe_allow_html=True,
+    )
+
+
+def _city_future_hours(city: CityForecast, hours: int = 72) -> pd.DataFrame:
+    hourly = city.hourly.sort_values("time").copy()
+    if hourly.empty:
+        return hourly
+    reference = pd.to_datetime(city.current.get("time"), errors="coerce")
+    if pd.isna(reference):
+        reference = hourly.iloc[0]["time"]
+    return hourly[
+        (hourly["time"] >= pd.Timestamp(reference).floor("h"))
+        & (hourly["time"] <= pd.Timestamp(reference) + pd.Timedelta(hours=hours))
+    ].copy()
+
+
+def _render_city_daily_cards(city: CityForecast) -> None:
+    if city.daily.empty:
+        st.info("La sintesi giornaliera non è disponibile per questa località.")
+        return
+    cards = []
+    for _, row in city.daily.head(7).iterrows():
+        day = pd.Timestamp(row["time"])
+        description = str(row.get("description") or "Variabile")
+        sunrise = pd.to_datetime(row.get("sunrise"), errors="coerce")
+        sunset = pd.to_datetime(row.get("sunset"), errors="coerce")
+        cards.append(
+            '<div class="day-card">'
+            f'<div class="day-name">{ITALIAN_WEEKDAYS[day.weekday()]} {day.day}</div>'
+            f'<div class="day-icon">{_weather_icon(description)}</div>'
+            f'<div class="day-temp">{_number(row.get("temp_min_c"), 0, "°")} / {_number(row.get("temp_max_c"), 0, "°")}</div>'
+            f'<div class="day-desc">{html.escape(description)}</div>'
+            f'<div class="day-meta">☔ {_number(row.get("precipitation_mm"), 1, " mm")} · rischio {_number(row.get("precip_probability"), 0, "%")}'
+            f'<br>💨 max {_number(row.get("wind_max_kmh"), 0, " km/h")} · raffiche {_number(row.get("wind_gust_max_kmh"), 0, " km/h")}'
+            f'<br>🧭 {html.escape(compass_direction(row.get("wind_dir")))} · UV {_number(row.get("uv_index_max"), 1)}'
+            f'<br>☀️ {"—" if pd.isna(sunrise) else sunrise.strftime("%H:%M")}–{"—" if pd.isna(sunset) else sunset.strftime("%H:%M")}</div>'
+            "</div>"
+        )
+    st.markdown(
+        '<div class="forecast-grid">' + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_city_next_hours(city: CityForecast) -> None:
+    upcoming = _city_future_hours(city, 6).head(3)
+    if upcoming.empty:
+        return
+    cards = []
+    for _, row in upcoming.iterrows():
+        moment = pd.Timestamp(row["time"])
+        description = str(row.get("description") or "Variabile")
+        cards.append(
+            '<div class="hour-card">'
+            f'<div class="hour-title">{moment:%H:%M}</div>'
+            f'<div class="hour-weather">{_weather_icon(description)} {html.escape(description)}</div>'
+            f'<div class="hour-meta">🌡️ {_number(row.get("temp_c"), 1, " °C")} · percepita {_number(row.get("feels_like_c"), 1, " °C")}'
+            f'<br>☔ {_number(row.get("precipitation_mm"), 1, " mm")} · rischio {_number(row.get("precip_probability"), 0, "%")}'
+            f'<br>💨 {_number(row.get("wind_kmh"), 0, " km/h")} · {html.escape(compass_direction(row.get("wind_dir")))}</div>'
+            "</div>"
+        )
+    st.markdown(
+        '<div class="hour-grid">' + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
+    hourly = _city_future_hours(city)
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.09,
+        row_heights=[0.64, 0.36],
+        specs=[[{}], [{"secondary_y": True}]],
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=hourly["time"],
+            y=hourly["temp_c"],
+            name="Temperatura",
+            line={"color": "#0ea5e9", "width": 3},
+        ),
+        row=1,
+        col=1,
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=hourly["time"],
+            y=hourly["feels_like_c"],
+            name="Percepita",
+            line={"color": "#f59e0b", "width": 2, "dash": "dot"},
+        ),
+        row=1,
+        col=1,
+    )
+    figure.add_trace(
+        go.Bar(
+            x=hourly["time"],
+            y=pd.to_numeric(hourly["precipitation_mm"], errors="coerce").clip(
+                lower=0
+            ),
+            name="Precipitazioni",
+            marker_color="#38bdf8",
+            opacity=0.72,
+        ),
+        row=2,
+        col=1,
+        secondary_y=False,
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=hourly["time"],
+            y=pd.to_numeric(
+                hourly["precip_probability"], errors="coerce"
+            ).clip(0, 100),
+            name="Probabilità",
+            line={"color": "#8b5cf6", "width": 2.2},
+        ),
+        row=2,
+        col=1,
+        secondary_y=True,
+    )
+    figure.update_yaxes(title_text="Temperatura °C", row=1, col=1)
+    figure.update_yaxes(
+        title_text="Pioggia mm",
+        rangemode="nonnegative",
+        row=2,
+        col=1,
+        secondary_y=False,
+    )
+    figure.update_yaxes(
+        title_text="Probabilità %",
+        range=[0, 105],
+        row=2,
+        col=1,
+        secondary_y=True,
+    )
+    figure.update_layout(
+        height=570,
+        hovermode="x unified",
+        legend={"orientation": "h", "y": 1.08},
+        margin={"l": 15, "r": 15, "t": 30, "b": 10},
+    )
+    return _style_plotly(figure, dark_mode)
+
+
+def _city_hourly_table(hourly: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Ora": hourly["time"].map(_hour_label),
+            "Cielo": hourly.get("description"),
+            "Temp °C": _numeric_series(hourly, "temp_c").round(1),
+            "Percepita °C": _numeric_series(hourly, "feels_like_c").round(1),
+            "Pioggia mm": _numeric_series(hourly, "precipitation_mm").clip(lower=0).round(1),
+            "Prob. %": _numeric_series(hourly, "precip_probability").round(0),
+            "Umidità %": _numeric_series(hourly, "humidity").round(0),
+            "Pressione hPa": _numeric_series(hourly, "pressure_hpa").round(0),
+            "Vento km/h": _numeric_series(hourly, "wind_kmh").round(1),
+            "Raffiche km/h": _numeric_series(hourly, "wind_gust_kmh").round(1),
+            "Direzione": hourly.get("wind_dir", pd.Series(np.nan, index=hourly.index)).map(
+                compass_direction
+            ),
+            "Nuvole %": _numeric_series(hourly, "clouds").round(0),
+            "Visibilità km": (_numeric_series(hourly, "visibility_m") / 1000).round(1),
+        }
+    )
+
+
+def render_city_dashboard(
+    location: CityLocation,
+    city: CityForecast,
+    dark_mode: bool,
+) -> None:
+    current = city.current
+    current_time = pd.to_datetime(current.get("time"), errors="coerce")
+    description = str(current.get("description") or "Variabile")
+    st.markdown(
+        '<div class="hero">'
+        '<div class="eyebrow">Meteo città · dati internet</div>'
+        f"<h1>{html.escape(location.label)}</h1>"
+        f"<p>{location.latitude:.4f}, {location.longitude:.4f} · orari {html.escape(city.timezone)} · nessun dato della stazione locale</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="city-current">'
+        f'<div class="city-current-icon">{_weather_icon(description)}</div>'
+        '<div class="city-current-copy">'
+        f"<strong>{html.escape(description)}</strong>"
+        f'<div>Aggiornato {"—" if pd.isna(current_time) else current_time.strftime("%d/%m alle %H:%M")} · fonte Open‑Meteo</div>'
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(6)
+    cols[0].metric("Temperatura", _number(current.get("temp_c"), 1, " °C"))
+    cols[1].metric("Percepita", _number(current.get("feels_like_c"), 1, " °C"))
+    cols[2].metric("Umidità", _number(current.get("humidity"), 0, " %"))
+    cols[3].metric("Pressione", _number(current.get("pressure_hpa"), 0, " hPa"))
+    cols[4].metric(
+        "Vento",
+        _number(current.get("wind_kmh"), 1, " km/h"),
+        f"{compass_direction(current.get('wind_dir'))} · raffica {_number(current.get('wind_gust_kmh'), 1, ' km/h')}",
+    )
+    cols[5].metric(
+        "Pioggia / nuvole",
+        _number(current.get("precipitation_mm"), 1, " mm"),
+        f"nuvole {_number(current.get('clouds'), 0, '%')}",
+    )
+
+    next_24 = _city_future_hours(city, 24)
+    if not next_24.empty:
+        rain = _numeric_series(next_24, "precipitation_mm", 0).clip(lower=0).sum()
+        risk = _numeric_series(next_24, "precip_probability", 0).max()
+        gust = _numeric_series(next_24, "wind_gust_kmh", 0).max()
+        messages = []
+        if rain >= 10 or risk >= 75:
+            messages.append(f"pioggia {rain:.1f} mm, probabilità fino al {risk:.0f}%")
+        if gust >= 45:
+            messages.append(f"raffiche fino a {gust:.0f} km/h")
+        if messages:
+            st.warning("Nelle prossime 24 ore: " + "; ".join(messages) + ".")
+        else:
+            st.success("Nessuna condizione rilevante individuata nelle prossime 24 ore.")
+
+    city_overview, city_daily, city_map = st.tabs(
+        ["Panoramica", "7 giorni", "Mappa"]
+    )
+    with city_overview:
+        st.markdown(
+            '<div class="section-kicker">Prossime ore</div>', unsafe_allow_html=True
+        )
+        st.subheader("Temperatura e precipitazioni")
+        _render_city_next_hours(city)
+        st.plotly_chart(
+            _city_hourly_chart(city, dark_mode), width="stretch", theme=None
+        )
+        interval = interval_selector(
+            "Risoluzione della tabella", "city_forecast_interval", default=3
+        )
+        hourly = forecast_interval(_city_future_hours(city, 168), interval)
+        table = _city_hourly_table(hourly)
+        st.caption(
+            f"{len(table)} righe · previsione internet campionata ogni {interval} "
+            + ("ora" if interval == 1 else "ore")
+        )
+        render_color_legend("weather")
+        render_styled_table(_style_hourly_table(table, dark_mode), height=520)
+        st.download_button(
+            "Scarica la previsione CSV",
+            data=table.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"meteo-{_filename_slug(location.name)}.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+
+    with city_daily:
+        st.markdown(
+            '<div class="section-kicker">Tendenza internet</div>',
+            unsafe_allow_html=True,
+        )
+        st.subheader("I prossimi 7 giorni")
+        _render_city_daily_cards(city)
+        daily = city.daily.copy()
+        daily_table = pd.DataFrame(
+            {
+                "Data": daily["time"].map(_day_label),
+                "Cielo": daily.get("description"),
+                "Min °C": _numeric_series(daily, "temp_min_c"),
+                "Max °C": _numeric_series(daily, "temp_max_c"),
+                "Pioggia mm": _numeric_series(daily, "precipitation_mm").clip(
+                    lower=0
+                ),
+                "Prob. %": _numeric_series(daily, "precip_probability"),
+                "Vento max km/h": _numeric_series(daily, "wind_max_kmh"),
+                "Raffiche km/h": _numeric_series(daily, "wind_gust_max_kmh"),
+                "Direzione": daily.get(
+                    "wind_dir", pd.Series(np.nan, index=daily.index)
+                ).map(compass_direction),
+                "UV max": _numeric_series(daily, "uv_index_max"),
+                "Alba": daily["sunrise"].dt.strftime("%H:%M"),
+                "Tramonto": daily["sunset"].dt.strftime("%H:%M"),
+            }
+        )
+        render_color_legend("weather")
+        render_styled_table(_style_city_daily_table(daily_table, dark_mode))
+
+    with city_map:
+        st.markdown(
+            '<div class="section-kicker">Posizione e modello</div>',
+            unsafe_allow_html=True,
+        )
+        st.subheader(location.label)
+        st.map(
+            pd.DataFrame(
+                {"lat": [location.latitude], "lon": [location.longitude]}
+            ),
+            zoom=8,
+        )
+        elevation = (
+            "—" if location.elevation_m is None else f"{location.elevation_m:.0f} m"
+        )
+        st.caption(
+            f"Coordinate {location.latitude:.4f}, {location.longitude:.4f} · quota {elevation}. "
+            "La previsione usa il modello più adatto disponibile per queste coordinate."
+        )
+
+    st.caption(
+        "Meteo città fornito da Open‑Meteo · i valori non includono misure, correzioni "
+        "o dati della tua stazione Ecowitt."
     )
 
 
@@ -1066,27 +1503,117 @@ def forecast_alerts(forecast: pd.DataFrame) -> None:
         st.warning("Nelle prossime 24 ore: " + "; ".join(messages) + ".")
 
 
+selected_city: CityLocation | None = None
+city_lookup_error: str | None = None
+observation_hours = 24
+
 with st.sidebar:
-    st.header("Vista")
-    observation_hours = st.select_slider(
-        "Storico nel grafico",
-        options=[12, 24, 48, 72, 120],
-        value=24,
-        format_func=lambda value: f"{value} ore",
+    st.header("Esplora")
+    app_section = st.radio(
+        "Sezione",
+        options=("Stazione locale", "Meteo città"),
+        label_visibility="collapsed",
+        key="app_section",
     )
-    dark_mode = st.toggle("Tema scuro", value=False)
-    auto_refresh = st.toggle("Aggiorna la pagina ogni 5 min", value=True)
+
+    if app_section == "Meteo città":
+        st.subheader("Cerca una città")
+        with st.form("city_search_form", border=False):
+            typed_city = st.text_input(
+                "Nome o CAP",
+                value=st.session_state.get("city_query", ""),
+                placeholder="Es. Milano, Londra, 00100",
+            )
+            city_submitted = st.form_submit_button(
+                "Cerca",
+                type="primary",
+                width="stretch",
+            )
+        if city_submitted:
+            cleaned_city = " ".join(typed_city.split())
+            if len(cleaned_city) < 2:
+                city_lookup_error = "Inserisci almeno due caratteri."
+            else:
+                st.session_state["city_query"] = cleaned_city
+
+        city_query = str(st.session_state.get("city_query", "")).strip()
+        if city_query:
+            try:
+                city_matches = city_search_data(city_query)
+            except CityWeatherError as exc:
+                city_matches = []
+                city_lookup_error = str(exc)
+            if city_matches:
+                selected_city = st.selectbox(
+                    "Località trovata",
+                    options=city_matches,
+                    format_func=lambda location: location.label,
+                    key=f"city_choice_{city_query.casefold()}",
+                )
+            elif city_lookup_error is None:
+                city_lookup_error = "Nessuna località trovata. Prova ad aggiungere provincia o nazione."
+        if city_lookup_error:
+            st.warning(city_lookup_error)
+        st.caption(
+            "La ricerca usa esclusivamente dati meteo online; la stazione locale non viene mescolata."
+        )
+
     st.divider()
-    st.caption(
-        "I dati vengono acquisiti dal Cron Job Render ogni 5 minuti e riconciliati "
-        "ogni giorno da GitHub. Il pulsante ricarica soltanto la pagina."
+    st.subheader("Vista")
+    if app_section == "Stazione locale":
+        observation_hours = st.select_slider(
+            "Storico nel grafico",
+            options=[12, 24, 48, 72, 120],
+            value=24,
+            format_func=lambda value: f"{value} ore",
+        )
+    dark_mode = st.toggle("Tema scuro", value=False, key="dark_mode")
+    auto_refresh = st.toggle(
+        "Aggiorna la pagina ogni 5 min", value=True, key="auto_refresh"
     )
+    st.divider()
+    if app_section == "Stazione locale":
+        st.caption(
+            "I dati vengono acquisiti dal Cron Job Render ogni 5 minuti e riconciliati "
+            "ogni giorno da GitHub. Il pulsante ricarica soltanto la pagina."
+        )
+    else:
+        st.caption(
+            "Le città vengono aggiornate da internet e conservate in cache per 15 minuti."
+        )
     if st.button("Ricarica dati", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
 _refresh_controller(auto_refresh)
 _apply_theme(dark_mode)
+
+if app_section == "Meteo città":
+    if selected_city is None:
+        st.markdown(
+            '<div class="hero">'
+            '<div class="eyebrow">Meteo città · ricerca mondiale</div>'
+            "<h1>Che tempo fa altrove?</h1>"
+            "<p>Cerca una città dal menu laterale per ottenere condizioni attuali, "
+            "previsione oraria, sette giorni e mappa.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.info(
+            "Apri il menu laterale, seleziona **Meteo città** e cerca per nome o CAP. "
+            "Se esistono più località omonime potrai scegliere provincia e nazione."
+        )
+        st.stop()
+    try:
+        with st.spinner(f"Carico il meteo per {selected_city.label}…"):
+            selected_city_forecast = city_forecast_data(selected_city)
+    except CityWeatherError as exc:
+        st.error(
+            f"Non riesco a caricare questa località: {exc}. Riprova tra qualche minuto."
+        )
+        st.stop()
+    render_city_dashboard(selected_city, selected_city_forecast, dark_mode)
+    st.stop()
 
 station = station_data(max(observation_hours + 24, 240))
 forecast = forecast_data()
@@ -1238,15 +1765,19 @@ with tab_forecast:
     if forecast.empty:
         st.info("La pipeline non ha ancora prodotto la previsione combinata.")
     else:
+        forecast_step = interval_selector(
+            "Risoluzione della tabella", "local_forecast_interval", default=3
+        )
         now = pd.Timestamp.now(tz="UTC")
         hourly = forecast[
             (forecast["valid_time"] >= now)
-            & (forecast["valid_time"] <= now + pd.Timedelta(hours=72))
+            & (forecast["valid_time"] <= now + pd.Timedelta(days=7))
         ].copy()
+        hourly = forecast_interval(hourly, forecast_step)
         hourly["Ora"] = (
             hourly["valid_time"]
             .dt.tz_convert(CFG.local_timezone)
-            .dt.strftime("%a %d · %H:%M")
+            .map(_hour_label)
         )
         table = pd.DataFrame(
             {
@@ -1267,12 +1798,21 @@ with tab_forecast:
                 "Fiducia %": _numeric_series(hourly, "confidence").round(0),
             }
         )
+        st.caption(
+            f"{len(table)} righe · previsione calibrata campionata ogni {forecast_step} "
+            + ("ora" if forecast_step == 1 else "ore")
+        )
         render_color_legend("weather")
-        st.dataframe(
+        render_styled_table(
             _style_hourly_table(table, dark_mode),
-            hide_index=True,
-            width="stretch",
             height=520,
+        )
+        st.download_button(
+            "Scarica la previsione CSV",
+            data=table.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"previsione-{_filename_slug(CFG.location_name)}.csv",
+            mime="text/csv",
+            width="stretch",
         )
 
         scores = score_data()
@@ -1306,10 +1846,8 @@ with tab_forecast:
                     ]
                 ]
                 render_color_legend("scores")
-                st.dataframe(
+                render_styled_table(
                     _style_score_table(display.round(2), dark_mode),
-                    hide_index=True,
-                    width="stretch",
                 )
 
 with tab_station:
@@ -1428,10 +1966,9 @@ with tab_station:
             quality_table = quality.rename_axis("Qualità").reset_index(
                 name="Campioni"
             )
-            left.dataframe(
+            render_styled_table(
                 _style_status_table(quality_table, dark_mode, "Qualità"),
-                hide_index=True,
-                width="stretch",
+                container=left,
             )
             logs = log_data()
             if not logs.empty:
@@ -1454,10 +1991,9 @@ with tab_station:
                         .dt.strftime("%d/%m %H:%M")
                     )
                 right.write("Pipeline recenti")
-                right.dataframe(
+                render_styled_table(
                     _style_status_table(safe_logs, dark_mode, "status"),
-                    hide_index=True,
-                    width="stretch",
+                    container=right,
                 )
 
 with tab_astro:
@@ -1499,9 +2035,7 @@ with tab_astro:
                 daily_astro["lp_zone"] = light_pollution.lp_zone
                 daily_table = pd.DataFrame(
                     {
-                        "Data": pd.to_datetime(daily_astro["date"]).dt.strftime(
-                            "%a %d/%m"
-                        ),
+                        "Data": pd.to_datetime(daily_astro["date"]).map(_day_label),
                         "SQM stimato": daily_astro["sqm"],
                         "Bortle ≈": daily_astro["bortle"],
                         "Zona LP": daily_astro["lp_zone"],
@@ -1521,10 +2055,8 @@ with tab_astro:
                 )
                 st.subheader("SQM, inquinamento luminoso e meteo astronomico")
                 render_color_legend("astronomy")
-                st.dataframe(
+                render_styled_table(
                     _style_astronomy_table(daily_table, dark_mode),
-                    hide_index=True,
-                    width="stretch",
                 )
             st.caption(
                 f"SQM e zona LP sono stime zenitali geolocalizzate dell'Atlante {light_pollution.year} "
@@ -1600,7 +2132,7 @@ with tab_astro:
         if not events.empty:
             table = pd.DataFrame(
                 {
-                    "Data": pd.to_datetime(events["date"]).dt.strftime("%a %d/%m"),
+                    "Data": pd.to_datetime(events["date"]).map(_day_label),
                     "Tramonto": events["sunset"].map(
                         lambda value: value.strftime("%H:%M")
                     ),
@@ -1621,10 +2153,8 @@ with tab_astro:
                     ),
                 }
             )
-            st.dataframe(
+            render_styled_table(
                 _base_table_style(table, dark_mode),
-                hide_index=True,
-                width="stretch",
             )
 
 with tab_radar:

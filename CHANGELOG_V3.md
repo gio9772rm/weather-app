@@ -1,5 +1,14 @@
 # Changelog Meteo V3
 
+## Ricerca città e rifiniture dell'interfaccia
+
+- aggiunta al menu laterale la modalità Meteo città con ricerca mondiale per nome o CAP;
+- aggiunti condizioni correnti, previsione internet oraria e giornaliera, grafico, mappa e download CSV;
+- garantita la separazione completa fra dati internet delle città e misure/correzioni della stazione Ecowitt;
+- estesa la tabella fino a 7 giorni con selezione ogni 1, 3 o 6 ore;
+- sostituite le griglie con tabelle responsive a intestazione fissa e realmente scura, inclusi accuratezza, qualità dati e astronomia;
+- aggiunti test di avvio per entrambe le modalità dell'interfaccia.
+
 ## Acquisizione stabile su Render
 
 - il Cron Job Render torna a essere la sorgente primaria ogni 5 minuti;
@@ -34,15 +43,14 @@
 
 - nuovo layout responsive chiaro;
 - continuità grafica tra osservazioni e previsioni;
-- schede 7 giorni e tabella oraria a 72 ore;
+- schede 7 giorni e tabella fino a 7 giorni con passo configurabile;
 - avvisi per pioggia, raffiche e scarsa concordanza;
 - viste separate per stazione, qualità dei provider, astronomia e radar;
 - rimosse dalla UI pubblica le funzioni che eseguivano script e mostravano log completi.
 
 ## Operazioni e sicurezza
 
-- unificati i tre scheduler nella sola pipeline GitHub ogni 10 minuti;
-- rimosso il cron dal Blueprint Render;
+- mantenuto il Cron Job Render come acquisizione primaria e GitHub come riconciliazione giornaliera;
 - uniformato PostgreSQL su psycopg 3;
 - aggiunte migrazioni additive SQLite/PostgreSQL;
 - rimossi database, fogli storici, dump Ecowitt, cache e strumenti obsoleti dal tracking Git;

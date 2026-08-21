@@ -11,6 +11,8 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 - combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
+- tema chiaro/scuro completo, tabelle semantiche a contrasto con intestazione fissa e passo selezionabile ogni 1, 3 o 6 ore;
+- ricerca meteo mondiale per città o CAP, con condizioni attuali, previsione internet a 7 giorni, grafico, CSV e mappa senza mescolare la stazione locale;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - migrazione additiva: lo schema esistente viene esteso senza cancellare le osservazioni.
@@ -30,6 +32,8 @@ flowchart TD
 ```
 
 Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, perché i suoi eventi pianificati possono subire ritardi.
+
+Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti.
 
 ## Avvio rapido su Windows 11
 
@@ -140,7 +144,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+I test coprono avvio dell'interfaccia, ricerca città, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
 
 ## Storico privato
 
