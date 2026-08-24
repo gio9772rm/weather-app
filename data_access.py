@@ -237,7 +237,19 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
     )
 
     def state(row: pd.Series) -> str:
-        if not bool(row["enabled"]):
+        raw_status = row.get("status")
+        stored_status = (
+            "" if pd.isna(raw_status) else str(raw_status).strip().lower()
+        )
+        has_telemetry = bool(stored_status) or pd.notna(row["last_attempt_at"])
+        # The dashboard and the Render Cron Job can intentionally have
+        # different environment variables. Once the ingest process has
+        # reported telemetry, trust that shared database state instead of
+        # calling a live source disabled merely because the web process does
+        # not hold its API key.
+        if stored_status == "disabled":
+            return "disabled"
+        if not bool(row["enabled"]) and not has_telemetry:
             return "disabled"
         failures = int(row["consecutive_failures"])
         if failures >= 2:

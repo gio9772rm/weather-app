@@ -5,6 +5,7 @@
 - il tema scelto nell'app ora prevale anche quando il browser conserva una preferenza Streamlit differente;
 - corretti sfondo dell'intestazione, pulsante di apertura laterale, radio, schede, etichette dei widget e badge delle metriche in modalità chiara e scura;
 - preservati il testo bianco del riquadro principale e i tracciati trasparenti delle icone di sistema;
+- la scheda Sistema ora usa la telemetria condivisa del Cron Job e non scambia per disattivate le fonti le cui chiavi sono volutamente assenti dal Web Service;
 - aggiunti stati di selezione e focus ad alto contrasto senza alterare i colori semantici di tabelle e grafici.
 
 ## Affidabilità, valutazione, backup ed esperienza
