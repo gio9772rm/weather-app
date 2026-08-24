@@ -16,8 +16,10 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         '[data-testid="stHeader"]',
         '[data-testid="stRadio"] label p',
         'button[data-baseweb="tab"] *',
+        '[data-testid="stTab"] *',
         '[data-testid="stMetricDelta"] *',
-        '[data-testid="stSidebarCollapseButton"] svg *',
+        '[data-testid="stSidebarCollapseButton"] svg [fill="none"]',
+        '[data-testid="stMarkdownContainer"] .hero *',
     ):
         assert selector in source
 
