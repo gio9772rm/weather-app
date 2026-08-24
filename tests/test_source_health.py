@@ -3,8 +3,9 @@ from __future__ import annotations
 import pandas as pd
 from sqlalchemy import text
 
+from config import Settings
 from data_access import data_completeness_snapshot, load_source_health
-from source_health import record_source_result
+from source_health import record_source_disabled, record_source_result
 
 
 def test_source_health_preserves_last_success_and_counts_failures(sqlite_engine):
@@ -31,6 +32,37 @@ def test_source_health_preserves_last_success_and_counts_failures(sqlite_engine)
     assert row["last_observation_at"] == "2026-08-24T10:00:00Z"
     assert row["consecutive_failures"] == 2
     assert row["last_error"] == "secondo tentativo"
+
+
+def test_dashboard_trusts_cron_telemetry_when_web_keys_are_absent(
+    sqlite_engine, monkeypatch
+):
+    for name in (
+        "ECOWITT_APPLICATION_KEY",
+        "ECOWITT_APP_KEY",
+        "APPLICATION_KEY",
+        "ECOWITT_API_KEY",
+        "API_KEY",
+        "ECOWITT_MAC",
+        "MAC",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    cfg = Settings.from_env()
+    assert not cfg.has_station_credentials
+
+    assert record_source_result(
+        "ecowitt",
+        success=True,
+        rows_received=12,
+        last_observation_at=pd.Timestamp.now(tz="UTC"),
+        engine=sqlite_engine,
+    )
+    health = load_source_health(cfg).set_index("source")
+    assert health.loc["ecowitt", "display_status"] == "online"
+
+    assert record_source_disabled("ecowitt", engine=sqlite_engine)
+    health = load_source_health(cfg).set_index("source")
+    assert health.loc["ecowitt", "display_status"] == "disabled"
 
 
 def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine):
