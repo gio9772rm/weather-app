@@ -1,5 +1,11 @@
 # Changelog Meteo V3
 
+## Contrasto coerente dei componenti Streamlit
+
+- il tema scelto nell'app ora prevale anche quando il browser conserva una preferenza Streamlit differente;
+- corretti sfondo dell'intestazione, pulsante di apertura laterale, radio, schede, etichette dei widget e badge delle metriche in modalità chiara e scura;
+- aggiunti stati di selezione e focus ad alto contrasto senza alterare i colori semantici di tabelle e grafici.
+
 ## Affidabilità, valutazione, backup ed esperienza
 
 - aggiunta la scheda Sistema con salute per Ecowitt, provider, fonti ufficiali, combinazione e backup, inclusi latenza, righe, errori consecutivi e freschezza;

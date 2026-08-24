@@ -75,17 +75,69 @@ st.markdown(
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
 :root {
-  color-scheme:light;
+  color-scheme:light !important;
   --page-bg:#f6f8fb; --sidebar-bg:#edf6fc; --surface:#ffffff; --surface-soft:#f8fafc;
   --ink:#10243d; --muted:#64748b; --subtle:#475569; --line:rgba(148,163,184,.28);
   --blue:#2563eb; --card-bg:linear-gradient(155deg,rgba(255,255,255,.98),rgba(241,245,249,.9));
   --control-bg:#ffffff; --shadow:0 7px 22px rgba(15,23,42,.055);
 }
+html,body { color-scheme:light !important; }
 html, body, [class*="css"] { font-family:'DM Sans',system-ui,sans-serif; }
-.stApp { background:var(--page-bg); color:var(--ink); }
-section[data-testid="stSidebar"] { background:var(--sidebar-bg); border-right:1px solid var(--line); }
+.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"] {
+  background:var(--page-bg) !important; color:var(--ink) !important;
+}
+[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stDecoration"] {
+  background:var(--page-bg) !important; color:var(--ink) !important;
+}
+section[data-testid="stSidebar"] { background:var(--sidebar-bg) !important; border-right:1px solid var(--line); }
 .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,
 .stApp label,[data-testid="stCaptionContainer"] { color:var(--ink); }
+
+/* Streamlit can retain the browser's native dark palette even while the app
+   toggle is on light mode. Explicit widget descendants keep both modes
+   readable and make the in-app theme the single source of truth. */
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] li,
+.stApp [data-testid="stWidgetLabel"],
+.stApp [data-testid="stWidgetLabel"] p,
+.stApp [data-testid="stWidgetLabel"] span,
+.stApp [data-testid="stRadio"] label,
+.stApp [data-testid="stRadio"] label p,
+.stApp [data-testid="stRadio"] label span,
+.stApp [role="radiogroup"] label,
+.stApp [role="radiogroup"] label p,
+.stApp [role="radiogroup"] label span,
+.stApp [data-testid="stToggle"] label,
+.stApp [data-testid="stToggle"] label p,
+.stApp [data-testid="stToggle"] label span,
+.stApp [data-testid="stSlider"] label,
+.stApp [data-testid="stSlider"] label p,
+.stApp [data-testid="stSlider"] [data-testid="stTickBar"] *,
+.stApp [data-testid="stExpander"] summary,
+.stApp [data-testid="stExpander"] summary *,
+.stApp [data-testid="stAlert"],
+.stApp [data-testid="stAlert"] *,
+.stApp .stButton > button,
+.stApp .stButton > button *,
+.stApp [data-testid="stDownloadButton"] button,
+.stApp [data-testid="stDownloadButton"] button * {
+  color:var(--ink) !important;
+}
+.stApp [data-testid="stCaptionContainer"],
+.stApp [data-testid="stCaptionContainer"] p,
+.stApp [data-testid="stCaptionContainer"] span { color:var(--muted) !important; }
+.stApp button[data-baseweb="tab"],
+.stApp button[data-baseweb="tab"] * { color:var(--subtle) !important; opacity:1 !important; }
+.stApp button[data-baseweb="tab"][aria-selected="true"],
+.stApp button[data-baseweb="tab"][aria-selected="true"] * { color:var(--blue) !important; }
+[data-testid="stHeader"] button,[data-testid="stHeader"] button *,
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapseButton"] button * { color:var(--ink) !important; }
+[data-testid="stHeader"] button svg,[data-testid="stHeader"] button svg *,
+[data-testid="stSidebarCollapseButton"] svg,
+[data-testid="stSidebarCollapseButton"] svg * { color:var(--ink) !important; fill:currentColor !important; }
+[data-testid="stMetricDelta"],[data-testid="stMetricDelta"] * { color:#10243d !important; }
+.stApp :focus-visible { outline:2px solid var(--blue) !important; outline-offset:2px; }
 .block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
 .hero { position:relative; overflow:hidden; color:white; padding:1.7rem 1.9rem; border-radius:24px;
   background:radial-gradient(circle at 85% 20%,rgba(255,255,255,.24),transparent 24%),
@@ -273,12 +325,13 @@ def _apply_theme(dark_mode: bool) -> None:
         """
 <style>
 :root {
-  color-scheme:dark;
+  color-scheme:dark !important;
   --page-bg:#05070b; --sidebar-bg:#0b111b; --surface:#101826; --surface-soft:#0d1522;
   --ink:#f8fafc; --muted:#b6c2d1; --subtle:#d5deea; --line:rgba(226,232,240,.2);
   --blue:#60a5fa; --card-bg:linear-gradient(155deg,#111b2b,#0b1320);
   --control-bg:#111827; --shadow:0 9px 28px rgba(0,0,0,.28);
 }
+html,body { color-scheme:dark !important; }
 .stApp,[data-testid="stAppViewContainer"],[data-testid="stHeader"] { background:#05070b !important; color:var(--ink) !important; }
 section[data-testid="stSidebar"] { background:#0b111b !important; }
 .stApp p,.stApp li,.stApp label,.stApp span,.stApp div { border-color:var(--line); }
@@ -327,6 +380,7 @@ section[data-testid="stSidebar"] { background:#0b111b !important; }
 [data-baseweb="select"] > div,[data-testid="stTextInput"] input { background:var(--surface) !important; color:var(--ink) !important; }
 [data-testid="stMetricLabel"],[data-testid="stMetricLabel"] p { color:var(--muted) !important; }
 [data-testid="stMetricValue"],[data-testid="stMetricValue"] div { color:var(--ink) !important; }
+[data-testid="stMetricDelta"],[data-testid="stMetricDelta"] * { color:#f8fafc !important; }
 [data-testid="stAlert"] { background:var(--surface) !important; color:var(--ink) !important; border-color:var(--line) !important; }
 [data-testid="stDataFrame"],[data-testid="stDataFrame"] [role="grid"] { background:var(--surface) !important; color:var(--ink) !important; }
 [data-testid="stDataFrame"] [role="columnheader"],

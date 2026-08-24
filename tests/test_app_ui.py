@@ -7,6 +7,21 @@ from streamlit.testing.v1 import AppTest
 from db import reset_engine_cache
 
 
+def test_theme_css_covers_streamlit_native_widget_text() -> None:
+    source = (Path(__file__).parents[1] / "app_streamlit.py").read_text(
+        encoding="utf-8"
+    )
+
+    for selector in (
+        '[data-testid="stHeader"]',
+        '[data-testid="stRadio"] label p',
+        'button[data-baseweb="tab"] *',
+        '[data-testid="stMetricDelta"] *',
+        '[data-testid="stSidebarCollapseButton"] svg *',
+    ):
+        assert selector in source
+
+
 def test_app_opens_local_dashboard_and_city_search(
     tmp_path, monkeypatch, request
 ) -> None:
