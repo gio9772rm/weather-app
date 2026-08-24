@@ -34,12 +34,15 @@ from city_weather import (
 from config import Settings
 from data_access import (
     daily_forecast,
+    data_completeness_snapshot,
     health_snapshot,
     load_forecast,
+    load_forecast_reliability,
     load_official_station_status,
     load_provider_scores,
     load_recent_logs,
     load_reference_scores,
+    load_source_health,
     load_station,
 )
 from light_pollution import (
@@ -57,6 +60,14 @@ st.set_page_config(
 )
 CFG = Settings.from_env()
 ITALIAN_WEEKDAYS = ("Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom")
+TAB_SLUGS = {
+    "Panoramica": "overview",
+    "7 giorni": "forecast",
+    "Stazione": "station",
+    "Astronomia": "astronomy",
+    "Radar": "radar",
+    "Sistema": "system",
+}
 
 
 st.markdown(
@@ -157,7 +168,14 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
 [data-testid="stDownloadButton"] button { background:var(--control-bg) !important; color:var(--ink) !important;
   border-color:var(--line) !important; }
 @media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
-@media(max-width:680px){.block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}.forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}.hour-grid{grid-template-columns:1fr}.weather-table-wrap table{font-size:.74rem}.city-current{align-items:flex-start}}
+@media(max-width:680px){
+  .block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}
+  .forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}
+  .hour-grid{grid-template-columns:1fr}.weather-table-wrap table{font-size:.74rem}.city-current{align-items:flex-start}
+  div[data-baseweb="tab-list"]{overflow-x:auto;scrollbar-width:thin;flex-wrap:nowrap}
+  button[data-baseweb="tab"]{flex:0 0 auto;white-space:nowrap}
+  [data-testid="stMetric"]{min-height:102px;padding:.65rem .75rem}
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -187,6 +205,21 @@ def score_data() -> pd.DataFrame:
 @st.cache_data(ttl=600, show_spinner=False)
 def reference_score_data() -> pd.DataFrame:
     return load_reference_scores()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def reliability_data() -> pd.DataFrame:
+    return load_forecast_reliability()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def source_status_data() -> pd.DataFrame:
+    return load_source_health(Settings.from_env())
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def completeness_data() -> dict[str, Any]:
+    return data_completeness_snapshot(24)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -519,9 +552,17 @@ def _style_status_table(
         styler = styler.map(
             lambda value: (
                 weather_cell_style(80, "confidence")
-                if str(value).lower() in {"ok", "success", "online"}
+                if str(value).lower()
+                in {"ok", "success", "online", "operativa", "riuscita"}
                 else weather_cell_style(20, "confidence")
-                if str(value).lower() in {"error", "failed", "failure", "offline"}
+                if str(value).lower()
+                in {
+                    "error",
+                    "failed",
+                    "failure",
+                    "offline",
+                    "non disponibile",
+                }
                 else weather_cell_style(55, "confidence")
             ),
             subset=[status_column],
@@ -532,7 +573,15 @@ def _style_status_table(
 def _style_score_table(table: pd.DataFrame, dark_mode: bool) -> Any:
     """Colour forecast errors relative to the values currently being compared."""
     styler = _base_table_style(table, dark_mode)
-    for column in ("Bias", "MAE", "RMSE", "Brier"):
+    for column in (
+        "Bias",
+        "MAE",
+        "RMSE",
+        "Brier",
+        "MAE validazione",
+        "MAE persistenza",
+        "Gap affidabilità %",
+    ):
         if column not in table:
             continue
         values = pd.to_numeric(table[column], errors="coerce").abs().dropna()
@@ -553,6 +602,12 @@ def _style_score_table(table: pd.DataFrame, dark_mode: bool) -> Any:
             return weather_cell_style(20, "confidence")
 
         styler = styler.map(relative_style, subset=[column])
+    for column in ("Skill vs persistenza %", "Correlazione sito %"):
+        if column in table:
+            styler = styler.map(
+                lambda value: weather_cell_style(value, "confidence"),
+                subset=[column],
+            )
     return styler.format(precision=2, na_rep="—")
 
 
@@ -1526,6 +1581,43 @@ def forecast_alerts(forecast: pd.DataFrame) -> None:
         st.warning("Nelle prossime 24 ore: " + "; ".join(messages) + ".")
 
 
+def _query_value(name: str, default: str = "") -> str:
+    value = st.query_params.get(name, default)
+    if isinstance(value, list):
+        value = value[-1] if value else default
+    return str(value)
+
+
+def _set_query_value(name: str, value: Any) -> None:
+    rendered = str(value)
+    if _query_value(name) != rendered:
+        st.query_params[name] = rendered
+
+
+def _remember_selected_tab() -> None:
+    label = str(st.session_state.get("main_tab", "Panoramica"))
+    _set_query_value("tab", TAB_SLUGS.get(label, "overview"))
+
+
+query_mode = _query_value("mode", "local")
+if "app_section" not in st.session_state:
+    st.session_state["app_section"] = (
+        "Meteo città" if query_mode == "city" else "Stazione locale"
+    )
+if "dark_mode" not in st.session_state:
+    st.session_state["dark_mode"] = _query_value("theme", "light") == "dark"
+if "observation_hours" not in st.session_state:
+    try:
+        requested_hours = int(_query_value("hours", "24"))
+    except ValueError:
+        requested_hours = 24
+    st.session_state["observation_hours"] = (
+        requested_hours if requested_hours in {12, 24, 48, 72, 120} else 24
+    )
+if "city_query" not in st.session_state:
+    st.session_state["city_query"] = _query_value("city", "").strip()
+
+
 selected_city: CityLocation | None = None
 city_lookup_error: str | None = None
 observation_hours = 24
@@ -1587,10 +1679,10 @@ with st.sidebar:
         observation_hours = st.select_slider(
             "Storico nel grafico",
             options=[12, 24, 48, 72, 120],
-            value=24,
             format_func=lambda value: f"{value} ore",
+            key="observation_hours",
         )
-    dark_mode = st.toggle("Tema scuro", value=False, key="dark_mode")
+    dark_mode = st.toggle("Tema scuro", key="dark_mode")
     auto_refresh = st.toggle(
         "Aggiorna la pagina ogni 5 min", value=True, key="auto_refresh"
     )
@@ -1607,6 +1699,13 @@ with st.sidebar:
     if st.button("Ricarica dati", width="stretch"):
         st.cache_data.clear()
         st.rerun()
+
+_set_query_value("mode", "city" if app_section == "Meteo città" else "local")
+_set_query_value("theme", "dark" if dark_mode else "light")
+if app_section == "Stazione locale":
+    _set_query_value("hours", observation_hours)
+elif st.session_state.get("city_query"):
+    _set_query_value("city", st.session_state["city_query"])
 
 _refresh_controller(auto_refresh)
 _apply_theme(dark_mode)
@@ -1723,8 +1822,27 @@ else:
 
 forecast_alerts(forecast)
 
-tab_overview, tab_forecast, tab_station, tab_astro, tab_radar = st.tabs(
-    ["Panoramica", "7 giorni", "Stazione", "Astronomia", "Radar"]
+tab_labels = list(TAB_SLUGS)
+requested_tab = next(
+    (
+        label
+        for label, slug in TAB_SLUGS.items()
+        if slug == _query_value("tab", "overview")
+    ),
+    "Panoramica",
+)
+(
+    tab_overview,
+    tab_forecast,
+    tab_station,
+    tab_astro,
+    tab_radar,
+    tab_system,
+) = st.tabs(
+    tab_labels,
+    default=requested_tab,
+    key="main_tab",
+    on_change=_remember_selected_tab,
 )
 
 with tab_overview:
@@ -1839,6 +1957,7 @@ with tab_forecast:
         )
 
         scores = score_data()
+        reliability = reliability_data()
         reference_scores = reference_score_data()
         official_stations = official_station_data()
         enabled_reference_sources = {"awc_metar"}
@@ -1876,7 +1995,18 @@ with tab_forecast:
                     "Il confronto automatico inizierà quando previsioni archiviate e osservazioni avranno orari sovrapposti."
                 )
             else:
-                display = scores.rename(
+                display = scores.copy()
+                display["skill_vs_persistence"] = (
+                    pd.to_numeric(
+                        display.get("skill_vs_persistence"), errors="coerce"
+                    )
+                    * 100.0
+                )
+                display["reliability_gap"] = (
+                    pd.to_numeric(display.get("reliability_gap"), errors="coerce")
+                    * 100.0
+                )
+                display = display.rename(
                     columns={
                         "provider": "Provider",
                         "variable": "Variabile",
@@ -1886,6 +2016,11 @@ with tab_forecast:
                         "mae": "MAE",
                         "rmse": "RMSE",
                         "brier": "Brier",
+                        "holdout_n": "Campioni validazione",
+                        "holdout_mae": "MAE validazione",
+                        "persistence_mae": "MAE persistenza",
+                        "skill_vs_persistence": "Skill vs persistenza %",
+                        "reliability_gap": "Gap affidabilità %",
                     }
                 )[
                     [
@@ -1897,11 +2032,69 @@ with tab_forecast:
                         "MAE",
                         "RMSE",
                         "Brier",
+                        "Campioni validazione",
+                        "MAE validazione",
+                        "MAE persistenza",
+                        "Skill vs persistenza %",
+                        "Gap affidabilità %",
                     ]
                 ]
                 render_color_legend("scores")
                 render_styled_table(
                     _style_score_table(display.round(2), dark_mode),
+                )
+                st.caption(
+                    "La validazione usa la parte temporale più recente non impiegata "
+                    "come riepilogo storico. Skill positiva significa che il provider "
+                    "batte la semplice persistenza dell'ultima misura disponibile."
+                )
+
+            if not reliability.empty:
+                reliability_figure = go.Figure()
+                for (provider, horizon), group in reliability.groupby(
+                    ["provider", "horizon"]
+                ):
+                    reliability_figure.add_trace(
+                        go.Scatter(
+                            x=group["mean_probability"] * 100.0,
+                            y=group["observed_frequency"] * 100.0,
+                            mode="lines+markers",
+                            name=f"{provider} · {horizon}",
+                            marker={
+                                "size": 7
+                                + np.sqrt(pd.to_numeric(group["n"], errors="coerce")),
+                            },
+                            customdata=group[["n", "brier"]],
+                            hovertemplate=(
+                                "Prevista %{x:.0f}%<br>Osservata %{y:.0f}%"
+                                "<br>Campioni %{customdata[0]:.0f}"
+                                "<br>Brier %{customdata[1]:.3f}<extra></extra>"
+                            ),
+                        )
+                    )
+                reliability_figure.add_trace(
+                    go.Scatter(
+                        x=[0, 100],
+                        y=[0, 100],
+                        mode="lines",
+                        name="Calibrazione ideale",
+                        line={"color": "#94a3b8", "dash": "dot"},
+                    )
+                )
+                reliability_figure.update_layout(
+                    height=410,
+                    title="Affidabilità della probabilità di pioggia",
+                    xaxis_title="Probabilità prevista %",
+                    yaxis_title="Frequenza osservata %",
+                    legend={"orientation": "h"},
+                    margin={"l": 10, "r": 10, "t": 55, "b": 10},
+                )
+                reliability_figure.update_xaxes(range=[0, 100])
+                reliability_figure.update_yaxes(range=[0, 100])
+                st.plotly_chart(
+                    _style_plotly(reliability_figure, dark_mode),
+                    width="stretch",
+                    theme=None,
                 )
 
             st.markdown("#### Riferimenti ufficiali indipendenti")
@@ -1937,6 +2130,13 @@ with tab_forecast:
                 )
 
             if not reference_scores.empty:
+                reference_scores = reference_scores.copy()
+                reference_scores["site_correlation"] = (
+                    pd.to_numeric(
+                        reference_scores.get("site_correlation"), errors="coerce"
+                    )
+                    * 100.0
+                )
                 reference_display = reference_scores.rename(
                     columns={
                         "provider": "Provider",
@@ -1949,6 +2149,7 @@ with tab_forecast:
                         "mae": "MAE",
                         "rmse": "RMSE",
                         "brier": "Brier",
+                        "site_correlation": "Correlazione sito %",
                         "reference_weight": "Peso qualità",
                     }
                 )[
@@ -1963,6 +2164,7 @@ with tab_forecast:
                         "MAE",
                         "RMSE",
                         "Brier",
+                        "Correlazione sito %",
                         "Peso qualità",
                     ]
                 ]
@@ -2328,6 +2530,154 @@ with tab_radar:
         "Mappa previsionale Windy/ECMWF: usa la linea temporale interna per spostarti a +1, +2 e +3 ore. "
         "Il radar sopra mostra invece precipitazioni realmente osservate."
     )
+
+with tab_system:
+    st.markdown(
+        '<div class="section-kicker">Affidabilità e continuità</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Stato del sistema")
+    completeness = completeness_data()
+    system_columns = st.columns(4)
+    system_columns[0].metric(
+        "Copertura stazione · 24 h",
+        f"{completeness['coverage']:.1f}%",
+        f"{completeness['observed']} / {completeness['expected']} intervalli",
+    )
+    largest_gap = completeness.get("largest_gap_minutes")
+    system_columns[1].metric(
+        "Buco massimo · 24 h",
+        "—" if largest_gap is None else f"{largest_gap:.0f} min",
+        "obiettivo ≤ 10 min",
+        delta_color="off",
+    )
+    system_columns[2].metric(
+        "Campioni segnalati · 24 h",
+        str(completeness["anomalies"]),
+        "controlli fisici e temporali",
+        delta_color="inverse",
+    )
+    system_columns[3].metric(
+        "Schema dati",
+        "v4",
+        "migrazione additiva",
+        delta_color="off",
+    )
+
+    sources = source_status_data()
+    if not CFG.cfr_observations_enabled and "source" in sources:
+        sources = sources[sources["source"] != "cfr_lazio"].copy()
+    st.markdown("#### Fonti e processi indipendenti")
+    st.caption(
+        "Un errore di una fonte non interrompe le altre. Lo stato considera sia "
+        "l'ultimo tentativo sia la frequenza attesa di aggiornamento."
+    )
+    if sources.empty:
+        st.info("Lo stato dettagliato comparirà dopo la prossima acquisizione.")
+    else:
+        status_labels = {
+            "online": "Operativa",
+            "delayed": "In ritardo",
+            "offline": "Non disponibile",
+            "waiting": "In attesa",
+            "disabled": "Disattivata",
+        }
+        category_labels = {
+            "misure": "Misure",
+            "previsioni": "Previsioni",
+            "riferimenti": "Riferimenti",
+            "elaborazione": "Elaborazione",
+            "protezione": "Protezione",
+        }
+        source_table = pd.DataFrame(
+            {
+                "Componente": sources["label"],
+                "Categoria": sources["category"].map(category_labels),
+                "Stato": sources["display_status"].map(status_labels),
+                "Ultimo successo": sources["last_success_at"].map(_local_time),
+                "Ultimo dato/copertura": sources["last_observation_at"].map(
+                    _local_time
+                ),
+                "Età successo": sources["age_minutes"].map(_age_text),
+                "Latenza ms": pd.to_numeric(
+                    sources["latency_ms"], errors="coerce"
+                ).round(0),
+                "Righe": pd.to_numeric(
+                    sources["rows_received"], errors="coerce"
+                ).round(0),
+                "Errori consecutivi": pd.to_numeric(
+                    sources["consecutive_failures"], errors="coerce"
+                ).round(0),
+                "Ultimo errore": sources["last_error"].replace("", "—"),
+            }
+        )
+        render_color_legend("status")
+        render_styled_table(
+            _style_status_table(source_table, dark_mode, "Stato"),
+            height=470,
+        )
+
+    st.markdown("#### Qualità delle osservazioni")
+    recent_quality = station[
+        station["time"] >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=24)
+    ] if not station.empty else pd.DataFrame()
+    if recent_quality.empty:
+        st.caption("Nessuna osservazione nelle ultime 24 ore.")
+    else:
+        quality_counts = (
+            recent_quality.get("data_quality", pd.Series("ok", index=recent_quality.index))
+            .fillna("ok")
+            .value_counts()
+            .rename_axis("Esito")
+            .reset_index(name="Campioni")
+        )
+        render_styled_table(
+            _style_status_table(quality_counts, dark_mode, "Esito"),
+        )
+        st.caption(
+            "range_filtered rimuove solo il valore fisicamente impossibile; spike e "
+            "stuck conservano la misura ma la marcano come sospetta; estimated_rain "
+            "indica pioggia ricavata da intensità × intervallo."
+        )
+
+    st.markdown("#### Backup e ultime esecuzioni")
+    st.caption(
+        "backup_database.py crea sul computer un archivio ZIP portatile e lo "
+        "verifica con conteggi e checksum; la data dell'ultima esportazione riuscita "
+        "compare tra i componenti. Per il recupero online usa inoltre backup e PITR "
+        "gestiti direttamente dal piano PostgreSQL Render, senza trasferire il "
+        "database verso GitHub."
+    )
+    logs = log_data()
+    if not logs.empty:
+        safe_logs = logs[
+            [
+                column
+                for column in (
+                    "started_at",
+                    "finished_at",
+                    "component",
+                    "status",
+                    "rows_written",
+                )
+                if column in logs
+            ]
+        ].copy()
+        for column in ("started_at", "finished_at"):
+            if column in safe_logs:
+                safe_logs[column] = safe_logs[column].map(_local_time)
+        safe_logs = safe_logs.rename(
+            columns={
+                "started_at": "Avvio",
+                "finished_at": "Fine",
+                "component": "Componente",
+                "status": "Stato",
+                "rows_written": "Righe",
+            }
+        )
+        render_styled_table(
+            _style_status_table(safe_logs, dark_mode, "Stato"),
+        )
 
 reference_attribution = " · riferimenti: Aviation Weather"
 if CFG.arsial_observations_enabled:

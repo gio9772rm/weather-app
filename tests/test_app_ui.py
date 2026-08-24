@@ -25,6 +25,7 @@ def test_app_opens_local_dashboard_and_city_search(
         "Stazione",
         "Astronomia",
         "Radar",
+        "Sistema",
     ]
 
     app.sidebar.radio[0].set_value("Meteo città").run()

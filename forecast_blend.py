@@ -198,6 +198,14 @@ def _score_record(
     }
 
 
+def _holdout_pair(pair: pd.DataFrame) -> pd.DataFrame:
+    """Return a recent, untouched validation tail for walk-forward reporting."""
+    if len(pair) < 12:
+        return pair.iloc[0:0]
+    size = max(6, math.ceil(len(pair) * 0.20))
+    return pair.tail(size)
+
+
 def score_forecasts(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> pd.DataFrame:
@@ -244,10 +252,27 @@ def score_forecasts(
     observations = observations.rename(
         columns={"windgust_kmh": "wind_gust_kmh", "winddir": "wind_dir"}
     )
-    forecasts = forecasts.dropna(subset=["valid_time", "issued_at"]).sort_values(
-        "valid_time"
-    )
+    forecasts = forecasts.dropna(subset=["valid_time", "issued_at"])
     observations = observations.dropna(subset=["time"]).sort_values("time")
+    persistence_columns = sorted(
+        {
+            observed.removesuffix("_obs")
+            for _, observed in LOCAL_OBSERVATION_MAPPINGS.values()
+            if observed.removesuffix("_obs") in observations
+        }
+    )
+    persistence = observations[["time", *persistence_columns]].rename(
+        columns={column: f"{column}_persistence" for column in persistence_columns}
+    )
+    forecasts = pd.merge_asof(
+        forecasts.sort_values("issued_at"),
+        persistence,
+        left_on="issued_at",
+        right_on="time",
+        direction="backward",
+        tolerance=pd.Timedelta(hours=3),
+    ).drop(columns=["time"], errors="ignore")
+    forecasts = forecasts.sort_values("valid_time")
     # Prefer one observation closest to each forecast target, within 40 minutes.
     merged = pd.merge_asof(
         forecasts,
@@ -279,6 +304,7 @@ def score_forecasts(
     merged["horizon"] = _horizon_bucket(merged["lead_hours"])
     evaluated = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     rows: list[dict[str, Any]] = []
+    reliability_rows: list[dict[str, Any]] = []
     for (provider, model, horizon), group in merged.groupby(
         ["provider", "model", "horizon"], dropna=True
     ):
@@ -287,13 +313,18 @@ def score_forecasts(
         for variable, (forecast_col, observed_col) in LOCAL_OBSERVATION_MAPPINGS.items():
             if forecast_col not in group or observed_col not in group:
                 continue
+            persistence_col = f"{observed_col.removesuffix('_obs')}_persistence"
+            pair_columns = [forecast_col, observed_col]
+            if persistence_col in group:
+                pair_columns.append(persistence_col)
             pair = (
-                group[[forecast_col, observed_col]]
+                group.sort_values("valid_time")[pair_columns]
                 .apply(pd.to_numeric, errors="coerce")
-                .dropna()
+                .dropna(subset=[forecast_col, observed_col])
             )
             if pair.empty:
                 continue
+            holdout = _holdout_pair(pair)
             record = {
                 "evaluated_at": evaluated,
                 "provider": provider,
@@ -301,7 +332,31 @@ def score_forecasts(
                 "variable": variable,
                 "horizon": str(horizon),
                 **_score_record(pair, forecast_col, observed_col, variable),
+                "holdout_n": len(holdout),
+                "holdout_mae": None,
+                "persistence_mae": None,
+                "skill_vs_persistence": None,
+                "reliability_gap": None,
             }
+            if not holdout.empty:
+                holdout_error = _variable_error(
+                    holdout[forecast_col], holdout[observed_col], variable
+                )
+                record["holdout_mae"] = float(holdout_error.abs().mean())
+                if persistence_col in holdout:
+                    persistence_pair = holdout.dropna(subset=[persistence_col])
+                    if not persistence_pair.empty:
+                        persistence_error = _variable_error(
+                            persistence_pair[persistence_col],
+                            persistence_pair[observed_col],
+                            variable,
+                        )
+                        persistence_mae = float(persistence_error.abs().mean())
+                        record["persistence_mae"] = persistence_mae
+                        if persistence_mae > 0:
+                            record["skill_vs_persistence"] = float(
+                                1.0 - record["holdout_mae"] / persistence_mae
+                            )
             if variable == "rain_mm" and "precip_probability" in group:
                 probability = (
                     pd.to_numeric(
@@ -315,19 +370,93 @@ def score_forecasts(
                     record["brier"] = float(
                         np.mean(np.square(probability[valid] - event[valid]))
                     )
+                if not holdout.empty:
+                    holdout_probability = (
+                        pd.to_numeric(
+                            group.loc[holdout.index, "precip_probability"],
+                            errors="coerce",
+                        ).clip(0, 100)
+                        / 100.0
+                    )
+                    holdout_event = (holdout[observed_col] >= 0.1).astype(float)
+                    valid_holdout = holdout_probability.notna()
+                    if valid_holdout.any():
+                        calibrated = pd.DataFrame(
+                            {
+                                "probability": holdout_probability[valid_holdout],
+                                "event": holdout_event[valid_holdout],
+                            }
+                        )
+                        record["reliability_gap"] = float(
+                            calibrated["probability"].mean()
+                            - calibrated["event"].mean()
+                        )
+                        calibrated["probability_bin"] = (
+                            np.floor(calibrated["probability"] * 10.0)
+                            .clip(0, 9)
+                            .astype(int)
+                            * 10
+                        )
+                        for probability_bin, calibration in calibrated.groupby(
+                            "probability_bin"
+                        ):
+                            reliability_rows.append(
+                                {
+                                    "evaluated_at": evaluated,
+                                    "provider": provider,
+                                    "model": model,
+                                    "horizon": str(horizon),
+                                    "probability_bin": int(probability_bin),
+                                    "n": len(calibration),
+                                    "mean_probability": float(
+                                        calibration["probability"].mean()
+                                    ),
+                                    "observed_frequency": float(
+                                        calibration["event"].mean()
+                                    ),
+                                    "brier": float(
+                                        np.mean(
+                                            np.square(
+                                                calibration["probability"]
+                                                - calibration["event"]
+                                            )
+                                        )
+                                    ),
+                                }
+                            )
             rows.append(record)
     scores = pd.DataFrame(rows)
     if scores.empty:
         return scores
     insert = text(
         "INSERT INTO forecast_scores "
-        "(evaluated_at,provider,model,variable,horizon,n,bias,mae,rmse,brier) "
-        "VALUES (:evaluated_at,:provider,:model,:variable,:horizon,:n,:bias,:mae,:rmse,:brier) "
+        "(evaluated_at,provider,model,variable,horizon,n,bias,mae,rmse,brier,"
+        "holdout_n,holdout_mae,persistence_mae,skill_vs_persistence,reliability_gap) "
+        "VALUES (:evaluated_at,:provider,:model,:variable,:horizon,:n,:bias,:mae,:rmse,:brier,"
+        ":holdout_n,:holdout_mae,:persistence_mae,:skill_vs_persistence,:reliability_gap) "
         "ON CONFLICT (evaluated_at,provider,model,variable,horizon) DO UPDATE SET "
-        "n=excluded.n,bias=excluded.bias,mae=excluded.mae,rmse=excluded.rmse,brier=excluded.brier"
+        "n=excluded.n,bias=excluded.bias,mae=excluded.mae,rmse=excluded.rmse,"
+        "brier=excluded.brier,holdout_n=excluded.holdout_n,"
+        "holdout_mae=excluded.holdout_mae,persistence_mae=excluded.persistence_mae,"
+        "skill_vs_persistence=excluded.skill_vs_persistence,"
+        "reliability_gap=excluded.reliability_gap"
     )
     with engine.begin() as connection:
         connection.execute(insert, scores.to_dict("records"))
+        if reliability_rows:
+            connection.execute(
+                text(
+                    "INSERT INTO forecast_reliability (evaluated_at,provider,model,"
+                    "horizon,probability_bin,n,mean_probability,observed_frequency,brier) "
+                    "VALUES (:evaluated_at,:provider,:model,:horizon,:probability_bin,"
+                    ":n,:mean_probability,:observed_frequency,:brier) "
+                    "ON CONFLICT (evaluated_at,provider,model,horizon,probability_bin) "
+                    "DO UPDATE SET n=excluded.n,"
+                    "mean_probability=excluded.mean_probability,"
+                    "observed_frequency=excluded.observed_frequency,brier=excluded.brier"
+                ),
+                reliability_rows,
+            )
     return scores
 
 
@@ -336,7 +465,7 @@ def _reference_transfer(
     local: pd.DataFrame,
     variable: str,
     minimum_samples: int,
-) -> tuple[float, float, int] | None:
+) -> tuple[float, float, int, float] | None:
     """Learn how a remote official sensor maps to the local Ecowitt sensor."""
     if variable not in reference or variable not in local:
         return None
@@ -362,7 +491,15 @@ def _reference_transfer(
     residual = difference - transfer_bias
     if variable == "wind_dir":
         residual = (residual + 180.0).mod(360.0) - 180.0
-    return transfer_bias, float(residual.abs().median()), len(matched)
+        radians = np.deg2rad(difference)
+        correlation = float(
+            np.hypot(np.cos(radians).mean(), np.sin(radians).mean())
+        )
+    else:
+        correlation = float(matched["reference"].corr(matched["local"]))
+        if not math.isfinite(correlation):
+            correlation = 0.0
+    return transfer_bias, float(residual.abs().median()), len(matched), correlation
 
 
 def _adjust_reference(series: pd.Series, variable: str, bias: float) -> pd.Series:
@@ -466,7 +603,7 @@ def score_forecasts_against_references(
         merged = merged[merged["lead_hours"] >= 0].copy()
         merged["horizon"] = _horizon_bucket(merged["lead_hours"])
 
-        transfers: dict[str, tuple[float, float, int] | None] = {}
+        transfers: dict[str, tuple[float, float, int, float] | None] = {}
         for variable in REFERENCE_OBSERVATION_VARIABLES:
             transfers[variable] = (
                 _reference_transfer(
@@ -497,17 +634,21 @@ def score_forecasts_against_references(
                 ).dropna()
                 if len(pair) < 6:
                     continue
-                transfer_bias, transfer_mae = (0.0, None)
+                transfer_bias, transfer_mae, site_correlation = (0.0, None, None)
                 if transfer is not None:
-                    transfer_bias, transfer_mae, _ = transfer
+                    transfer_bias, transfer_mae, _, site_correlation = transfer
                     pair[observed_col] = _adjust_reference(
                         pair[observed_col], variable, transfer_bias
                     )
-                    quality_weight = min(
+                    residual_weight = min(
                         1.0,
                         ERROR_FLOORS.get(variable, 1.0)
                         / max(transfer_mae, ERROR_FLOORS.get(variable, 1.0)),
                     )
+                    correlation_weight = float(
+                        np.clip((site_correlation - 0.10) / 0.70, 0.0, 1.0)
+                    )
+                    quality_weight = residual_weight * correlation_weight
                 else:
                     quality_weight = 0.20 if variable != "rain_mm" else 0.10
                 record = {
@@ -521,6 +662,7 @@ def score_forecasts_against_references(
                     **_score_record(pair, forecast_col, observed_col, variable),
                     "transfer_bias": transfer_bias,
                     "transfer_mae": transfer_mae,
+                    "site_correlation": site_correlation,
                     "reference_weight": distance_weight * quality_weight,
                 }
                 rows.append(record)
@@ -551,6 +693,7 @@ def score_forecasts_against_references(
                             "brier": float(np.mean(np.square(probability - event))),
                             "transfer_bias": None,
                             "transfer_mae": None,
+                            "site_correlation": None,
                             "reference_weight": distance_weight * 0.15,
                         }
                     )
@@ -573,6 +716,7 @@ def score_forecasts_against_references(
         "brier",
         "transfer_bias",
         "transfer_mae",
+        "site_correlation",
         "reference_weight",
     ]
     insert = text(
@@ -583,7 +727,8 @@ def score_forecasts_against_references(
         + ") ON CONFLICT (evaluated_at,provider,model,source,station_id,variable,horizon) "
         "DO UPDATE SET n=excluded.n,bias=excluded.bias,mae=excluded.mae,"
         "rmse=excluded.rmse,brier=excluded.brier,transfer_bias=excluded.transfer_bias,"
-        "transfer_mae=excluded.transfer_mae,reference_weight=excluded.reference_weight"
+        "transfer_mae=excluded.transfer_mae,site_correlation=excluded.site_correlation,"
+        "reference_weight=excluded.reference_weight"
     )
     with engine.begin() as connection:
         connection.execute(insert, scores.reindex(columns=columns).to_dict("records"))
@@ -601,6 +746,20 @@ def _latest_scores(engine: Engine) -> pd.DataFrame:
         )
     if not frame.empty:
         frame.columns = [column.lower() for column in frame.columns]
+        for column in (
+            "n",
+            "bias",
+            "mae",
+            "rmse",
+            "brier",
+            "holdout_n",
+            "holdout_mae",
+            "persistence_mae",
+            "skill_vs_persistence",
+            "reliability_gap",
+        ):
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
 
 
@@ -623,6 +782,7 @@ def _latest_reference_scores(engine: Engine) -> pd.DataFrame:
             "brier",
             "transfer_bias",
             "transfer_mae",
+            "site_correlation",
             "reference_weight",
         ):
             if column in frame:
@@ -671,7 +831,13 @@ def _score_lookup(
         if not subset.empty:
             row = subset.sort_values("n", ascending=False).iloc[0]
             local_bias = float(row["bias"]) if pd.notna(row["bias"]) else 0.0
-            local_mae = float(row["mae"]) if pd.notna(row["mae"]) else None
+            validated = (
+                "holdout_mae" in row
+                and pd.notna(row.get("holdout_mae"))
+                and float(row.get("holdout_n") or 0) >= 6
+            )
+            error_value = row["holdout_mae"] if validated else row["mae"]
+            local_mae = float(error_value) if pd.notna(error_value) else None
 
     if reference_scores is None or reference_scores.empty:
         return local_bias, local_mae

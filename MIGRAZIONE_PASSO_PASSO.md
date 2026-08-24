@@ -83,7 +83,7 @@ Esegui anche i test:
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Il risultato atteso è `10 passed` e `All checks passed`.
+Il risultato atteso è `70 passed` e `All checks passed`.
 
 ## 4. Configura GitHub Actions
 
@@ -146,6 +146,8 @@ Il primo avvio crea le nuove tabelle e aggiunge colonne a quelle esistenti. L'op
 GitHub resta la rete di sicurezza giornaliera e il recupero manuale. L'acquisizione frequente viene eseguita dal Cron Job Render, perché la pianificazione GitHub può essere ritardata.
 
 La calibrazione dei provider non appare immediatamente. Servono previsioni archiviate che siano poi diventate osservabili; i primi punteggi arrivano normalmente nelle ore successive.
+
+Crea una prima copia locale con `backup_database.py --output backups`, verificala con l'opzione `--verify` e spostala in un supporto privato separato e cifrato. Sul PostgreSQL Render controlla inoltre la sezione **Recovery** e la disponibilità del point-in-time recovery prevista dal piano: il progetto non esporta automaticamente il database verso GitHub.
 
 ## 7. Riattiva e configura il Cron Job Render
 

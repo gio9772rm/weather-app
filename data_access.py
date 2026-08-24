@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from config import Settings, settings
 from db import ensure_schema, get_engine
 from forecast_quality import enforce_physical_bounds
+from source_health import configured_sources
 
 
 def _read(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -138,7 +139,36 @@ def load_provider_scores() -> pd.DataFrame:
         "SELECT * FROM forecast_scores WHERE evaluated_at = "
         "(SELECT MAX(evaluated_at) FROM forecast_scores) ORDER BY variable,horizon,mae"
     )
-    for column in ("n", "bias", "mae", "rmse", "brier"):
+    for column in (
+        "n",
+        "bias",
+        "mae",
+        "rmse",
+        "brier",
+        "holdout_n",
+        "holdout_mae",
+        "persistence_mae",
+        "skill_vs_persistence",
+        "reliability_gap",
+    ):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def load_forecast_reliability() -> pd.DataFrame:
+    frame = _read(
+        "SELECT * FROM forecast_reliability WHERE evaluated_at = "
+        "(SELECT MAX(evaluated_at) FROM forecast_reliability) "
+        "ORDER BY provider,horizon,probability_bin"
+    )
+    for column in (
+        "probability_bin",
+        "n",
+        "mean_probability",
+        "observed_frequency",
+        "brier",
+    ):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
@@ -158,11 +188,107 @@ def load_reference_scores() -> pd.DataFrame:
         "brier",
         "transfer_bias",
         "transfer_mae",
+        "site_correlation",
         "reference_weight",
     ):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
+
+
+def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
+    """Return every configured source, including sources not attempted yet."""
+    current = _read("SELECT * FROM source_health ORDER BY source")
+    if "source" not in current:
+        current = pd.DataFrame(
+            columns=[
+                "source",
+                "last_attempt_at",
+                "last_success_at",
+                "last_observation_at",
+                "status",
+                "rows_received",
+                "latency_ms",
+                "consecutive_failures",
+                "last_error",
+            ]
+        )
+    catalog = pd.DataFrame(
+        [
+            {
+                "source": item.source,
+                "label": item.label,
+                "enabled": item.enabled,
+                "expected_minutes": item.expected_minutes,
+                "category": item.category,
+            }
+            for item in configured_sources(cfg)
+        ]
+    )
+    frame = catalog.merge(current, on="source", how="left")
+    for column in ("last_attempt_at", "last_success_at", "last_observation_at"):
+        frame[column] = pd.to_datetime(frame.get(column), utc=True, errors="coerce")
+    for column in ("rows_received", "latency_ms", "consecutive_failures"):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce").fillna(0)
+    frame["last_error"] = frame.get("last_error", "").fillna("").astype(str)
+    now = pd.Timestamp.now(tz="UTC")
+    frame["age_minutes"] = frame["last_success_at"].map(
+        lambda value: _age_minutes(now, value)
+    )
+
+    def state(row: pd.Series) -> str:
+        if not bool(row["enabled"]):
+            return "disabled"
+        failures = int(row["consecutive_failures"])
+        if failures >= 2:
+            return "offline"
+        if failures == 1:
+            return "delayed"
+        if pd.isna(row["last_success_at"]):
+            return "waiting"
+        age = float(row["age_minutes"])
+        expected = max(1.0, float(row["expected_minutes"]))
+        if age <= expected * 1.75:
+            return "online"
+        if age <= expected * 3.5:
+            return "delayed"
+        return "offline"
+
+    frame["display_status"] = frame.apply(state, axis=1)
+    return frame
+
+
+def data_completeness_snapshot(hours: int = 24) -> dict[str, Any]:
+    """Calculate five-minute coverage and anomaly counts without DB-specific SQL."""
+    hours = max(1, min(int(hours), 168))
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours)
+    frame = _read(
+        "SELECT time,data_quality FROM station_raw WHERE time >= :cutoff ORDER BY time",
+        {"cutoff": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")},
+    )
+    expected = hours * 12
+    if frame.empty:
+        return {
+            "hours": hours,
+            "expected": expected,
+            "observed": 0,
+            "coverage": 0.0,
+            "largest_gap_minutes": None,
+            "anomalies": 0,
+        }
+    times = pd.to_datetime(frame["time"], utc=True, errors="coerce").dropna()
+    buckets = times.dt.floor("5min").drop_duplicates()
+    gaps = times.sort_values().diff().dt.total_seconds().div(60).dropna()
+    quality = frame.get("data_quality", pd.Series(dtype="string")).fillna("ok")
+    anomalies = int((~quality.astype(str).isin({"ok", "estimated_rain"})).sum())
+    return {
+        "hours": hours,
+        "expected": expected,
+        "observed": len(buckets),
+        "coverage": min(100.0, len(buckets) / expected * 100.0),
+        "largest_gap_minutes": float(gaps.max()) if not gaps.empty else 0.0,
+        "anomalies": anomalies,
+    }
 
 
 def load_official_station_status() -> pd.DataFrame:

@@ -5,17 +5,22 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 ## Cosa offre
 
 - osservazioni Ecowitt Cloud con controlli di qualità e pioggia espressa correttamente in **mm per intervallo**;
+- controlli avanzati su intervalli fisici, salti anomali, sensori fermi e coerenza tra vento medio e raffica;
 - previsioni orarie Open‑Meteo fino a 7 giorni;
 - secondo modello OpenWeather a 3 ore, quando è presente la relativa chiave;
 - osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e rete ARSIAL/SIARL Roma-Lanciani, archiviate separatamente e usate come controlli statistici secondari;
-- archivio di ogni emissione, confronto con la stazione e calcolo di bias, MAE, RMSE e Brier score;
+- archivio di ogni emissione, confronto con la stazione, validazione temporale recente, baseline di persistenza e affidabilità della probabilità di pioggia;
 - combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
 - tema chiaro/scuro completo, tabelle semantiche a contrasto con intestazione fissa e passo selezionabile ogni 1, 3 o 6 ore;
+- stato di vista, tema, città, intervallo e scheda conservato nell'URL per riaprire o salvare direttamente la stessa schermata;
 - ricerca meteo mondiale per città o CAP, con condizioni attuali, previsione internet a 7 giorni, grafico, CSV e mappa senza mescolare la stazione locale;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
+- scheda **Sistema** con salute di ogni fonte, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
+- strumento di backup portatile locale con manifest, conteggi e verifica SHA-256, affiancabile ai backup/PITR nativi di Render;
+- dipendenze riproducibili tramite `constraints.txt` e aggiornamenti settimanali minori/patch con Dependabot;
 - migrazione additiva: lo schema esistente viene esteso senza cancellare le osservazioni.
 
 ## Architettura
@@ -29,6 +34,7 @@ flowchart TD
   ARSIAL["ARSIAL/SIARL · Roma-Lanciani"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
+  DB --> BK["Backup locale verificato / PITR Render"]
   DB --> UI["Dashboard Streamlit su Render"]
   DB --> Q["Verifica e calibrazione locale"]
   Q --> DB
@@ -111,15 +117,18 @@ Backfill Ecowitt di 7 giorni:
 
 Per ogni provider la pipeline conserva il momento di emissione e quello di validità. Quando l'orario previsto entra nel passato, la previsione viene confrontata con la misura più vicina della stazione.
 
-Il risultato combina cinque livelli:
+Il risultato combina sei livelli:
 
 1. correzione del bias storico per variabile e orizzonte (`0–24 h`, `24–72 h`, `72 h+`);
 2. peso inversamente proporzionale al MAE, con prior iniziale 60% Open‑Meteo e 40% OpenWeather;
 3. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
 4. controllo secondario LIRF/LIRA e ARSIAL Roma-Lanciani: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi i dati ufficiali possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
-5. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
+5. validazione sulla coda temporale più recente, non confusa con il riepilogo storico, e confronto con la previsione banale “resta come l'ultima misura”;
+6. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
 
-Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugiada, umidità derivata, pressione, vento, raffiche e direzione entrano nella statistica ufficiale solo dopo almeno 24 osservazioni sovrapposte. Nubi, visibilità e presenza di precipitazioni hanno un peso ancora più prudente, perché gli aeroporti rappresentano un'area diversa. La quantità di pioggia locale continua a dipendere soprattutto dalla Ecowitt; un METAR contribuisce solo quando pubblica realmente l'accumulo.
+La tabella di accuratezza distingue MAE storico e MAE di validazione e mostra lo **skill rispetto alla persistenza**: un valore positivo indica che il modello migliora il semplice mantenimento dell'ultima osservazione. Per la pioggia, il grafico di affidabilità confronta probabilità dichiarata e frequenza realmente osservata per fasce del 10%.
+
+Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugiada, umidità derivata, pressione, vento, raffiche e direzione entrano nella statistica ufficiale solo dopo almeno 24 osservazioni sovrapposte. Il peso considera anche la correlazione realmente misurata fra il riferimento e il sito Ecowitt: una stazione lontana con andamento poco coerente viene automaticamente attenuata. Nubi, visibilità e presenza di precipitazioni hanno un peso ancora più prudente, perché gli aeroporti rappresentano un'area diversa. La quantità di pioggia locale continua a dipendere soprattutto dalla Ecowitt; un METAR contribuisce solo quando pubblica realmente l'accumulo.
 
 ARSIAL usa esclusivamente l'export pubblico della dashboard e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali. Il connettore CFR è già predisposto per normali risposte CSV/JSON ma rimane completamente disabilitato: non effettua richieste, non compare nell'interfaccia e non partecipa alle statistiche finché non vengono configurati un endpoint ufficiale e `CFR_OBSERVATIONS_ENABLED=true`.
 
@@ -139,6 +148,35 @@ L'apertura della dashboard non controlla l'archiviazione: il Cron Job Render int
 Render impedisce due esecuzioni contemporanee dello stesso Cron Job. In aggiunta, la pipeline usa un advisory lock PostgreSQL condiviso: un avvio manuale o la riconciliazione GitHub non possono sovrapporsi all'acquisizione Render. Un campione più vecchio di 20 minuti rende l'esecuzione rossa invece di registrare un falso successo.
 
 Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. Un'interruzione di corrente, sensori o connessione della console può richiedere il recupero dalla memoria locale del dispositivo, se disponibile.
+
+### Backup verificato
+
+Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. L'esportazione resta sul computer dal quale esegui il comando: il progetto non trasferisce automaticamente una copia completa del database verso GitHub o altri servizi.
+
+Per la protezione online usa in parallelo i backup gestiti dal provider PostgreSQL. Render documenta il point-in-time recovery nella pagina [PostgreSQL Backups](https://render.com/docs/postgresql-backups); disponibilità e profondità dipendono dal piano del database, quindi verifica la sezione **Recovery** del tuo PostgreSQL Render.
+
+Per creare e verificare una copia locale:
+
+```powershell
+New-Item -ItemType Directory -Force backups | Out-Null
+.\.venv\Scripts\python.exe backup_database.py --output backups
+$ultimo = Get-ChildItem backups\meteo-database-*.zip | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+.\.venv\Scripts\python.exe backup_database.py --verify $ultimo.FullName
+```
+
+Il formato è intenzionalmente portatile e di sola esportazione. Sposta lo ZIP in un supporto privato separato e cifrato. Un ripristino va eseguito su un database separato e verificato prima di sostituire quello di produzione.
+
+## Stato del sistema e qualità dati
+
+La scheda **Sistema** rende visibili, senza mostrare chiavi o URL sensibili:
+
+- ultimo successo e ultimo dato di Ecowitt, provider, riferimenti ufficiali e combinazione;
+- latenza, righe ricevute ed errori consecutivi;
+- percentuale di intervalli a 5 minuti presenti nelle ultime 24 ore e buco massimo;
+- campioni marcati `range_filtered`, `spike_*`, `stuck_*`, `gust_below_mean_wind` o `estimated_rain`;
+- ultime esecuzioni della pipeline e stato del backup.
+
+I valori fisicamente impossibili vengono esclusi solo per il parametro interessato. Salti, sensori apparentemente fermi e incoerenze fra vento e raffica restano archiviati ma sono esplicitamente marcati, così non vengono scambiati per dati pienamente validati.
 
 ## Pioggia
 
@@ -171,7 +209,11 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, ricerca città, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, isolamento delle osservazioni ufficiali, sorgenti esterne non raggiungibili, cambio CET/CEST, apprendimento della differenza tra siti, priorità Ecowitt, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+I test coprono avvio dell'interfaccia, ricerca città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, isolamento delle osservazioni ufficiali, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, apprendimento e correlazione fra siti, priorità Ecowitt, validazione temporale, affidabilità pioggia, backup verificato, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+
+## Dipendenze riproducibili
+
+I file `requirements*.txt` descrivono gli intervalli accettati; `constraints.txt` fissa le versioni effettivamente collaudate su Python 3.11. In questo modo PC, CI, Cron Job e servizio web installano lo stesso insieme. Dependabot prepara settimanalmente PR raggruppate per aggiornamenti minori e patch; gli aggiornamenti major restano una scelta esplicita.
 
 ## Storico privato
 

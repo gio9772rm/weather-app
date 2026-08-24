@@ -3,7 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from weather_ingest_ecowitt_cloud import RAW_COLUMNS, add_rain_increments, parse_payload
+from weather_ingest_ecowitt_cloud import (
+    RAW_COLUMNS,
+    _quality_check,
+    add_rain_increments,
+    parse_payload,
+)
 
 
 def _frame(rows):
@@ -75,3 +80,45 @@ def test_ecowitt_history_sensor_lists_are_aligned_by_timestamp():
     assert row["wind_kmh"] == 7.2
     assert row["rain_rate_mm_h"] == 1.2
     assert row["rain_total_mm"] == 120.4
+
+
+def test_quality_check_marks_spikes_stuck_sensors_and_wind_inconsistency():
+    start = pd.Timestamp("2026-08-24T10:00:00Z")
+    rows = []
+    for offset in range(13):
+        rows.append(
+            {
+                "time": start + pd.Timedelta(minutes=offset * 5),
+                "temp_c": 20.0,
+                "humidity": 60.0,
+                "pressure_hpa": 1012.0,
+                "wind_kmh": 12.0,
+                "windgust_kmh": 8.0 if offset == 12 else 15.0,
+            }
+        )
+    frame = _frame(rows)
+    frame.loc[6, "temp_c"] = 25.0
+
+    checked = _quality_check(frame)
+
+    assert "spike_temp_c" in checked.loc[6, "data_quality"]
+    assert "stuck_humidity" in checked.loc[0, "data_quality"]
+    assert "stuck_pressure_hpa" in checked.loc[12, "data_quality"]
+    assert "gust_below_mean_wind" in checked.loc[12, "data_quality"]
+
+
+def test_quality_check_preserves_existing_flags_when_filtering_range():
+    frame = _frame(
+        [
+            {
+                "time": pd.Timestamp("2026-08-24T10:00:00Z"),
+                "temp_c": 99.0,
+            }
+        ]
+    )
+    frame["data_quality"] = "estimated_rain"
+
+    checked = _quality_check(frame)
+
+    assert pd.isna(checked.iloc[0]["temp_c"])
+    assert checked.iloc[0]["data_quality"] == "estimated_rain;range_filtered"
