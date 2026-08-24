@@ -144,6 +144,44 @@ def load_provider_scores() -> pd.DataFrame:
     return frame
 
 
+def load_reference_scores() -> pd.DataFrame:
+    frame = _read(
+        "SELECT * FROM forecast_reference_scores WHERE evaluated_at = "
+        "(SELECT MAX(evaluated_at) FROM forecast_reference_scores) "
+        "ORDER BY variable,horizon,provider,station_id"
+    )
+    for column in (
+        "n",
+        "bias",
+        "mae",
+        "rmse",
+        "brier",
+        "transfer_bias",
+        "transfer_mae",
+        "reference_weight",
+    ):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def load_official_station_status() -> pd.DataFrame:
+    frame = _read(
+        "SELECT o.* FROM official_observations o JOIN ("
+        " SELECT source,station_id,MAX(time) AS time FROM official_observations "
+        " GROUP BY source,station_id"
+        ") latest ON o.source=latest.source AND o.station_id=latest.station_id "
+        "AND o.time=latest.time ORDER BY o.distance_km"
+    )
+    if frame.empty:
+        return frame
+    frame["time"] = pd.to_datetime(frame["time"], utc=True, errors="coerce")
+    for column in ("distance_km", "temp_c", "humidity", "pressure_hpa", "wind_kmh"):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
 def load_recent_logs(limit: int = 12) -> pd.DataFrame:
     # limit is constrained here rather than interpolating user input.
     limit = max(1, min(int(limit), 50))

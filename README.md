@@ -7,6 +7,7 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 - osservazioni Ecowitt Cloud con controlli di qualità e pioggia espressa correttamente in **mm per intervallo**;
 - previsioni orarie Open‑Meteo fino a 7 giorni;
 - secondo modello OpenWeather a 3 ore, quando è presente la relativa chiave;
+- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino, archiviate separatamente e usate come controllo statistico secondario;
 - archivio di ogni emissione, confronto con la stazione e calcolo di bias, MAE, RMSE e Brier score;
 - combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
@@ -24,6 +25,7 @@ flowchart TD
   E["Ecowitt Cloud"] --> P["Cron Job Render · ogni 5 min"]
   OM["Open-Meteo"] --> P
   OW["OpenWeather"] --> P
+  METAR["METAR ufficiali · LIRF/LIRA"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
   DB --> UI["Dashboard Streamlit su Render"]
@@ -32,6 +34,8 @@ flowchart TD
 ```
 
 Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, perché i suoi eventi pianificati possono subire ritardi.
+
+Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) ogni 30 minuti. Sono conservate nella tabella `official_observations`, mai in `station_raw`: Fiumicino o Ciampino non possono quindi essere mostrati come misure effettuate dalla Ecowitt.
 
 Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti.
 
@@ -86,17 +90,28 @@ Backfill Ecowitt di 7 giorni:
 | `STATION_STALE_MINUTES` | no | soglia stato stazione, default 20 |
 | `STATION_MAX_SOURCE_AGE_MINUTES` | no | fa fallire l'ingest se l'ultimo campione Ecowitt è troppo vecchio; default 20 |
 | `SCORE_LOOKBACK_DAYS` | no | storico usato per valutare i provider, default 60 |
+| `OFFICIAL_OBSERVATIONS_ENABLED` | no | abilita la rete ufficiale secondaria, default `true` |
+| `METAR_STATIONS` | no | codici ICAO separati da virgola, default `LIRF,LIRA` |
+| `OFFICIAL_OBSERVATION_REFRESH_MINUTES` | no | frequenza METAR, default 30 minuti |
+| `OFFICIAL_OBSERVATION_LOOKBACK_HOURS` | no | finestra riletta in modo idempotente, default 48 ore |
+| `OFFICIAL_SCORE_MAX_SHARE` | no | contributo massimo ufficiale quando esiste il punteggio Ecowitt, default 0,20 |
+| `OFFICIAL_MIN_OVERLAP_SAMPLES` | no | campioni simultanei per imparare la differenza tra sito remoto ed Ecowitt, default 24 |
 
 ## Qualità della previsione
 
 Per ogni provider la pipeline conserva il momento di emissione e quello di validità. Quando l'orario previsto entra nel passato, la previsione viene confrontata con la misura più vicina della stazione.
 
-Il risultato combina quattro livelli:
+Il risultato combina cinque livelli:
 
 1. correzione del bias storico per variabile e orizzonte (`0–24 h`, `24–72 h`, `72 h+`);
 2. peso inversamente proporzionale al MAE, con prior iniziale 60% Open‑Meteo e 40% OpenWeather;
 3. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
-4. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
+4. controllo secondario LIRF/LIRA: prima viene imparata la differenza persistente rispetto alla Ecowitt, poi il dato ufficiale può regolarizzare al massimo il 20% di bias e MAE;
+5. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
+
+Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugiada, umidità derivata, pressione, vento, raffiche e direzione entrano nella statistica ufficiale solo dopo almeno 24 osservazioni sovrapposte. Nubi, visibilità e presenza di precipitazioni hanno un peso ancora più prudente, perché gli aeroporti rappresentano un'area diversa. La quantità di pioggia locale continua a dipendere soprattutto dalla Ecowitt; un METAR contribuisce solo quando pubblica realmente l'accumulo.
+
+Il codice e lo schema sono già predisposti per ulteriori reti istituzionali. Regione Lazio e ARSIAL verranno aggiunte solo attraverso API o download ufficiali e documentati: la dashboard non effettua scraping delle loro pagine interattive.
 
 All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali. La calibrazione inizia automaticamente appena previsioni archiviate e osservazioni si sovrappongono.
 
@@ -144,7 +159,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, ricerca città, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+I test coprono avvio dell'interfaccia, ricerca città, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR, separazione delle osservazioni ufficiali, apprendimento della differenza tra siti, priorità Ecowitt, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
 
 ## Storico privato
 
@@ -166,5 +181,5 @@ Segui [MIGRAZIONE_PASSO_PASSO.md](MIGRAZIONE_PASSO_PASSO.md). Contiene la proced
 - Le eccezioni HTTP non includono URL con query sensibili.
 - Database locali, fogli storici, dump Ecowitt e cache non sono tracciati.
 - La loro eliminazione dalla versione corrente non riscrive automaticamente la vecchia cronologia Git; una eventuale bonifica storica va eseguita come operazione separata e coordinata.
-- Vengono conservati 120 giorni di emissioni, 180 giorni di punteggi e 30 giorni di log tecnici per limitare la crescita del database.
+- Vengono conservati 120 giorni di emissioni, 180 giorni di osservazioni/punteggi ufficiali e 30 giorni di log tecnici per limitare la crescita del database.
 - `render.yaml` descrive sia il servizio web sia il Cron Job Render; le chiavi restano variabili segrete e non vengono salvate nel repository.

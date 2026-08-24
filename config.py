@@ -32,6 +32,25 @@ def _as_int(value: str, default: int) -> int:
         return default
 
 
+def _as_bool(value: str, default: bool) -> bool:
+    normalised = str(value or "").strip().lower()
+    if normalised in {"1", "true", "yes", "on", "si", "sì"}:
+        return True
+    if normalised in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _station_ids(value: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            item.strip().upper()
+            for item in str(value or "").split(",")
+            if item.strip()
+        )
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     latitude: float
@@ -51,6 +70,12 @@ class Settings:
     admin_token: str
     station_auto_backfill_max_hours: int = 168
     station_max_source_age_minutes: int = 20
+    official_observations_enabled: bool = True
+    metar_station_ids: tuple[str, ...] = ("LIRF", "LIRA")
+    official_observation_refresh_minutes: int = 30
+    official_observation_lookback_hours: int = 48
+    official_score_max_share: float = 0.20
+    official_min_overlap_samples: int = 24
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -90,6 +115,38 @@ class Settings:
             station_max_source_age_minutes=max(
                 10,
                 _as_int(_first_env("STATION_MAX_SOURCE_AGE_MINUTES"), 20),
+            ),
+            official_observations_enabled=_as_bool(
+                _first_env("OFFICIAL_OBSERVATIONS_ENABLED", default="true"), True
+            ),
+            metar_station_ids=_station_ids(
+                _first_env("METAR_STATIONS", default="LIRF,LIRA")
+            ),
+            official_observation_refresh_minutes=max(
+                15,
+                _as_int(
+                    _first_env("OFFICIAL_OBSERVATION_REFRESH_MINUTES"), 30
+                ),
+            ),
+            official_observation_lookback_hours=max(
+                3,
+                min(
+                    720,
+                    _as_int(
+                        _first_env("OFFICIAL_OBSERVATION_LOOKBACK_HOURS"), 48
+                    ),
+                ),
+            ),
+            official_score_max_share=min(
+                0.35,
+                max(
+                    0.0,
+                    _as_float(_first_env("OFFICIAL_SCORE_MAX_SHARE"), 0.20),
+                ),
+            ),
+            official_min_overlap_samples=max(
+                6,
+                _as_int(_first_env("OFFICIAL_MIN_OVERLAP_SAMPLES"), 24),
             ),
         )
 

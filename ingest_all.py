@@ -21,8 +21,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings
 from db import ensure_schema, get_engine, get_meta, set_meta
-from forecast_blend import archive_forecast, build_blend, score_forecasts
+from forecast_blend import (
+    archive_forecast,
+    build_blend,
+    score_forecasts,
+    score_forecasts_against_references,
+)
 from forecast_providers import fetch_all_forecasts
+from official_observations import ingest_official_observations
 from weather_ingest_ecowitt_cloud import run_station_ingest
 
 load_dotenv()
@@ -170,6 +176,21 @@ def forecast_is_due(cfg: Settings, force: bool = False) -> bool:
     )
 
 
+def official_observations_are_due(cfg: Settings, force: bool = False) -> bool:
+    if not cfg.official_observations_enabled:
+        return False
+    if force:
+        return True
+    last = pd.to_datetime(
+        get_meta("last_official_observation_success"), utc=True, errors="coerce"
+    )
+    if pd.isna(last):
+        return True
+    return pd.Timestamp.now(tz="UTC") - last >= pd.Timedelta(
+        minutes=cfg.official_observation_refresh_minutes
+    )
+
+
 def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     frames, warnings = fetch_all_forecasts(cfg)
     if not frames:
@@ -177,11 +198,17 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     archived = sum(archive_forecast(frame) for frame in frames)
     try:
         scores = score_forecasts(cfg)
-        score_rows = len(scores)
+        local_score_rows = len(scores)
     except Exception as exc:  # noqa: BLE001 - scoring must not discard a valid forecast
         warnings.append(f"Verifica errori rinviata: {_safe_message(exc)}")
-        score_rows = 0
-    blend = build_blend()
+        local_score_rows = 0
+    try:
+        reference_scores = score_forecasts_against_references(cfg)
+        reference_score_rows = len(reference_scores)
+    except Exception as exc:  # noqa: BLE001 - the official network is secondary
+        warnings.append(f"Verifica rete ufficiale rinviata: {_safe_message(exc)}")
+        reference_score_rows = 0
+    blend = build_blend(cfg=cfg)
     if blend.empty:
         raise RuntimeError("Previsioni archiviate ma combinazione finale vuota")
     now = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -194,7 +221,9 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     return {
         "archived": archived,
         "blend_rows": len(blend),
-        "score_rows": score_rows,
+        "score_rows": local_score_rows + reference_score_rows,
+        "local_score_rows": local_score_rows,
+        "reference_score_rows": reference_score_rows,
         "warnings": warnings,
     }
 
@@ -204,6 +233,9 @@ def prune_derived_history() -> None:
     now = pd.Timestamp.now(tz="UTC")
     forecast_cutoff = (now - pd.Timedelta(days=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
     score_cutoff = (now - pd.Timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    observation_cutoff = (now - pd.Timedelta(days=180)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     log_cutoff = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with get_engine().begin() as connection:
         connection.execute(
@@ -213,6 +245,16 @@ def prune_derived_history() -> None:
         connection.execute(
             text("DELETE FROM forecast_scores WHERE evaluated_at < :cutoff"),
             {"cutoff": score_cutoff},
+        )
+        connection.execute(
+            text(
+                "DELETE FROM forecast_reference_scores WHERE evaluated_at < :cutoff"
+            ),
+            {"cutoff": score_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM official_observations WHERE time < :cutoff"),
+            {"cutoff": observation_cutoff},
         )
         connection.execute(
             text("DELETE FROM ingest_log WHERE started_at < :cutoff"),
@@ -300,7 +342,12 @@ def run_all(
 ) -> dict[str, Any]:
     ensure_schema()
     cfg = Settings.from_env()
-    result: dict[str, Any] = {"station": None, "forecast": None, "errors": []}
+    result: dict[str, Any] = {
+        "station": None,
+        "official": None,
+        "forecast": None,
+        "errors": [],
+    }
 
     if not skip_station:
         identifier, _ = _log_start("station")
@@ -330,6 +377,36 @@ def run_all(
             message = _safe_message(exc)
             result["errors"].append(message)
             _log_finish(identifier, "error", rows_written, message)
+
+    if official_observations_are_due(cfg, force_forecast):
+        identifier, _ = _log_start("official_observations")
+        try:
+            official = ingest_official_observations(cfg)
+            result["official"] = official
+            status = "success" if not official["warnings"] else "warning"
+            _log_finish(
+                identifier,
+                status,
+                official["rows"],
+                "; ".join(official["warnings"]),
+            )
+            if official["rows"]:
+                now = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+                set_meta("last_official_observation_success", now)
+                set_meta("official_observation_stations", json.dumps(official["stations"]))
+        except Exception as exc:  # noqa: BLE001 - official feeds never stop Ecowitt
+            message = _safe_message(exc)
+            result["official"] = {"rows": 0, "stations": [], "warnings": [message]}
+            _log_finish(identifier, "warning", 0, message)
+    else:
+        result["official"] = {
+            "skipped": True,
+            "reason": (
+                "rete ufficiale disattivata"
+                if not cfg.official_observations_enabled
+                else "aggiornamento non ancora dovuto"
+            ),
+        }
 
     if forecast_is_due(cfg, force_forecast):
         identifier, _ = _log_start("forecast")
@@ -387,12 +464,19 @@ def main() -> int:
         lock.release()
 
     station = result.get("station")
+    official = result.get("official")
     forecast = result.get("forecast")
     if station:
         log.info(
             "Stazione: %s righe; ultimo dato %s",
             station["rows"],
             station["latest_station_time"],
+        )
+    if official and not official.get("skipped"):
+        log.info(
+            "Rete ufficiale: %s righe; stazioni %s",
+            official["rows"],
+            ",".join(official["stations"]) or "nessuna",
         )
     if forecast and not forecast.get("skipped"):
         log.info(

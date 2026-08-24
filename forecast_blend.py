@@ -39,11 +39,41 @@ NUMERIC_COLUMNS = [
 PRIOR_WEIGHTS = {"open_meteo": 0.60, "openweather": 0.40}
 ERROR_FLOORS = {
     "temp_c": 0.5,
+    "dewpoint_c": 0.8,
     "humidity": 3.0,
     "pressure_hpa": 1.0,
     "wind_kmh": 2.0,
+    "wind_gust_kmh": 3.0,
+    "wind_dir": 15.0,
     "rain_mm": 0.3,
+    "precip_probability": 10.0,
+    "clouds": 10.0,
+    "visibility_m": 1500.0,
 }
+
+LOCAL_OBSERVATION_MAPPINGS = {
+    "temp_c": ("temp_c_fc", "temp_c_obs"),
+    "dewpoint_c": ("dewpoint_c_fc", "dewpoint_c_obs"),
+    "humidity": ("humidity_fc", "humidity_obs"),
+    "pressure_hpa": ("pressure_hpa_fc", "pressure_hpa_obs"),
+    "wind_kmh": ("wind_kmh_fc", "wind_kmh_obs"),
+    "wind_gust_kmh": ("wind_gust_kmh_fc", "wind_gust_kmh_obs"),
+    "wind_dir": ("wind_dir_fc", "wind_dir_obs"),
+    "rain_mm": ("rain_mm_fc", "rain_mm_obs"),
+}
+
+REFERENCE_OBSERVATION_VARIABLES = (
+    "temp_c",
+    "dewpoint_c",
+    "humidity",
+    "pressure_hpa",
+    "wind_kmh",
+    "wind_gust_kmh",
+    "wind_dir",
+    "rain_mm",
+    "clouds",
+    "visibility_m",
+)
 
 
 def _iso(value: Any) -> str | None:
@@ -111,6 +141,51 @@ def _horizon_bucket(hours: pd.Series) -> pd.Series:
     ).astype("string")
 
 
+def _dewpoint_from_temperature_humidity(
+    temperature: pd.Series, humidity: pd.Series
+) -> pd.Series:
+    temp = pd.to_numeric(temperature, errors="coerce")
+    rh = pd.to_numeric(humidity, errors="coerce").clip(1, 100)
+    gamma = np.log(rh / 100.0) + (17.625 * temp) / (243.04 + temp)
+    return 243.04 * gamma / (17.625 - gamma)
+
+
+def _variable_error(
+    forecast: pd.Series, observed: pd.Series, variable: str
+) -> pd.Series:
+    error = forecast - observed
+    if variable == "wind_dir":
+        error = (error + 180.0).mod(360.0) - 180.0
+    return error
+
+
+def _circular_mean_degrees(values: pd.Series) -> float:
+    radians = np.deg2rad(pd.to_numeric(values, errors="coerce").dropna())
+    if len(radians) == 0:
+        return 0.0
+    return float(np.rad2deg(np.arctan2(np.sin(radians).mean(), np.cos(radians).mean())))
+
+
+def _score_record(
+    pair: pd.DataFrame,
+    forecast_col: str,
+    observed_col: str,
+    variable: str,
+) -> dict[str, float | int | None]:
+    error = _variable_error(pair[forecast_col], pair[observed_col], variable)
+    return {
+        "n": len(pair),
+        "bias": (
+            _circular_mean_degrees(error)
+            if variable == "wind_dir"
+            else float(error.mean())
+        ),
+        "mae": float(error.abs().mean()),
+        "rmse": float(np.sqrt(np.mean(np.square(error)))),
+        "brier": None,
+    }
+
+
 def score_forecasts(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> pd.DataFrame:
@@ -151,6 +226,12 @@ def score_forecasts(
     observations["time"] = pd.to_datetime(
         observations["time"], utc=True, errors="coerce"
     )
+    observations["dewpoint_c"] = _dewpoint_from_temperature_humidity(
+        observations.get("temp_c"), observations.get("humidity")
+    )
+    observations = observations.rename(
+        columns={"windgust_kmh": "wind_gust_kmh", "winddir": "wind_dir"}
+    )
     forecasts = forecasts.dropna(subset=["valid_time", "issued_at"]).sort_values(
         "valid_time"
     )
@@ -165,18 +246,25 @@ def score_forecasts(
         tolerance=pd.Timedelta(minutes=40),
         suffixes=("_fc", "_obs"),
     )
+    if "rain_mm_fc" in merged and "interval_hours" in merged:
+        interval = pd.to_numeric(merged["interval_hours"], errors="coerce").clip(
+            lower=1
+        )
+        merged["rain_mm_fc"] = (
+            pd.to_numeric(merged["rain_mm_fc"], errors="coerce") / interval
+        )
+    if "rain_mm" in observations and "rain_mm_obs" in merged:
+        rain = observations[["time", "rain_mm"]].copy()
+        rain["rain_mm"] = pd.to_numeric(rain["rain_mm"], errors="coerce").clip(
+            lower=0
+        )
+        hourly_rain = rain.set_index("time")["rain_mm"].resample("h").sum(min_count=1)
+        merged["rain_mm_obs"] = merged["valid_time"].dt.floor("h").map(hourly_rain)
     merged["lead_hours"] = (
         merged["valid_time"] - merged["issued_at"]
     ).dt.total_seconds() / 3600.0
     merged = merged[merged["lead_hours"] >= 0].copy()
     merged["horizon"] = _horizon_bucket(merged["lead_hours"])
-    mappings = {
-        "temp_c": ("temp_c_fc", "temp_c_obs"),
-        "humidity": ("humidity_fc", "humidity_obs"),
-        "pressure_hpa": ("pressure_hpa_fc", "pressure_hpa_obs"),
-        "wind_kmh": ("wind_kmh_fc", "wind_kmh_obs"),
-        "rain_mm": ("rain_mm_fc", "rain_mm_obs"),
-    }
     evaluated = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     rows: list[dict[str, Any]] = []
     for (provider, model, horizon), group in merged.groupby(
@@ -184,7 +272,7 @@ def score_forecasts(
     ):
         if not horizon:
             continue
-        for variable, (forecast_col, observed_col) in mappings.items():
+        for variable, (forecast_col, observed_col) in LOCAL_OBSERVATION_MAPPINGS.items():
             if forecast_col not in group or observed_col not in group:
                 continue
             pair = (
@@ -194,18 +282,13 @@ def score_forecasts(
             )
             if pair.empty:
                 continue
-            error = pair[forecast_col] - pair[observed_col]
             record = {
                 "evaluated_at": evaluated,
                 "provider": provider,
                 "model": model,
                 "variable": variable,
                 "horizon": str(horizon),
-                "n": len(pair),
-                "bias": float(error.mean()),
-                "mae": float(error.abs().mean()),
-                "rmse": float(np.sqrt(np.mean(np.square(error)))),
-                "brier": None,
+                **_score_record(pair, forecast_col, observed_col, variable),
             }
             if variable == "rain_mm" and "precip_probability" in group:
                 probability = (
@@ -236,6 +319,260 @@ def score_forecasts(
     return scores
 
 
+def _reference_transfer(
+    reference: pd.DataFrame,
+    local: pd.DataFrame,
+    variable: str,
+    minimum_samples: int,
+) -> tuple[float, float, int] | None:
+    """Learn how a remote official sensor maps to the local Ecowitt sensor."""
+    if variable not in reference or variable not in local:
+        return None
+    ref = reference[["time", variable]].rename(columns={variable: "reference"})
+    station = local[["time", variable]].rename(columns={variable: "local"})
+    matched = pd.merge_asof(
+        ref.dropna().sort_values("time"),
+        station.dropna().sort_values("time"),
+        on="time",
+        direction="nearest",
+        tolerance=pd.Timedelta(minutes=40),
+    ).dropna()
+    if len(matched) < minimum_samples:
+        return None
+    difference = _variable_error(
+        matched["reference"], matched["local"], variable
+    )
+    transfer_bias = (
+        _circular_mean_degrees(difference)
+        if variable == "wind_dir"
+        else float(difference.median())
+    )
+    residual = difference - transfer_bias
+    if variable == "wind_dir":
+        residual = (residual + 180.0).mod(360.0) - 180.0
+    return transfer_bias, float(residual.abs().median()), len(matched)
+
+
+def _adjust_reference(series: pd.Series, variable: str, bias: float) -> pd.Series:
+    adjusted = series - bias
+    return adjusted.mod(360.0) if variable == "wind_dir" else adjusted
+
+
+def score_forecasts_against_references(
+    cfg: Settings = settings, engine: Engine | None = None
+) -> pd.DataFrame:
+    """Score providers against official sensors after mapping them to Ecowitt.
+
+    Temperature, humidity, pressure and wind are admitted only after enough
+    simultaneous Ecowitt samples establish the persistent site difference.
+    Cloud, visibility and precipitation occurrence have no local equivalent and
+    therefore enter with a deliberately smaller distance-based weight.
+    """
+    engine = engine or get_engine()
+    cutoff = (
+        pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=cfg.score_lookback_days)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_iso = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+    with engine.connect() as connection:
+        forecasts = pd.read_sql(
+            text(
+                "SELECT * FROM forecast_runs WHERE valid_time >= :cutoff "
+                "AND valid_time <= :now ORDER BY valid_time"
+            ),
+            connection,
+            params={"cutoff": cutoff, "now": now_iso},
+        )
+        references = pd.read_sql(
+            text(
+                "SELECT * FROM official_observations WHERE time >= :cutoff "
+                "ORDER BY source,station_id,time"
+            ),
+            connection,
+            params={"cutoff": cutoff},
+        )
+        local = pd.read_sql(
+            text("SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time"),
+            connection,
+            params={"cutoff": cutoff},
+        )
+    if forecasts.empty or references.empty:
+        return pd.DataFrame()
+
+    for frame in (forecasts, references, local):
+        frame.columns = [column.lower() for column in frame.columns]
+    forecasts["valid_time"] = pd.to_datetime(
+        forecasts["valid_time"], utc=True, errors="coerce"
+    )
+    forecasts["issued_at"] = pd.to_datetime(
+        forecasts["issued_at"], utc=True, errors="coerce"
+    )
+    references["time"] = pd.to_datetime(
+        references["time"], utc=True, errors="coerce"
+    )
+    forecasts = forecasts.dropna(subset=["valid_time", "issued_at"]).sort_values(
+        "valid_time"
+    )
+    references = references.dropna(subset=["time"]).sort_values("time")
+    if not local.empty:
+        local["time"] = pd.to_datetime(local["time"], utc=True, errors="coerce")
+        local = local.rename(
+            columns={"windgust_kmh": "wind_gust_kmh", "winddir": "wind_dir"}
+        )
+        local["dewpoint_c"] = _dewpoint_from_temperature_humidity(
+            local.get("temp_c"), local.get("humidity")
+        )
+        local = local.dropna(subset=["time"]).sort_values("time")
+
+    evaluated = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows: list[dict[str, Any]] = []
+    for (source, station_id), station_reference in references.groupby(
+        ["source", "station_id"]
+    ):
+        station_reference = station_reference.sort_values("time")
+        distance = pd.to_numeric(
+            station_reference.get("distance_km"), errors="coerce"
+        ).median()
+        distance = float(distance) if pd.notna(distance) else 100.0
+        distance_weight = 1.0 / (1.0 + (max(0.0, distance) / 20.0) ** 2)
+        merged = pd.merge_asof(
+            forecasts,
+            station_reference,
+            left_on="valid_time",
+            right_on="time",
+            direction="nearest",
+            tolerance=pd.Timedelta(minutes=40),
+            suffixes=("_fc", "_obs"),
+        )
+        merged["lead_hours"] = (
+            merged["valid_time"] - merged["issued_at"]
+        ).dt.total_seconds() / 3600.0
+        merged = merged[merged["lead_hours"] >= 0].copy()
+        merged["horizon"] = _horizon_bucket(merged["lead_hours"])
+
+        transfers: dict[str, tuple[float, float, int] | None] = {}
+        for variable in REFERENCE_OBSERVATION_VARIABLES:
+            transfers[variable] = (
+                _reference_transfer(
+                    station_reference,
+                    local,
+                    variable,
+                    cfg.official_min_overlap_samples,
+                )
+                if not local.empty and variable not in {"clouds", "visibility_m", "rain_mm"}
+                else None
+            )
+
+        for (provider, model, horizon), group in merged.groupby(
+            ["provider", "model", "horizon"], dropna=True
+        ):
+            if not horizon:
+                continue
+            for variable in REFERENCE_OBSERVATION_VARIABLES:
+                forecast_col = f"{variable}_fc"
+                observed_col = f"{variable}_obs"
+                if forecast_col not in group or observed_col not in group:
+                    continue
+                transfer = transfers[variable]
+                if variable not in {"clouds", "visibility_m", "rain_mm"} and transfer is None:
+                    continue
+                pair = group[[forecast_col, observed_col]].apply(
+                    pd.to_numeric, errors="coerce"
+                ).dropna()
+                if len(pair) < 6:
+                    continue
+                transfer_bias, transfer_mae = (0.0, None)
+                if transfer is not None:
+                    transfer_bias, transfer_mae, _ = transfer
+                    pair[observed_col] = _adjust_reference(
+                        pair[observed_col], variable, transfer_bias
+                    )
+                    quality_weight = min(
+                        1.0,
+                        ERROR_FLOORS.get(variable, 1.0)
+                        / max(transfer_mae, ERROR_FLOORS.get(variable, 1.0)),
+                    )
+                else:
+                    quality_weight = 0.20 if variable != "rain_mm" else 0.10
+                record = {
+                    "evaluated_at": evaluated,
+                    "provider": provider,
+                    "model": model,
+                    "source": source,
+                    "station_id": station_id,
+                    "variable": variable,
+                    "horizon": str(horizon),
+                    **_score_record(pair, forecast_col, observed_col, variable),
+                    "transfer_bias": transfer_bias,
+                    "transfer_mae": transfer_mae,
+                    "reference_weight": distance_weight * quality_weight,
+                }
+                rows.append(record)
+
+            probability_col = "precip_probability"
+            event_col = "precip_observed"
+            if probability_col in group and event_col in group:
+                pair = group[[probability_col, event_col]].apply(
+                    pd.to_numeric, errors="coerce"
+                ).dropna()
+                if len(pair) >= 6:
+                    probability = pair[probability_col].clip(0, 100) / 100.0
+                    event = pair[event_col].clip(0, 1)
+                    percentage_error = probability * 100.0 - event * 100.0
+                    rows.append(
+                        {
+                            "evaluated_at": evaluated,
+                            "provider": provider,
+                            "model": model,
+                            "source": source,
+                            "station_id": station_id,
+                            "variable": "precip_probability",
+                            "horizon": str(horizon),
+                            "n": len(pair),
+                            "bias": float(percentage_error.mean()),
+                            "mae": float(percentage_error.abs().mean()),
+                            "rmse": float(np.sqrt(np.mean(np.square(percentage_error)))),
+                            "brier": float(np.mean(np.square(probability - event))),
+                            "transfer_bias": None,
+                            "transfer_mae": None,
+                            "reference_weight": distance_weight * 0.15,
+                        }
+                    )
+
+    scores = pd.DataFrame(rows)
+    if scores.empty:
+        return scores
+    columns = [
+        "evaluated_at",
+        "provider",
+        "model",
+        "source",
+        "station_id",
+        "variable",
+        "horizon",
+        "n",
+        "bias",
+        "mae",
+        "rmse",
+        "brier",
+        "transfer_bias",
+        "transfer_mae",
+        "reference_weight",
+    ]
+    insert = text(
+        "INSERT INTO forecast_reference_scores ("
+        + ",".join(columns)
+        + ") VALUES ("
+        + ",".join(f":{column}" for column in columns)
+        + ") ON CONFLICT (evaluated_at,provider,model,source,station_id,variable,horizon) "
+        "DO UPDATE SET n=excluded.n,bias=excluded.bias,mae=excluded.mae,"
+        "rmse=excluded.rmse,brier=excluded.brier,transfer_bias=excluded.transfer_bias,"
+        "transfer_mae=excluded.transfer_mae,reference_weight=excluded.reference_weight"
+    )
+    with engine.begin() as connection:
+        connection.execute(insert, scores.reindex(columns=columns).to_dict("records"))
+    return scores
+
+
 def _latest_scores(engine: Engine) -> pd.DataFrame:
     with engine.connect() as connection:
         frame = pd.read_sql(
@@ -247,6 +584,32 @@ def _latest_scores(engine: Engine) -> pd.DataFrame:
         )
     if not frame.empty:
         frame.columns = [column.lower() for column in frame.columns]
+    return frame
+
+
+def _latest_reference_scores(engine: Engine) -> pd.DataFrame:
+    with engine.connect() as connection:
+        frame = pd.read_sql(
+            text(
+                "SELECT * FROM forecast_reference_scores WHERE evaluated_at = "
+                "(SELECT MAX(evaluated_at) FROM forecast_reference_scores)"
+            ),
+            connection,
+        )
+    if not frame.empty:
+        frame.columns = [column.lower() for column in frame.columns]
+        for column in (
+            "n",
+            "bias",
+            "mae",
+            "rmse",
+            "brier",
+            "transfer_bias",
+            "transfer_mae",
+            "reference_weight",
+        ):
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
 
 
@@ -273,21 +636,59 @@ def _latest_provider_runs(engine: Engine) -> pd.DataFrame:
 
 
 def _score_lookup(
-    scores: pd.DataFrame, provider: str, variable: str, horizon: str
+    scores: pd.DataFrame,
+    provider: str,
+    variable: str,
+    horizon: str,
+    reference_scores: pd.DataFrame | None = None,
+    official_max_share: float = 0.20,
 ) -> tuple[float, float | None]:
-    if scores.empty:
-        return 0.0, None
-    subset = scores[
-        (scores["provider"] == provider)
-        & (scores["variable"] == variable)
-        & (scores["horizon"] == horizon)
-    ]
-    if subset.empty:
-        return 0.0, None
-    row = subset.sort_values("n", ascending=False).iloc[0]
-    bias = float(row["bias"]) if pd.notna(row["bias"]) else 0.0
-    mae = float(row["mae"]) if pd.notna(row["mae"]) else None
-    return bias, mae
+    local_bias = 0.0
+    local_mae: float | None = None
+    if not scores.empty:
+        subset = scores[
+            (scores["provider"] == provider)
+            & (scores["variable"] == variable)
+            & (scores["horizon"] == horizon)
+        ]
+        if not subset.empty:
+            row = subset.sort_values("n", ascending=False).iloc[0]
+            local_bias = float(row["bias"]) if pd.notna(row["bias"]) else 0.0
+            local_mae = float(row["mae"]) if pd.notna(row["mae"]) else None
+
+    if reference_scores is None or reference_scores.empty:
+        return local_bias, local_mae
+    external = reference_scores[
+        (reference_scores["provider"] == provider)
+        & (reference_scores["variable"] == variable)
+        & (reference_scores["horizon"] == horizon)
+        & (reference_scores["n"] >= 6)
+    ].dropna(subset=["mae", "reference_weight"])
+    if external.empty:
+        return local_bias, local_mae
+    evidence = (
+        external["reference_weight"].clip(lower=0)
+        * np.sqrt(external["n"].clip(lower=1))
+    )
+    total_evidence = float(evidence.sum())
+    if total_evidence <= 0:
+        return local_bias, local_mae
+    external_bias = float(
+        np.average(external["bias"].fillna(0.0), weights=evidence)
+    )
+    external_mae = float(np.average(external["mae"], weights=evidence))
+    if local_mae is None:
+        # The secondary network can initialise a parameter only after enough
+        # evidence has accumulated; it never creates a local observation.
+        if int(external["n"].sum()) < 24:
+            return 0.0, None
+        return external_bias, external_mae
+    maximum = max(0.0, official_max_share)
+    share = min(maximum, maximum * min(1.0, total_evidence / 12.0))
+    return (
+        local_bias * (1.0 - share) + external_bias * share,
+        local_mae * (1.0 - share) + external_mae * share,
+    )
 
 
 def _to_hourly(
@@ -371,13 +772,17 @@ def _station_correction(blend: pd.DataFrame, engine: Engine) -> pd.DataFrame:
     return blend
 
 
-def build_blend(engine: Engine | None = None) -> pd.DataFrame:
+def build_blend(
+    engine: Engine | None = None, cfg: Settings | None = None
+) -> pd.DataFrame:
     """Create an hourly bias-corrected ensemble and replace the derived cache."""
     engine = engine or get_engine()
+    cfg = cfg or Settings.from_env()
     forecasts = _latest_provider_runs(engine)
     if forecasts.empty:
         return pd.DataFrame()
     scores = _latest_scores(engine)
+    reference_scores = _latest_reference_scores(engine)
     interval_coverage = pd.to_timedelta(
         (forecasts["interval_hours"].fillna(1.0) - 1.0).clip(lower=0),
         unit="h",
@@ -413,6 +818,7 @@ def build_blend(engine: Engine | None = None) -> pd.DataFrame:
         "cloud_mid",
         "cloud_high",
         "visibility_m",
+        "wind_dir",
     ]
     weights_by_time: list[dict[str, float]] = []
     provider_counts: list[int] = []
@@ -423,7 +829,14 @@ def build_blend(engine: Engine | None = None) -> pd.DataFrame:
         for provider in providers:
             value = hourly[provider].iloc[position].get("temp_c")
             if pd.notna(value):
-                _, mae = _score_lookup(scores, provider, "temp_c", str(horizon))
+                _, mae = _score_lookup(
+                    scores,
+                    provider,
+                    "temp_c",
+                    str(horizon),
+                    reference_scores,
+                    cfg.official_score_max_share,
+                )
                 prior = PRIOR_WEIGHTS.get(provider, 0.35)
                 time_weights[provider] = prior / max(mae or 1.5, ERROR_FLOORS["temp_c"])
                 temp_values.append(float(value))
@@ -439,29 +852,55 @@ def build_blend(engine: Engine | None = None) -> pd.DataFrame:
         for position, horizon in enumerate(horizons):
             numerator = 0.0
             denominator = 0.0
+            vector_x = 0.0
+            vector_y = 0.0
             for provider in providers:
                 if variable not in hourly[provider]:
                     continue
                 value = hourly[provider].iloc[position].get(variable)
                 if pd.isna(value):
                     continue
-                score_variable = variable if variable in ERROR_FLOORS else "temp_c"
+                score_variable = variable if variable in ERROR_FLOORS else {
+                    "feels_like_c": "temp_c",
+                    "snow_mm": "rain_mm",
+                    "cloud_low": "clouds",
+                    "cloud_mid": "clouds",
+                    "cloud_high": "clouds",
+                }.get(variable, "temp_c")
                 bias, mae = _score_lookup(
-                    scores, provider, score_variable, str(horizon)
+                    scores,
+                    provider,
+                    score_variable,
+                    str(horizon),
+                    reference_scores,
+                    cfg.official_score_max_share,
                 )
-                corrected = float(value) - (bias if variable in ERROR_FLOORS else 0.0)
+                corrected = float(value) - (
+                    bias if score_variable == variable else 0.0
+                )
+                if variable == "wind_dir":
+                    corrected %= 360.0
                 prior = PRIOR_WEIGHTS.get(provider, 0.35)
                 weight = prior / max(
                     mae or ERROR_FLOORS.get(score_variable, 1.0),
                     ERROR_FLOORS.get(score_variable, 0.5),
                 )
-                numerator += corrected * weight
+                if variable == "wind_dir":
+                    radians = math.radians(corrected)
+                    vector_x += math.cos(radians) * weight
+                    vector_y += math.sin(radians) * weight
+                else:
+                    numerator += corrected * weight
                 denominator += weight
-            values.append(numerator / denominator if denominator else np.nan)
+            if not denominator:
+                values.append(np.nan)
+            elif variable == "wind_dir":
+                values.append(math.degrees(math.atan2(vector_y, vector_x)) % 360.0)
+            else:
+                values.append(numerator / denominator)
         result[variable] = values
 
     result = _station_correction(result, engine)
-    result["wind_dir"] = np.nan
     result["is_day"] = np.nan
     descriptions: list[str] = []
     codes: list[str] = []
@@ -482,10 +921,6 @@ def build_blend(engine: Engine | None = None) -> pd.DataFrame:
         row = source_rows.iloc[nearest]
         descriptions.append(str(row.get("description") or "Variabile"))
         codes.append(str(row.get("weather_code") or ""))
-        if "wind_dir" in hourly[source]:
-            result.iloc[position, result.columns.get_loc("wind_dir")] = (
-                hourly[source].iloc[position].get("wind_dir")
-            )
         if "is_day" in hourly[source]:
             result.iloc[position, result.columns.get_loc("is_day")] = (
                 hourly[source].iloc[position].get("is_day")
@@ -504,7 +939,7 @@ def build_blend(engine: Engine | None = None) -> pd.DataFrame:
     result["provider_weights"] = [
         json.dumps(item, sort_keys=True) for item in weights_by_time
     ]
-    result["method"] = "inverse_mae+bias+station_decay_v1"
+    result["method"] = "inverse_mae+bias+ecowitt_primary+official_reference_v2"
     result["issued_at"] = issued_at
     result = enforce_physical_bounds(result)
     result = result.reset_index(names="valid_time")

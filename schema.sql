@@ -95,6 +95,61 @@ CREATE TABLE IF NOT EXISTS forecast_scores (
   PRIMARY KEY (evaluated_at, provider, model, variable, horizon)
 );
 
+-- Official observations are deliberately isolated from station_raw: they can
+-- validate and regularise forecast statistics but never impersonate Ecowitt.
+CREATE TABLE IF NOT EXISTS official_observations (
+  source TEXT NOT NULL,
+  station_id TEXT NOT NULL,
+  time TEXT NOT NULL,
+  station_name TEXT,
+  latitude REAL,
+  longitude REAL,
+  elevation_m REAL,
+  distance_km REAL,
+  temp_c REAL,
+  dewpoint_c REAL,
+  humidity REAL,
+  pressure_hpa REAL,
+  wind_kmh REAL,
+  wind_gust_kmh REAL,
+  wind_dir REAL,
+  rain_mm REAL,
+  precip_observed INTEGER,
+  clouds REAL,
+  visibility_m REAL,
+  quality_flag TEXT,
+  raw_observation TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (source, station_id, time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_official_observations_time
+  ON official_observations (time);
+
+CREATE TABLE IF NOT EXISTS forecast_reference_scores (
+  evaluated_at TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  source TEXT NOT NULL,
+  station_id TEXT NOT NULL,
+  variable TEXT NOT NULL,
+  horizon TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  bias REAL,
+  mae REAL,
+  rmse REAL,
+  brier REAL,
+  transfer_bias REAL,
+  transfer_mae REAL,
+  reference_weight REAL NOT NULL,
+  PRIMARY KEY (
+    evaluated_at, provider, model, source, station_id, variable, horizon
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_reference_scores_evaluated
+  ON forecast_reference_scores (evaluated_at);
+
 CREATE TABLE IF NOT EXISTS forecast_blend (
   valid_time TEXT PRIMARY KEY,
   issued_at TEXT NOT NULL,
