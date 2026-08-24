@@ -1,5 +1,15 @@
 # Changelog Meteo V3
 
+## ARSIAL attiva e CFR predisposto
+
+- integrata la stazione pubblica ARSIAL/SIARL Roma-Lanciani come riferimento secondario per temperatura, umidità, pressione, vento, raffiche, direzione e pioggia quando disponibili;
+- aggiunta la scoperta degli export CSV pubblici Superset e del registro stazioni open data, senza chiavi aggiuntive;
+- normalizzati formati CSV/JSON, decimali italiani, righe larghe o per singola grandezza, unità e timestamp UTC dichiarati dal portale, convertiti in locale soltanto dalla UI;
+- mantenuta Ecowitt come unica sorgente locale primaria e limitato il contributo complessivo della rete esterna;
+- resi gli errori ARSIAL indipendenti e non bloccanti per acquisizione, previsioni e METAR;
+- predisposto un connettore CFR CSV/JSON con HTTPS, token opzionale e filtro stazioni, completamente dormiente, invisibile e privo di chiamate finché non viene attivato esplicitamente;
+- aggiunti test per parsing, scoperta Superset, cambio ora solare/legale e mancata disponibilità delle fonti.
+
 ## Rete ufficiale secondaria
 
 - integrate le osservazioni METAR pubbliche Aviation Weather di Roma Fiumicino (`LIRF`) e Roma Ciampino (`LIRA`), senza nuove chiavi API;

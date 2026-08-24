@@ -301,6 +301,11 @@ def ingest_official_observations(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> dict[str, Any]:
     """Fetch every enabled official feed; individual failures remain non-fatal."""
+    from regional_observations import (
+        fetch_arsial_observations,
+        fetch_cfr_observations,
+    )
+
     engine = engine or get_engine()
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
@@ -308,6 +313,16 @@ def ingest_official_observations(
         frames.append(fetch_metar_observations(cfg))
     except OfficialObservationError as exc:
         warnings.append(str(exc))
+    if cfg.arsial_observations_enabled:
+        try:
+            frames.append(fetch_arsial_observations(cfg))
+        except OfficialObservationError as exc:
+            warnings.append(str(exc))
+    if cfg.cfr_observations_enabled:
+        try:
+            frames.append(fetch_cfr_observations(cfg))
+        except OfficialObservationError as exc:
+            warnings.append(str(exc))
     valid = [frame for frame in frames if not frame.empty]
     combined = (
         pd.concat(valid, ignore_index=True)

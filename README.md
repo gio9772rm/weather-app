@@ -7,7 +7,7 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 - osservazioni Ecowitt Cloud con controlli di qualità e pioggia espressa correttamente in **mm per intervallo**;
 - previsioni orarie Open‑Meteo fino a 7 giorni;
 - secondo modello OpenWeather a 3 ore, quando è presente la relativa chiave;
-- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino, archiviate separatamente e usate come controllo statistico secondario;
+- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e rete ARSIAL/SIARL Roma-Lanciani, archiviate separatamente e usate come controlli statistici secondari;
 - archivio di ogni emissione, confronto con la stazione e calcolo di bias, MAE, RMSE e Brier score;
 - combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
@@ -26,6 +26,7 @@ flowchart TD
   OM["Open-Meteo"] --> P
   OW["OpenWeather"] --> P
   METAR["METAR ufficiali · LIRF/LIRA"] --> P
+  ARSIAL["ARSIAL/SIARL · Roma-Lanciani"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
   DB --> UI["Dashboard Streamlit su Render"]
@@ -35,7 +36,7 @@ flowchart TD
 
 Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, perché i suoi eventi pianificati possono subire ritardi.
 
-Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) ogni 30 minuti. Sono conservate nella tabella `official_observations`, mai in `station_raw`: Fiumicino o Ciampino non possono quindi essere mostrati come misure effettuate dalla Ecowitt.
+Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle ARSIAL dall'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7). Sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione esterna può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 
 Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti.
 
@@ -96,6 +97,15 @@ Backfill Ecowitt di 7 giorni:
 | `OFFICIAL_OBSERVATION_LOOKBACK_HOURS` | no | finestra riletta in modo idempotente, default 48 ore |
 | `OFFICIAL_SCORE_MAX_SHARE` | no | contributo massimo ufficiale quando esiste il punteggio Ecowitt, default 0,20 |
 | `OFFICIAL_MIN_OVERLAP_SAMPLES` | no | campioni simultanei per imparare la differenza tra sito remoto ed Ecowitt, default 24 |
+| `ARSIAL_OBSERVATIONS_ENABLED` | no | abilita Roma-Lanciani come riferimento secondario, default `true` |
+| `ARSIAL_DASHBOARD_URL` | no | dashboard pubblica oraria SIARL; già configurata |
+| `ARSIAL_STATION_NAME` | no | stazione ARSIAL da selezionare, default `ROMA Lanciani-SEDE ARSIAL` |
+| `ARSIAL_TZ` | no | fuso dichiarato dalla dashboard oraria SIARL, default `UTC`; la UI converte poi in `Europe/Rome` |
+| `ARSIAL_CSV_URL` | no | eventuale export CSV ufficiale stabile; se vuoto viene scoperto dalla dashboard |
+| `CFR_OBSERVATIONS_ENABLED` | no | connettore CFR dormiente, default `false` |
+| `CFR_OBSERVATIONS_URL` | futura | endpoint HTTPS ufficiale CSV/JSON fornito dal CFR |
+| `CFR_API_TOKEN` | futura | token opzionale, da salvare soltanto come secret |
+| `CFR_STATION_IDS` | futura | codici stazione ammessi, separati da virgola |
 
 ## Qualità della previsione
 
@@ -106,12 +116,14 @@ Il risultato combina cinque livelli:
 1. correzione del bias storico per variabile e orizzonte (`0–24 h`, `24–72 h`, `72 h+`);
 2. peso inversamente proporzionale al MAE, con prior iniziale 60% Open‑Meteo e 40% OpenWeather;
 3. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
-4. controllo secondario LIRF/LIRA: prima viene imparata la differenza persistente rispetto alla Ecowitt, poi il dato ufficiale può regolarizzare al massimo il 20% di bias e MAE;
+4. controllo secondario LIRF/LIRA e ARSIAL Roma-Lanciani: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi i dati ufficiali possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
 5. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
 
 Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugiada, umidità derivata, pressione, vento, raffiche e direzione entrano nella statistica ufficiale solo dopo almeno 24 osservazioni sovrapposte. Nubi, visibilità e presenza di precipitazioni hanno un peso ancora più prudente, perché gli aeroporti rappresentano un'area diversa. La quantità di pioggia locale continua a dipendere soprattutto dalla Ecowitt; un METAR contribuisce solo quando pubblica realmente l'accumulo.
 
-Il codice e lo schema sono già predisposti per ulteriori reti istituzionali. Regione Lazio e ARSIAL verranno aggiunte solo attraverso API o download ufficiali e documentati: la dashboard non effettua scraping delle loro pagine interattive.
+ARSIAL usa esclusivamente l'export pubblico della dashboard e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali. Il connettore CFR è già predisposto per normali risposte CSV/JSON ma rimane completamente disabilitato: non effettua richieste, non compare nell'interfaccia e non partecipa alle statistiche finché non vengono configurati un endpoint ufficiale e `CFR_OBSERVATIONS_ENABLED=true`.
+
+Per attivare CFR in futuro: impostare sul Cron Job `CFR_OBSERVATIONS_URL`, salvare l'eventuale `CFR_API_TOKEN` come secret, indicare facoltativamente `CFR_STATION_IDS` e solo alla fine attivare `CFR_OBSERVATIONS_ENABLED` sia sul Cron Job sia sul servizio web. Una risposta non valida resta comunque non bloccante.
 
 All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali. La calibrazione inizia automaticamente appena previsioni archiviate e osservazioni si sovrappongono.
 
@@ -159,7 +171,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, ricerca città, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR, separazione delle osservazioni ufficiali, apprendimento della differenza tra siti, priorità Ecowitt, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+I test coprono avvio dell'interfaccia, ricerca città, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, isolamento delle osservazioni ufficiali, sorgenti esterne non raggiungibili, cambio CET/CEST, apprendimento della differenza tra siti, priorità Ecowitt, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
 
 ## Storico privato
 

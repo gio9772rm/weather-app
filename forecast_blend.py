@@ -76,6 +76,18 @@ REFERENCE_OBSERVATION_VARIABLES = (
 )
 
 
+def _enabled_reference_frame(frame: pd.DataFrame, cfg: Settings) -> pd.DataFrame:
+    """Exclude disabled sources, including scores left by an earlier activation."""
+    if frame.empty or not cfg.official_observations_enabled or "source" not in frame:
+        return frame.iloc[0:0].copy()
+    enabled_sources = {"awc_metar"}
+    if cfg.arsial_observations_enabled:
+        enabled_sources.add("arsial_siarl")
+    if cfg.cfr_observations_enabled:
+        enabled_sources.add("cfr_lazio")
+    return frame[frame["source"].isin(enabled_sources)].copy()
+
+
 def _iso(value: Any) -> str | None:
     timestamp = pd.to_datetime(value, utc=True, errors="coerce")
     if pd.isna(timestamp):
@@ -368,6 +380,8 @@ def score_forecasts_against_references(
     Cloud, visibility and precipitation occurrence have no local equivalent and
     therefore enter with a deliberately smaller distance-based weight.
     """
+    if not cfg.official_observations_enabled:
+        return pd.DataFrame()
     engine = engine or get_engine()
     cutoff = (
         pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=cfg.score_lookback_days)
@@ -400,6 +414,9 @@ def score_forecasts_against_references(
 
     for frame in (forecasts, references, local):
         frame.columns = [column.lower() for column in frame.columns]
+    references = _enabled_reference_frame(references, cfg)
+    if references.empty:
+        return pd.DataFrame()
     forecasts["valid_time"] = pd.to_datetime(
         forecasts["valid_time"], utc=True, errors="coerce"
     )
@@ -782,7 +799,7 @@ def build_blend(
     if forecasts.empty:
         return pd.DataFrame()
     scores = _latest_scores(engine)
-    reference_scores = _latest_reference_scores(engine)
+    reference_scores = _enabled_reference_frame(_latest_reference_scores(engine), cfg)
     interval_coverage = pd.to_timedelta(
         (forecasts["interval_hours"].fillna(1.0) - 1.0).clip(lower=0),
         unit="h",

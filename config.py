@@ -76,6 +76,22 @@ class Settings:
     official_observation_lookback_hours: int = 48
     official_score_max_share: float = 0.20
     official_min_overlap_samples: int = 24
+    arsial_observations_enabled: bool = True
+    arsial_dashboard_url: str = (
+        "https://siarl.arsial.it/bi/superset/dashboard/7"
+    )
+    arsial_station_name: str = "ROMA Lanciani-SEDE ARSIAL"
+    arsial_timezone: str = "UTC"
+    arsial_station_registry_url: str = (
+        "https://dati.lazio.it/dataset/4f4194c2-8432-4f99-aab3-2b07da7df3fd/"
+        "resource/1373f7a6-f208-40f0-8d0c-e41cf25d2599/download/"
+        "anagraficastazioniagrometeoarsial.csv"
+    )
+    arsial_csv_url: str = ""
+    cfr_observations_enabled: bool = False
+    cfr_observations_url: str = ""
+    cfr_api_token: str = ""
+    cfr_station_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -148,6 +164,34 @@ class Settings:
                 6,
                 _as_int(_first_env("OFFICIAL_MIN_OVERLAP_SAMPLES"), 24),
             ),
+            arsial_observations_enabled=_as_bool(
+                _first_env("ARSIAL_OBSERVATIONS_ENABLED", default="true"), True
+            ),
+            arsial_dashboard_url=_first_env(
+                "ARSIAL_DASHBOARD_URL",
+                default="https://siarl.arsial.it/bi/superset/dashboard/7",
+            ),
+            arsial_station_name=_first_env(
+                "ARSIAL_STATION_NAME",
+                default="ROMA Lanciani-SEDE ARSIAL",
+            ),
+            arsial_timezone=_first_env("ARSIAL_TZ", default="UTC"),
+            arsial_station_registry_url=_first_env(
+                "ARSIAL_STATION_REGISTRY_URL",
+                default=(
+                    "https://dati.lazio.it/dataset/"
+                    "4f4194c2-8432-4f99-aab3-2b07da7df3fd/resource/"
+                    "1373f7a6-f208-40f0-8d0c-e41cf25d2599/download/"
+                    "anagraficastazioniagrometeoarsial.csv"
+                ),
+            ),
+            arsial_csv_url=_first_env("ARSIAL_CSV_URL"),
+            cfr_observations_enabled=_as_bool(
+                _first_env("CFR_OBSERVATIONS_ENABLED", default="false"), False
+            ),
+            cfr_observations_url=_first_env("CFR_OBSERVATIONS_URL"),
+            cfr_api_token=_first_env("CFR_API_TOKEN"),
+            cfr_station_ids=_station_ids(_first_env("CFR_STATION_IDS")),
         )
 
     @property

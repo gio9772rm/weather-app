@@ -1841,6 +1841,34 @@ with tab_forecast:
         scores = score_data()
         reference_scores = reference_score_data()
         official_stations = official_station_data()
+        enabled_reference_sources = {"awc_metar"}
+        if CFG.arsial_observations_enabled:
+            enabled_reference_sources.add("arsial_siarl")
+        if CFG.cfr_observations_enabled:
+            enabled_reference_sources.add("cfr_lazio")
+        if "source" in official_stations:
+            official_stations = official_stations[
+                official_stations["source"].isin(enabled_reference_sources)
+            ].copy()
+        if "source" in reference_scores:
+            reference_scores = reference_scores[
+                reference_scores["source"].isin(enabled_reference_sources)
+            ].copy()
+        source_labels = {
+            "awc_metar": "METAR aeroportuale",
+            "arsial_siarl": "ARSIAL / SIARL",
+            "cfr_lazio": "CFR Lazio",
+        }
+        active_reference_names = ["Fiumicino e Ciampino"]
+        if CFG.arsial_observations_enabled:
+            active_reference_names.append("ARSIAL Roma-Lanciani")
+        if CFG.cfr_observations_enabled:
+            active_reference_names.append("CFR Lazio")
+        cfr_status_caption = (
+            " Il CFR è abilitato mediante endpoint ufficiale."
+            if CFG.cfr_observations_enabled
+            else ""
+        )
         with st.expander("Accuratezza: Ecowitt principale e rete ufficiale"):
             st.markdown("#### Verifica locale Ecowitt")
             if scores.empty:
@@ -1878,10 +1906,13 @@ with tab_forecast:
 
             st.markdown("#### Riferimenti ufficiali indipendenti")
             st.caption(
-                "Ecowitt resta il riferimento principale. Fiumicino e Ciampino "
+                "Ecowitt resta il riferimento principale. "
+                + ", ".join(active_reference_names)
+                + " "
                 f"regolarizzano al massimo il {CFG.official_score_max_share:.0%} "
                 f"della statistica dopo almeno {CFG.official_min_overlap_samples} "
                 "campioni sovrapposti; non sostituiscono mai una misura locale."
+                + cfr_status_caption
             )
             if official_stations.empty:
                 st.caption(
@@ -1891,6 +1922,7 @@ with tab_forecast:
             else:
                 station_display = pd.DataFrame(
                     {
+                        "Fonte": official_stations["source"].map(source_labels),
                         "Stazione": official_stations["station_id"],
                         "Nome": official_stations["station_name"],
                         "Ultimo dato": official_stations["time"].dt.tz_convert(
@@ -1908,6 +1940,7 @@ with tab_forecast:
                 reference_display = reference_scores.rename(
                     columns={
                         "provider": "Provider",
+                        "source": "Fonte",
                         "station_id": "Stazione",
                         "variable": "Variabile",
                         "horizon": "Orizzonte",
@@ -1921,6 +1954,7 @@ with tab_forecast:
                 )[
                     [
                         "Provider",
+                        "Fonte",
                         "Stazione",
                         "Variabile",
                         "Orizzonte",
@@ -1932,6 +1966,9 @@ with tab_forecast:
                         "Peso qualità",
                     ]
                 ]
+                reference_display["Fonte"] = reference_display["Fonte"].map(
+                    source_labels
+                )
                 render_color_legend("scores")
                 render_styled_table(
                     _style_score_table(reference_display.round(2), dark_mode),
@@ -2292,7 +2329,13 @@ with tab_radar:
         "Il radar sopra mostra invece precipitazioni realmente osservate."
     )
 
+reference_attribution = " · riferimenti: Aviation Weather"
+if CFG.arsial_observations_enabled:
+    reference_attribution += " + [ARSIAL/SIARL](https://siarl.arsial.it/)"
+if CFG.cfr_observations_enabled:
+    reference_attribution += " + CFR Lazio"
 st.caption(
-    "Meteo V3 · Open‑Meteo + OpenWeather · correzione locale sulla stazione · "
-    f"ultimo dato reale {_local_time(health.get('station_time'))}"
+    "Meteo V3 · Open‑Meteo + OpenWeather · correzione locale sulla stazione"
+    + reference_attribution
+    + f" · ultimo dato reale {_local_time(health.get('station_time'))}"
 )

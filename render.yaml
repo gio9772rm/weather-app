@@ -24,6 +24,18 @@ services:
         value: "20"
       - key: STATION_STALE_MINUTES
         value: "20"
+      - key: OFFICIAL_OBSERVATIONS_ENABLED
+        value: "true"
+      - key: ARSIAL_OBSERVATIONS_ENABLED
+        value: "true"
+      - key: ARSIAL_STATION_NAME
+        value: ROMA Lanciani-SEDE ARSIAL
+      - key: ARSIAL_TZ
+        value: UTC
+      # Mantiene CFR fuori dall'interfaccia finché non viene attivato anche
+      # sul Cron Job dopo aver ricevuto l'endpoint ufficiale.
+      - key: CFR_OBSERVATIONS_ENABLED
+        value: "false"
 
   # Acquisizione primaria: Render garantisce una sola esecuzione attiva per
   # questo Cron Job. Il lock PostgreSQL protegge anche da avvii GitHub/locali.
@@ -78,5 +90,17 @@ services:
         value: "0.20"
       - key: OFFICIAL_MIN_OVERLAP_SAMPLES
         value: "24"
+      - key: ARSIAL_OBSERVATIONS_ENABLED
+        value: "true"
+      - key: ARSIAL_DASHBOARD_URL
+        value: https://siarl.arsial.it/bi/superset/dashboard/7
+      - key: ARSIAL_STATION_NAME
+        value: ROMA Lanciani-SEDE ARSIAL
+      - key: ARSIAL_TZ
+        value: UTC
+      # Dormiente per impostazione predefinita. Aggiungere URL/token solo dopo
+      # la risposta ufficiale del Centro Funzionale Regionale.
+      - key: CFR_OBSERVATIONS_ENABLED
+        value: "false"
       - key: LOG_LEVEL
         value: INFO
