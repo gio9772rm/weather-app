@@ -66,5 +66,17 @@ services:
         value: "20"
       - key: FORECAST_REFRESH_MINUTES
         value: "60"
+      - key: OFFICIAL_OBSERVATIONS_ENABLED
+        value: "true"
+      - key: METAR_STATIONS
+        value: LIRF,LIRA
+      - key: OFFICIAL_OBSERVATION_REFRESH_MINUTES
+        value: "30"
+      - key: OFFICIAL_OBSERVATION_LOOKBACK_HOURS
+        value: "48"
+      - key: OFFICIAL_SCORE_MAX_SHARE
+        value: "0.20"
+      - key: OFFICIAL_MIN_OVERLAP_SAMPLES
+        value: "24"
       - key: LOG_LEVEL
         value: INFO

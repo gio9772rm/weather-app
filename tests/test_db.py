@@ -12,6 +12,8 @@ def test_schema_contains_v3_tables_and_columns(sqlite_engine):
         "forecast_runs",
         "forecast_blend",
         "forecast_scores",
+        "forecast_reference_scores",
+        "official_observations",
         "ingest_log",
         "meta",
     } <= tables

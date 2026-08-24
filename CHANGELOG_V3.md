@@ -1,5 +1,14 @@
 # Changelog Meteo V3
 
+## Rete ufficiale secondaria
+
+- integrate le osservazioni METAR pubbliche Aviation Weather di Roma Fiumicino (`LIRF`) e Roma Ciampino (`LIRA`), senza nuove chiavi API;
+- Ecowitt rimane la sorgente locale primaria e le osservazioni aeroportuali sono isolate in una tabella dedicata;
+- aggiunta una calibrazione di trasferimento: temperatura, umidità, pressione e vento esterni entrano nelle statistiche solo dopo aver imparato lo scarto stabile rispetto alla Ecowitt;
+- estesi bias, MAE e RMSE a punto di rugiada, raffiche e direzione del vento; aggiunte verifiche ufficiali per nuvole, visibilità e probabilità di precipitazione;
+- contributo ufficiale limitato per configurazione al 20%, con fallback non bloccante se il servizio esterno non risponde;
+- nuova sezione di accuratezza con stato delle stazioni ufficiali e punteggi distinti per fonte.
+
 ## Affidabilità del meteo città
 
 - aggiunto fallback automatico MET Norway quando Open‑Meteo non è raggiungibile da Render;

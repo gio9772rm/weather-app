@@ -36,8 +36,10 @@ from data_access import (
     daily_forecast,
     health_snapshot,
     load_forecast,
+    load_official_station_status,
     load_provider_scores,
     load_recent_logs,
+    load_reference_scores,
     load_station,
 )
 from light_pollution import (
@@ -180,6 +182,16 @@ def health_data() -> dict[str, Any]:
 @st.cache_data(ttl=600, show_spinner=False)
 def score_data() -> pd.DataFrame:
     return load_provider_scores()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def reference_score_data() -> pd.DataFrame:
+    return load_reference_scores()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def official_station_data() -> pd.DataFrame:
+    return load_official_station_status()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1827,7 +1839,10 @@ with tab_forecast:
         )
 
         scores = score_data()
-        with st.expander("Accuratezza misurata sulla stazione"):
+        reference_scores = reference_score_data()
+        official_stations = official_station_data()
+        with st.expander("Accuratezza: Ecowitt principale e rete ufficiale"):
+            st.markdown("#### Verifica locale Ecowitt")
             if scores.empty:
                 st.caption(
                     "Il confronto automatico inizierà quando previsioni archiviate e osservazioni avranno orari sovrapposti."
@@ -1859,6 +1874,68 @@ with tab_forecast:
                 render_color_legend("scores")
                 render_styled_table(
                     _style_score_table(display.round(2), dark_mode),
+                )
+
+            st.markdown("#### Riferimenti ufficiali indipendenti")
+            st.caption(
+                "Ecowitt resta il riferimento principale. Fiumicino e Ciampino "
+                f"regolarizzano al massimo il {CFG.official_score_max_share:.0%} "
+                f"della statistica dopo almeno {CFG.official_min_overlap_samples} "
+                "campioni sovrapposti; non sostituiscono mai una misura locale."
+            )
+            if official_stations.empty:
+                st.caption(
+                    "Le osservazioni ufficiali verranno mostrate dopo la prima "
+                    "esecuzione della pipeline."
+                )
+            else:
+                station_display = pd.DataFrame(
+                    {
+                        "Stazione": official_stations["station_id"],
+                        "Nome": official_stations["station_name"],
+                        "Ultimo dato": official_stations["time"].dt.tz_convert(
+                            CFG.local_timezone
+                        ).dt.strftime("%d/%m %H:%M"),
+                        "Distanza km": official_stations["distance_km"].round(1),
+                        "Qualità": official_stations["quality_flag"],
+                    }
+                )
+                render_styled_table(
+                    _style_score_table(station_display, dark_mode),
+                )
+
+            if not reference_scores.empty:
+                reference_display = reference_scores.rename(
+                    columns={
+                        "provider": "Provider",
+                        "station_id": "Stazione",
+                        "variable": "Variabile",
+                        "horizon": "Orizzonte",
+                        "n": "Campioni",
+                        "bias": "Bias",
+                        "mae": "MAE",
+                        "rmse": "RMSE",
+                        "brier": "Brier",
+                        "reference_weight": "Peso qualità",
+                    }
+                )[
+                    [
+                        "Provider",
+                        "Stazione",
+                        "Variabile",
+                        "Orizzonte",
+                        "Campioni",
+                        "Bias",
+                        "MAE",
+                        "RMSE",
+                        "Brier",
+                        "Peso qualità",
+                    ]
+                ]
+                render_color_legend("scores")
+                render_styled_table(
+                    _style_score_table(reference_display.round(2), dark_mode),
+                    height=420,
                 )
 
 with tab_station:

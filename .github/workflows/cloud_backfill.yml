@@ -51,5 +51,10 @@ jobs:
           ELEVATION_M: ${{ vars.ELEVATION_M || '20' }}
           LOCAL_TZ: Europe/Rome
           STATION_MAX_SOURCE_AGE_MINUTES: "20"
+          OFFICIAL_OBSERVATIONS_ENABLED: "true"
+          METAR_STATIONS: LIRF,LIRA
+          OFFICIAL_OBSERVATION_LOOKBACK_HOURS: "48"
+          OFFICIAL_SCORE_MAX_SHARE: "0.20"
+          OFFICIAL_MIN_OVERLAP_SAMPLES: "24"
         run: |
           python ingest_all.py --backfill-hours "${{ github.event.inputs.hours }}" --force-forecast
