@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
@@ -22,6 +23,20 @@ class ForecastGap:
 
 def _utc(value: Any) -> pd.Timestamp:
     return pd.to_datetime(value, utc=True, errors="coerce")
+
+
+def plotly_utc_datetime(value: Any) -> datetime:
+    """Return an ISO-serialisable UTC datetime for Plotly date axes.
+
+    Plotly treats numeric Unix milliseconds and ISO datetimes differently in a
+    browser timezone.  Keeping reference lines and trace coordinates on the
+    same datetime representation prevents a UTC offset from moving the
+    ``now`` marker (two hours during summer time in Rome).
+    """
+    timestamp = _utc(value)
+    if pd.isna(timestamp):
+        raise ValueError("Invalid datetime for Plotly")
+    return timestamp.to_pydatetime()
 
 
 def _prepared_forecast(frame: pd.DataFrame) -> pd.DataFrame:

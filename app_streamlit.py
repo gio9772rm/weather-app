@@ -18,7 +18,12 @@ from astro_weather import (
     daily_astronomy_summary,
     prepare_astronomy,
 )
-from chart_data import clip_forecast, merge_intervals, missing_forecast_segments
+from chart_data import (
+    clip_forecast,
+    merge_intervals,
+    missing_forecast_segments,
+    plotly_utc_datetime,
+)
 from city_weather import (
     CityForecast,
     CityLocation,
@@ -1298,7 +1303,10 @@ def combined_chart(
                 secondary_y=True,
             )
     figure.add_vline(
-        x=now.timestamp() * 1000, line_dash="dot", line_color="#f97316", opacity=0.9
+        x=plotly_utc_datetime(now),
+        line_dash="dot",
+        line_color="#f97316",
+        opacity=0.9,
     )
     figure.update_yaxes(title_text="Temperatura °C", row=1, col=1)
     figure.update_yaxes(
@@ -1452,7 +1460,10 @@ def weather_details_chart(
             )
 
     figure.add_vline(
-        x=now.timestamp() * 1000, line_dash="dot", line_color="#f97316", opacity=0.9
+        x=plotly_utc_datetime(now),
+        line_dash="dot",
+        line_color="#f97316",
+        opacity=0.9,
     )
     figure.update_yaxes(title_text="Umidità %", range=[0, 105], row=1, col=1)
     figure.update_yaxes(title_text="Pressione hPa", row=2, col=1)
