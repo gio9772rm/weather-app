@@ -1,3 +1,4 @@
+-c constraints.txt
 -r requirements.txt
 pytest>=8.2,<9
 ruff>=0.6,<1

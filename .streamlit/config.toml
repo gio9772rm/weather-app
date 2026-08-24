@@ -11,7 +11,26 @@ gatherUsageStats = false
 [theme]
 base = "light"
 primaryColor = "#0b76b7"
-backgroundColor = "#f8fafc"
-secondaryBackgroundColor = "#eef6fb"
-textColor = "#10243d"
 font = "sans serif"
+
+[theme.light]
+backgroundColor = "#f6f8fb"
+secondaryBackgroundColor = "#edf6fc"
+textColor = "#10243d"
+borderColor = "#d7e0ea"
+
+[theme.dark]
+backgroundColor = "#05070b"
+secondaryBackgroundColor = "#101826"
+textColor = "#f8fafc"
+borderColor = "#334155"
+
+[theme.light.sidebar]
+backgroundColor = "#edf6fc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#10243d"
+
+[theme.dark.sidebar]
+backgroundColor = "#0b111b"
+secondaryBackgroundColor = "#111827"
+textColor = "#f8fafc"

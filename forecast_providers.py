@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -11,6 +12,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from config import Settings, settings
+from source_health import record_source_disabled, record_source_result
 
 FORECAST_COLUMNS = [
     "provider",
@@ -337,18 +339,49 @@ def fetch_all_forecasts(
     errors: list[str] = []
     session = build_session()
     try:
-        for name, fetcher in (
-            ("Open-Meteo", fetch_open_meteo),
-            ("OpenWeather", fetch_openweather),
+        for name, source, enabled, fetcher in (
+            ("Open-Meteo", "open_meteo", True, fetch_open_meteo),
+            (
+                "OpenWeather",
+                "openweather",
+                bool(cfg.openweather_api_key),
+                fetch_openweather,
+            ),
         ):
+            if not enabled:
+                record_source_disabled(source)
+                continue
+            started = perf_counter()
             try:
                 frame = fetcher(cfg, session)
                 if not frame.empty:
                     frames.append(frame)
+                record_source_result(
+                    source,
+                    success=not frame.empty,
+                    rows_received=len(frame),
+                    last_observation_at=(
+                        frame["valid_time"].max() if not frame.empty else None
+                    ),
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error="risposta valida ma vuota" if frame.empty else "",
+                )
             except ForecastProviderError as exc:
                 errors.append(str(exc))
+                record_source_result(
+                    source,
+                    success=False,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error=exc,
+                )
             except Exception:  # noqa: BLE001 - isolate independent providers
                 errors.append(f"{name}: errore inatteso")
+                record_source_result(
+                    source,
+                    success=False,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error=f"{name}: errore inatteso",
+                )
     finally:
         session.close()
     return frames, errors

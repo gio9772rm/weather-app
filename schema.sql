@@ -92,6 +92,11 @@ CREATE TABLE IF NOT EXISTS forecast_scores (
   mae REAL,
   rmse REAL,
   brier REAL,
+  holdout_n INTEGER,
+  holdout_mae REAL,
+  persistence_mae REAL,
+  skill_vs_persistence REAL,
+  reliability_gap REAL,
   PRIMARY KEY (evaluated_at, provider, model, variable, horizon)
 );
 
@@ -141,6 +146,7 @@ CREATE TABLE IF NOT EXISTS forecast_reference_scores (
   brier REAL,
   transfer_bias REAL,
   transfer_mae REAL,
+  site_correlation REAL,
   reference_weight REAL NOT NULL,
   PRIMARY KEY (
     evaluated_at, provider, model, source, station_id, variable, horizon
@@ -149,6 +155,22 @@ CREATE TABLE IF NOT EXISTS forecast_reference_scores (
 
 CREATE INDEX IF NOT EXISTS idx_forecast_reference_scores_evaluated
   ON forecast_reference_scores (evaluated_at);
+
+CREATE TABLE IF NOT EXISTS forecast_reliability (
+  evaluated_at TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  horizon TEXT NOT NULL,
+  probability_bin INTEGER NOT NULL,
+  n INTEGER NOT NULL,
+  mean_probability REAL,
+  observed_frequency REAL,
+  brier REAL,
+  PRIMARY KEY (evaluated_at,provider,model,horizon,probability_bin)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_reliability_evaluated
+  ON forecast_reliability (evaluated_at);
 
 CREATE TABLE IF NOT EXISTS forecast_blend (
   valid_time TEXT PRIMARY KEY,
@@ -187,6 +209,19 @@ CREATE TABLE IF NOT EXISTS ingest_log (
   status TEXT NOT NULL,
   rows_written INTEGER DEFAULT 0,
   message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS source_health (
+  source TEXT PRIMARY KEY,
+  last_attempt_at TEXT,
+  last_success_at TEXT,
+  last_observation_at TEXT,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  rows_received INTEGER NOT NULL DEFAULT 0,
+  latency_ms REAL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS meta (

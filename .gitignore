@@ -29,6 +29,8 @@ historical/
 *.xlsx
 *.xls
 *.csv
+backups/
+meteo-database-*.zip
 ecowitt_devices.json
 ecowitt_*_output.json
 *.log

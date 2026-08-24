@@ -13,8 +13,10 @@ def test_schema_contains_v3_tables_and_columns(sqlite_engine):
         "forecast_blend",
         "forecast_scores",
         "forecast_reference_scores",
+        "forecast_reliability",
         "official_observations",
         "ingest_log",
+        "source_health",
         "meta",
     } <= tables
     raw_columns = {
@@ -27,6 +29,17 @@ def test_schema_contains_v3_tables_and_columns(sqlite_engine):
         "solar_w_m2",
         "data_quality",
     } <= raw_columns
+    score_columns = {
+        column["name"].lower()
+        for column in inspector.get_columns("forecast_scores")
+    }
+    assert {
+        "holdout_n",
+        "holdout_mae",
+        "persistence_mae",
+        "skill_vs_persistence",
+        "reliability_gap",
+    } <= score_columns
 
 
 def test_legacy_station_raw_is_extended_without_losing_rows(tmp_path, monkeypatch):

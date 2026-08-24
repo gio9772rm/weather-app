@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
@@ -29,6 +30,7 @@ from forecast_blend import (
 )
 from forecast_providers import fetch_all_forecasts
 from official_observations import ingest_official_observations
+from source_health import record_source_result
 from weather_ingest_ecowitt_cloud import run_station_ingest
 
 load_dotenv()
@@ -351,6 +353,7 @@ def run_all(
 
     if not skip_station:
         identifier, _ = _log_start("station")
+        station_started = perf_counter()
         rows_written = 0
         try:
             effective_backfill = adaptive_station_backfill_hours(cfg, backfill_hours)
@@ -373,10 +376,24 @@ def run_all(
             _log_finish(
                 identifier, "success", station["rows"], "; ".join(station["warnings"])
             )
+            record_source_result(
+                "ecowitt",
+                success=True,
+                rows_received=station["rows"],
+                last_observation_at=station.get("latest_station_time"),
+                latency_ms=(perf_counter() - station_started) * 1000,
+            )
         except Exception as exc:  # noqa: BLE001 - log the component and continue with forecast
             message = _safe_message(exc)
             result["errors"].append(message)
             _log_finish(identifier, "error", rows_written, message)
+            record_source_result(
+                "ecowitt",
+                success=False,
+                rows_received=rows_written,
+                latency_ms=(perf_counter() - station_started) * 1000,
+                error=message,
+            )
 
     if official_observations_are_due(cfg, force_forecast):
         identifier, _ = _log_start("official_observations")
@@ -410,6 +427,7 @@ def run_all(
 
     if forecast_is_due(cfg, force_forecast):
         identifier, _ = _log_start("forecast")
+        forecast_started = perf_counter()
         try:
             forecast = run_forecast_pipeline(cfg)
             result["forecast"] = forecast
@@ -419,10 +437,23 @@ def run_all(
                 forecast["blend_rows"],
                 "; ".join(forecast["warnings"]),
             )
+            record_source_result(
+                "forecast_blend",
+                success=True,
+                rows_received=forecast["blend_rows"],
+                last_observation_at=get_meta("last_forecast_issued_at"),
+                latency_ms=(perf_counter() - forecast_started) * 1000,
+            )
         except Exception as exc:  # noqa: BLE001 - log the component and keep station result
             message = _safe_message(exc)
             result["errors"].append(message)
             _log_finish(identifier, "error", 0, message)
+            record_source_result(
+                "forecast_blend",
+                success=False,
+                latency_ms=(perf_counter() - forecast_started) * 1000,
+                error=message,
+            )
     else:
         result["forecast"] = {
             "skipped": True,

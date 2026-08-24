@@ -1,5 +1,18 @@
 # Changelog Meteo V3
 
+## Affidabilità, valutazione, backup ed esperienza
+
+- aggiunta la scheda Sistema con salute per Ecowitt, provider, fonti ufficiali, combinazione e backup, inclusi latenza, righe, errori consecutivi e freschezza;
+- aggiunti copertura a 5 minuti, buco massimo e conteggio anomalie nelle ultime 24 ore;
+- estesi i controlli Ecowitt a salti anomali, sensori fermi e raffiche incoerenti, conservando le misure sospette con flag espliciti;
+- introdotta una validazione temporale recente con MAE holdout, baseline di persistenza e skill per variabile e orizzonte;
+- aggiunto il diagramma di affidabilità della probabilità di pioggia con fasce del 10%;
+- aggiunta la correlazione fra sito ufficiale ed Ecowitt al peso prudenziale delle fonti secondarie;
+- aggiunto backup portatile locale con schema, manifest, conteggi e SHA-256, senza trasferire automaticamente il database fuori da Render;
+- fissate le dipendenze collaudate in `constraints.txt` e aggiunto Dependabot settimanale per patch/minor;
+- aggiunti tema nativo chiaro/scuro, schede scorrevoli su mobile e stato della vista nell'URL;
+- mantenuti esclusi notifiche e connettore CFR finché quest'ultimo non viene esplicitamente attivato.
+
 ## ARSIAL attiva e CFR predisposto
 
 - integrata la stazione pubblica ARSIAL/SIARL Roma-Lanciani come riferimento secondario per temperatura, umidità, pressione, vento, raffiche, direzione e pioggia quando disponibili;

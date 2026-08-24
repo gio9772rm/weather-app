@@ -375,7 +375,36 @@ def parse_payload(payload: dict[str, Any]) -> pd.DataFrame:
     )
 
 
+def _append_quality_flag(
+    frame: pd.DataFrame, mask: pd.Series, flag: str
+) -> None:
+    """Append a stable, de-duplicated quality flag to the selected rows."""
+    selected = mask.reindex(frame.index, fill_value=False).fillna(False)
+    if not selected.any():
+        return
+
+    def append(value: Any) -> str:
+        current = [
+            item
+            for item in str(value or "ok").split(";")
+            if item and item != "ok"
+        ]
+        if flag not in current:
+            current.append(flag)
+        return ";".join(current) or "ok"
+
+    frame.loc[selected, "data_quality"] = frame.loc[
+        selected, "data_quality"
+    ].map(append)
+
+
 def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
+    """Apply physical, temporal and cross-sensor plausibility checks.
+
+    Impossible physical values are cleared. Temporal anomalies remain available
+    for inspection, but are explicitly marked so they are not mistaken for fully
+    validated observations.
+    """
     checks = {
         "temp_c": (-60, 60),
         "humidity": (0, 100),
@@ -389,14 +418,59 @@ def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
         "solar_w_m2": (0, 1800),
         "uv_index": (0, 30),
     }
-    output = frame.copy()
+    output = frame.copy().sort_values("time")
+    output["data_quality"] = output.get(
+        "data_quality", pd.Series("ok", index=output.index)
+    ).fillna("ok")
     invalid = pd.Series(False, index=output.index)
     for column, (minimum, maximum) in checks.items():
         output[column] = pd.to_numeric(output[column], errors="coerce")
         bad = output[column].notna() & ~output[column].between(minimum, maximum)
         invalid |= bad
         output.loc[bad, column] = np.nan
-    output.loc[invalid, "data_quality"] = "partial_range_filtered"
+    _append_quality_flag(output, invalid, "range_filtered")
+
+    timestamps = pd.to_datetime(output["time"], utc=True, errors="coerce")
+    elapsed_hours = timestamps.diff().dt.total_seconds().div(3600.0)
+    plausible_interval = elapsed_hours.between(1 / 120, 1.0)
+    # Conservative rates: high enough for severe fronts, low enough to catch
+    # decoder/unit errors and isolated sensor jumps.
+    rate_limits = {
+        "temp_c": 15.0,
+        "humidity": 60.0,
+        "pressure_hpa": 15.0,
+    }
+    for column, hourly_limit in rate_limits.items():
+        rate = output[column].diff().abs().div(elapsed_hours)
+        _append_quality_flag(
+            output,
+            plausible_interval & rate.gt(hourly_limit),
+            f"spike_{column}",
+        )
+
+    # A perfectly unchanged environmental sensor for at least one hour is
+    # suspicious. Mark the affected run while keeping the original value.
+    tolerances = {"temp_c": 0.01, "humidity": 0.01, "pressure_hpa": 0.01}
+    for column, tolerance in tolerances.items():
+        values = pd.to_numeric(output[column], errors="coerce")
+        changed = values.isna() | values.diff().abs().gt(tolerance)
+        groups = changed.cumsum()
+        duration = timestamps.groupby(groups).transform("max") - timestamps.groupby(
+            groups
+        ).transform("min")
+        _append_quality_flag(
+            output,
+            values.notna() & duration.ge(pd.Timedelta(minutes=60)),
+            f"stuck_{column}",
+        )
+
+    gust = pd.to_numeric(output["windgust_kmh"], errors="coerce")
+    wind = pd.to_numeric(output["wind_kmh"], errors="coerce")
+    _append_quality_flag(
+        output,
+        gust.notna() & wind.notna() & gust.add(0.2).lt(wind),
+        "gust_below_mean_wind",
+    )
     return output
 
 

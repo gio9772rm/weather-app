@@ -92,6 +92,16 @@ def _additive_migrations(engine: Engine) -> None:
             "winddir": "REAL",
             "sample_count": "INTEGER",
         },
+        "forecast_scores": {
+            "holdout_n": "INTEGER",
+            "holdout_mae": "REAL",
+            "persistence_mae": "REAL",
+            "skill_vs_persistence": "REAL",
+            "reliability_gap": "REAL",
+        },
+        "forecast_reference_scores": {
+            "site_correlation": "REAL",
+        },
     }
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
@@ -119,6 +129,13 @@ def ensure_schema() -> None:
         for statement in _schema_statements():
             connection.execute(text(statement))
     _additive_migrations(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO meta (k,v) VALUES ('schema_version','4') "
+                "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
+            )
+        )
     _SCHEMA_READY.add(database_url)
 
 

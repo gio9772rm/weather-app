@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -21,6 +22,7 @@ from sqlalchemy.engine import Engine
 from config import Settings, settings
 from db import get_engine
 from forecast_providers import build_session
+from source_health import record_source_disabled, record_source_result
 
 METAR_URL = "https://aviationweather.gov/api/data/metar"
 SOURCE_AWC_METAR = "awc_metar"
@@ -309,20 +311,47 @@ def ingest_official_observations(
     engine = engine or get_engine()
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
-    try:
-        frames.append(fetch_metar_observations(cfg))
-    except OfficialObservationError as exc:
-        warnings.append(str(exc))
-    if cfg.arsial_observations_enabled:
+    sources = (
+        ("awc_metar", True, fetch_metar_observations),
+        ("arsial_siarl", cfg.arsial_observations_enabled, fetch_arsial_observations),
+        ("cfr_lazio", cfg.cfr_observations_enabled, fetch_cfr_observations),
+    )
+    for source, enabled, fetcher in sources:
+        if not enabled:
+            record_source_disabled(source, engine)
+            continue
+        started = perf_counter()
         try:
-            frames.append(fetch_arsial_observations(cfg))
+            frame = fetcher(cfg)
+            frames.append(frame)
+            record_source_result(
+                source,
+                success=not frame.empty,
+                rows_received=len(frame),
+                last_observation_at=frame["time"].max() if not frame.empty else None,
+                latency_ms=(perf_counter() - started) * 1000,
+                error="risposta valida ma vuota" if frame.empty else "",
+                engine=engine,
+            )
         except OfficialObservationError as exc:
             warnings.append(str(exc))
-    if cfg.cfr_observations_enabled:
-        try:
-            frames.append(fetch_cfr_observations(cfg))
-        except OfficialObservationError as exc:
-            warnings.append(str(exc))
+            record_source_result(
+                source,
+                success=False,
+                latency_ms=(perf_counter() - started) * 1000,
+                error=exc,
+                engine=engine,
+            )
+        except Exception:  # noqa: BLE001 - isolate every external source
+            message = f"{source}: errore inatteso"
+            warnings.append(message)
+            record_source_result(
+                source,
+                success=False,
+                latency_ms=(perf_counter() - started) * 1000,
+                error=message,
+                engine=engine,
+            )
     valid = [frame for frame in frames if not frame.empty]
     combined = (
         pd.concat(valid, ignore_index=True)
