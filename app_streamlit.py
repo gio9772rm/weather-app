@@ -127,15 +127,20 @@ section[data-testid="stSidebar"] { background:var(--sidebar-bg) !important; bord
 .stApp [data-testid="stCaptionContainer"] p,
 .stApp [data-testid="stCaptionContainer"] span { color:var(--muted) !important; }
 .stApp button[data-baseweb="tab"],
-.stApp button[data-baseweb="tab"] * { color:var(--subtle) !important; opacity:1 !important; }
+.stApp button[data-baseweb="tab"] *,
+.stApp [data-testid="stTab"],
+.stApp [data-testid="stTab"] * { color:var(--subtle) !important; opacity:1 !important; }
 .stApp button[data-baseweb="tab"][aria-selected="true"],
-.stApp button[data-baseweb="tab"][aria-selected="true"] * { color:var(--blue) !important; }
+.stApp button[data-baseweb="tab"][aria-selected="true"] *,
+.stApp [data-testid="stTab"][aria-selected="true"],
+.stApp [data-testid="stTab"][aria-selected="true"] * { color:var(--blue) !important; }
 [data-testid="stHeader"] button,[data-testid="stHeader"] button *,
 [data-testid="stSidebarCollapseButton"] button,
 [data-testid="stSidebarCollapseButton"] button * { color:var(--ink) !important; }
-[data-testid="stHeader"] button svg,[data-testid="stHeader"] button svg *,
-[data-testid="stSidebarCollapseButton"] svg,
-[data-testid="stSidebarCollapseButton"] svg * { color:var(--ink) !important; fill:currentColor !important; }
+[data-testid="stHeader"] button svg,
+[data-testid="stSidebarCollapseButton"] svg { color:var(--ink) !important; fill:currentColor !important; }
+[data-testid="stHeader"] button svg [fill="none"],
+[data-testid="stSidebarCollapseButton"] svg [fill="none"] { fill:none !important; }
 [data-testid="stMetricDelta"],[data-testid="stMetricDelta"] * { color:#10243d !important; }
 .stApp :focus-visible { outline:2px solid var(--blue) !important; outline-offset:2px; }
 .block-container { max-width:1480px; padding-top:1.2rem; padding-bottom:3rem; }
@@ -144,7 +149,9 @@ section[data-testid="stSidebar"] { background:var(--sidebar-bg) !important; bord
   linear-gradient(125deg,#0f3d78 0%,#0b76b7 48%,#10a6a0 100%); box-shadow:0 18px 45px rgba(15,61,120,.20); }
 .hero h1 { margin:0; font-size:clamp(1.8rem,4vw,3rem); letter-spacing:-.045em; }
 .hero p { margin:.45rem 0 0; opacity:.86; font-size:1rem; }
-.hero,.hero * { color:#fff !important; }
+.hero,.hero *,
+.stApp [data-testid="stMarkdownContainer"] .hero,
+.stApp [data-testid="stMarkdownContainer"] .hero * { color:#fff !important; }
 .eyebrow { font-size:.72rem; letter-spacing:.13em; text-transform:uppercase; font-weight:700; opacity:.76; }
 .health-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.75rem 0 1.15rem; }
 .pill { display:inline-flex; align-items:center; gap:.38rem; padding:.42rem .72rem; border-radius:999px;
@@ -225,7 +232,7 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
   .forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}
   .hour-grid{grid-template-columns:1fr}.weather-table-wrap table{font-size:.74rem}.city-current{align-items:flex-start}
   div[data-baseweb="tab-list"]{overflow-x:auto;scrollbar-width:thin;flex-wrap:nowrap}
-  button[data-baseweb="tab"]{flex:0 0 auto;white-space:nowrap}
+  button[data-baseweb="tab"],[data-testid="stTab"]{flex:0 0 auto;white-space:nowrap}
   [data-testid="stMetric"]{min-height:102px;padding:.65rem .75rem}
 }
 </style>
@@ -336,7 +343,8 @@ html,body { color-scheme:dark !important; }
 section[data-testid="stSidebar"] { background:#0b111b !important; }
 .stApp p,.stApp li,.stApp label,.stApp span,.stApp div { border-color:var(--line); }
 .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,
-.stApp label,.stApp p,[data-testid="stCaptionContainer"],button[data-baseweb="tab"] { color:var(--ink) !important; }
+.stApp label,.stApp p,[data-testid="stCaptionContainer"],button[data-baseweb="tab"],
+.stApp [data-testid="stTab"] { color:var(--ink) !important; }
 
 /* Streamlit assegna colori propri ai discendenti dei widget. Li riallineiamo
    esplicitamente al tema, evitando le celle delle tabelle con colori semantici. */
@@ -358,6 +366,8 @@ section[data-testid="stSidebar"] { background:#0b111b !important; }
 .stApp button[data-baseweb="tab"],
 .stApp button[data-baseweb="tab"] p,
 .stApp button[data-baseweb="tab"] span,
+.stApp [data-testid="stTab"],
+.stApp [data-testid="stTab"] *,
 .stApp [data-testid="stExpander"] summary,
 .stApp [data-testid="stExpander"] summary p,
 .stApp [data-testid="stExpander"] summary span,
@@ -374,7 +384,9 @@ section[data-testid="stSidebar"] { background:#0b111b !important; }
 .stApp [data-testid="stCaptionContainer"] span { color:var(--muted) !important; }
 .stApp a:not(.hero a) { color:#7dd3fc !important; }
 .stApp button[data-baseweb="tab"][aria-selected="true"],
-.stApp button[data-baseweb="tab"][aria-selected="true"] * { color:var(--blue) !important; }
+.stApp button[data-baseweb="tab"][aria-selected="true"] *,
+.stApp [data-testid="stTab"][aria-selected="true"],
+.stApp [data-testid="stTab"][aria-selected="true"] * { color:var(--blue) !important; }
 .stApp .hero,.stApp .hero * { color:#fff !important; }
 [data-testid="stMetric"],[data-testid="stExpander"],.stButton > button,
 [data-baseweb="select"] > div,[data-testid="stTextInput"] input { background:var(--surface) !important; color:var(--ink) !important; }
