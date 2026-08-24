@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
+import plotly.graph_objects as go
 
 from chart_data import (
     clip_forecast,
     latest_valid_measurements,
     missing_forecast_segments,
     observation_gap_intervals,
+    plotly_utc_datetime,
 )
 
 
@@ -31,6 +35,17 @@ def test_future_forecast_starts_exactly_at_now_without_past_points():
     assert future.iloc[0]["valid_time"] == now
     assert future["valid_time"].min() >= now
     assert future.iloc[0]["temp_c"] == 2.5
+
+
+def test_plotly_reference_time_uses_iso_utc_instead_of_unix_milliseconds():
+    reference = plotly_utc_datetime("2026-08-24T12:00:00+02:00")
+    figure = go.Figure(go.Scatter(x=[reference], y=[1]))
+    figure.add_vline(x=reference)
+    payload = json.loads(figure.to_json())
+
+    assert reference.isoformat() == "2026-08-24T10:00:00+00:00"
+    assert not isinstance(reference, (int, float))
+    assert payload["layout"]["shapes"][0]["x0"] == payload["data"][0]["x"][0]
 
 
 def test_complete_observations_never_create_a_forecast_fallback():
