@@ -83,7 +83,7 @@ Esegui anche i test:
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Il risultato atteso è `70 passed` e `All checks passed`.
+Il risultato atteso è `71 passed` e `All checks passed`.
 
 ## 4. Configura GitHub Actions
 
