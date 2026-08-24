@@ -6,9 +6,15 @@ import pandas as pd
 from sqlalchemy import text
 
 from config import Settings
-from forecast_blend import _score_lookup, score_forecasts_against_references
+from forecast_blend import (
+    _enabled_reference_frame,
+    _score_lookup,
+    score_forecasts_against_references,
+)
 from official_observations import (
+    OfficialObservationError,
     archive_official_observations,
+    ingest_official_observations,
     parse_metar_payload,
     relative_humidity,
 )
@@ -211,3 +217,77 @@ def test_official_score_learns_site_offset_before_evaluating_forecast(sqlite_eng
     assert temperature["transfer_bias"].round(3).eq(2.0).all()
     assert temperature["bias"].round(3).eq(1.0).all()
     assert temperature["reference_weight"].gt(0).all()
+
+
+def test_arsial_failure_never_discards_metar_or_touches_ecowitt(
+    sqlite_engine,
+    monkeypatch,
+):
+    cfg = replace(
+        _settings(),
+        arsial_observations_enabled=True,
+        cfr_observations_enabled=False,
+    )
+    metar = parse_metar_payload(
+        [
+            {
+                "icaoId": "LIRA",
+                "obsTime": 1787601000,
+                "temp": 27,
+                "dewp": 20,
+                "wdir": 230,
+                "wspd": 3,
+                "altim": 1017,
+                "lat": 41.808,
+                "lon": 12.585,
+                "elev": 101,
+                "name": "Rome/Ciampino",
+                "rawOb": "METAR LIRA 241950Z 23003KT CAVOK 27/20 Q1017",
+            }
+        ],
+        cfg,
+        pd.Timestamp("2026-08-24T20:00:00Z"),
+    )
+    monkeypatch.setattr(
+        "official_observations.fetch_metar_observations",
+        lambda configured: metar,
+    )
+
+    def unavailable(configured):
+        del configured
+        raise OfficialObservationError("ARSIAL: manutenzione temporanea")
+
+    monkeypatch.setattr(
+        "regional_observations.fetch_arsial_observations",
+        unavailable,
+    )
+
+    result = ingest_official_observations(cfg, sqlite_engine)
+
+    assert result["rows"] == 1
+    assert result["stations"] == ["LIRA"]
+    assert result["warnings"] == ["ARSIAL: manutenzione temporanea"]
+    with sqlite_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM station_raw")
+        ).scalar_one() == 0
+
+
+def test_disabled_cfr_scores_cannot_affect_the_blend():
+    cfg = replace(
+        _settings(),
+        official_observations_enabled=True,
+        arsial_observations_enabled=True,
+        cfr_observations_enabled=False,
+    )
+    scores = pd.DataFrame(
+        {
+            "source": ["awc_metar", "arsial_siarl", "cfr_lazio"],
+            "mae": [1.0, 0.8, 0.1],
+        }
+    )
+
+    filtered = _enabled_reference_frame(scores, cfg)
+
+    assert set(filtered["source"]) == {"awc_metar", "arsial_siarl"}
+    assert "cfr_lazio" not in set(filtered["source"])
