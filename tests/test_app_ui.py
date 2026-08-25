@@ -20,6 +20,12 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         '[data-testid="stMetricDelta"] *',
         '[data-testid="stSidebarCollapseButton"] svg [fill="none"]',
         '[data-testid="stMarkdownContainer"] .hero *',
+        ".hero-v4",
+        ".current-grid",
+        ".hourly-strip",
+        ".insight-grid",
+        ".activity-grid",
+        ".air-grid",
     ):
         assert selector in source
 
@@ -37,13 +43,21 @@ def test_app_opens_local_dashboard_and_city_search(
 
     assert not app.exception
     assert [tab.label for tab in app.tabs] == [
+        "Oggi",
         "Panoramica",
         "7 giorni",
         "Stazione",
+        "Aria",
         "Astronomia",
         "Radar",
         "Sistema",
     ]
+    assert any("hero-v4" in item.value for item in app.markdown)
+    assert any("Pianifica la giornata" in item.value for item in app.markdown)
+    assert any(
+        "Apri questa scheda per caricare la previsione ambientale" in item.value
+        for item in app.caption
+    )
 
     app.sidebar.radio[0].set_value("Meteo città").run()
 

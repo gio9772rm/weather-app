@@ -1,6 +1,8 @@
-# Meteo V3
+# Meteo V4
 
-Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, verifica automatica degli errori e correzione locale.
+Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, verifica automatica degli errori e una nuova esperienza quotidiana più immediata.
+
+La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`; lo sviluppo V4 vive nel ramo `meteo-v4` finché non viene approvato e unito a `main`.
 
 ## Cosa offre
 
@@ -13,6 +15,9 @@ Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, ver
 - combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
+- nuova home **Oggi** con meteo dinamico, riepilogo in linguaggio naturale, timeline scorrevole, pioggia/vento/fiducia e tendenza settimanale;
+- indici orientativi per passeggiata, bicicletta, bucato e astronomia, con il momento meteorologicamente migliore e criteri espliciti;
+- qualità dell'aria europea, PM2.5, PM10, NO₂, ozono e pollini CAMS/Open‑Meteo, caricati soltanto quando si apre la scheda dedicata e senza nuove chiavi;
 - tema chiaro/scuro completo, tabelle semantiche a contrasto con intestazione fissa e passo selezionabile ogni 1, 3 o 6 ore;
 - stato di vista, tema, città, intervallo e scheda conservato nell'URL per riaprire o salvare direttamente la stessa schermata;
 - ricerca meteo mondiale per città o CAP, con condizioni attuali, previsione internet a 7 giorni, grafico, CSV e mappa senza mescolare la stazione locale;
@@ -36,6 +41,7 @@ flowchart TD
   GH["GitHub · riconciliazione 7 giorni"] --> DB
   DB --> BK["Backup locale verificato / PITR Render"]
   DB --> UI["Dashboard Streamlit su Render"]
+  AIR["Open-Meteo Air Quality · CAMS"] --> UI
   DB --> Q["Verifica e calibrazione locale"]
   Q --> DB
 ```
@@ -44,7 +50,20 @@ Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. 
 
 Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle ARSIAL dall'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7). Sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione esterna può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 
-Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti.
+Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti. La scheda **Aria** usa invece la previsione ambientale CAMS/Open‑Meteo per le coordinate visualizzate e resta separata dai sensori della stazione.
+
+## Esperienza V4
+
+La home **Oggi** privilegia ciò che serve nella vita quotidiana, lasciando invariati i pannelli tecnici della V3:
+
+- mostra chiaramente quando la temperatura proviene dalla Ecowitt e quando viene usato il punto di previsione combinato;
+- sintetizza le prossime 24 ore senza trasformare soglie interne in allerte ufficiali;
+- presenta dodici ore in una striscia orizzontale leggibile anche da telefono;
+- individua la prima fase piovosa, la raffica massima, l'escursione termica e la fiducia media;
+- calcola indici attività compresi tra 0 e 100 usando solo pioggia, vento, temperatura, umidità, nuvole e giorno/notte;
+- mantiene **Panoramica**, **7 giorni**, **Stazione**, **Astronomia**, **Radar** e **Sistema** come viste di approfondimento.
+
+La qualità dell'aria è un dato modellistico a scala territoriale, non una misura Ecowitt. L'indice segue le fasce AQI europee; i pollini sono disponibili in Europa durante la stagione. Un errore della fonte ambientale mostra un messaggio circoscritto e non interferisce con stazione, previsioni o Cron Job.
 
 ## Avvio rapido su Windows 11
 
@@ -182,7 +201,7 @@ I valori fisicamente impossibili vengono esclusi solo per il parametro interessa
 
 ## Pioggia
 
-La V3 separa:
+La piattaforma separa:
 
 - `rain_rate_mm_h`: intensità istantanea in mm/h;
 - `rain_total_mm`: contatore cumulativo della stazione;
@@ -211,7 +230,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, ricerca città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, isolamento delle osservazioni ufficiali, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, apprendimento e correlazione fra siti, priorità Ecowitt, validazione temporale, affidabilità pioggia, backup verificato, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+I test coprono avvio dell'interfaccia, home e indici V4, qualità dell'aria/pollini, ricerca città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, isolamento delle osservazioni ufficiali, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, apprendimento e correlazione fra siti, priorità Ecowitt, validazione temporale, affidabilità pioggia, backup verificato, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
 
 ## Dipendenze riproducibili
 
@@ -229,7 +248,7 @@ I timestamp senza fuso vengono interpretati come `Europe/Rome`; è possibile cam
 
 ## Migrazione e pubblicazione
 
-Segui [MIGRAZIONE_PASSO_PASSO.md](MIGRAZIONE_PASSO_PASSO.md). Contiene la procedura completa per Windows, GitHub Actions, Render, verifica e rollback.
+Per provare e pubblicare questa versione segui [MIGRAZIONE_V4.md](MIGRAZIONE_V4.md): mantiene Render sulla V3 finché la V4 non viene approvata e descrive il ripristino senza riscrivere la cronologia. La precedente [MIGRAZIONE_PASSO_PASSO.md](MIGRAZIONE_PASSO_PASSO.md) resta come riferimento storico della prima installazione V3.
 
 ## Sicurezza e manutenzione
 
