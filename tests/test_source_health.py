@@ -65,6 +65,26 @@ def test_dashboard_trusts_cron_telemetry_when_web_keys_are_absent(
     assert health.loc["ecowitt", "display_status"] == "disabled"
 
 
+def test_dashboard_labels_recent_cached_arsial_data_without_calling_it_live(
+    sqlite_engine,
+):
+    cfg = Settings.from_env()
+    assert record_source_result(
+        "arsial_siarl",
+        success=False,
+        status="cached",
+        rows_received=24,
+        last_observation_at=pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=1),
+        error="rete non raggiungibile; uso ultimo archivio valido",
+        engine=sqlite_engine,
+    )
+
+    health = load_source_health(cfg).set_index("source")
+
+    assert health.loc["arsial_siarl", "display_status"] == "cached"
+    assert health.loc["arsial_siarl", "consecutive_failures"] == 1
+
+
 def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine):
     now = pd.Timestamp.now(tz="UTC").floor("5min")
     rows = []

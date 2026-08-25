@@ -448,9 +448,16 @@ def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
             f"spike_{column}",
         )
 
-    # A perfectly unchanged environmental sensor for at least one hour is
-    # suspicious. Mark the affected run while keeping the original value.
+    # A perfectly unchanged environmental sensor can be suspicious, but
+    # pressure is naturally slow and Ecowitt rounds it to 0.1 hPa. Requiring
+    # six flat hours for pressure avoids flagging normal stable weather while
+    # retaining the one-hour detector for temperature and humidity.
     tolerances = {"temp_c": 0.01, "humidity": 0.01, "pressure_hpa": 0.01}
+    stuck_durations = {
+        "temp_c": pd.Timedelta(minutes=60),
+        "humidity": pd.Timedelta(minutes=60),
+        "pressure_hpa": pd.Timedelta(hours=6),
+    }
     for column, tolerance in tolerances.items():
         values = pd.to_numeric(output[column], errors="coerce")
         changed = values.isna() | values.diff().abs().gt(tolerance)
@@ -460,7 +467,7 @@ def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
         ).transform("min")
         _append_quality_flag(
             output,
-            values.notna() & duration.ge(pd.Timedelta(minutes=60)),
+            values.notna() & duration.ge(stuck_durations[column]),
             f"stuck_{column}",
         )
 

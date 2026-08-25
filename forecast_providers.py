@@ -48,12 +48,13 @@ class ForecastProviderError(RuntimeError):
     """A provider failed without leaking query parameters or API keys."""
 
 
-def build_session() -> requests.Session:
+def build_session(*, retries: int = 3) -> requests.Session:
     session = requests.Session()
+    retries = max(0, min(int(retries), 5))
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
+        total=retries,
+        connect=retries,
+        read=retries,
         backoff_factor=0.6,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}),

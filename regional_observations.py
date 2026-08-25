@@ -33,6 +33,13 @@ from official_observations import (
 SOURCE_ARSIAL = "arsial_siarl"
 SOURCE_CFR = "cfr_lazio"
 
+ARSIAL_HEADERS = {
+    "Accept": "text/html,application/json,text/csv;q=0.9,*/*;q=0.5",
+    "Accept-Language": "it-IT,it;q=0.9,en;q=0.6",
+    "Cache-Control": "no-cache",
+}
+ARSIAL_TIMEOUT = (5, 12)
+
 
 class _SimpleTableParser(HTMLParser):
     """Extract server-rendered tables without adding an HTML dependency."""
@@ -340,13 +347,14 @@ def _get(
     *,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
+    timeout: tuple[float, float] = (8, 25),
 ) -> requests.Response:
     try:
         response = session.get(
             url,
             params=params,
             headers=headers,
-            timeout=(8, 25),
+            timeout=timeout,
         )
     except requests.RequestException as exc:
         raise OfficialObservationError("servizio non raggiungibile") from exc
@@ -359,11 +367,67 @@ def _optional_get(
     *,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
+    timeout: tuple[float, float] = (8, 25),
 ) -> requests.Response | None:
     try:
-        return _get(session, url, params=params, headers=headers)
+        return _get(
+            session,
+            url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+        )
     except OfficialObservationError:
         return None
+
+
+def _arsial_chart_frames(
+    session: requests.Session,
+    base: str,
+    identifiers: set[int],
+) -> list[pd.DataFrame]:
+    """Try saved Superset charts without depending on the dashboard page."""
+    frames: list[pd.DataFrame] = []
+    export_headers = {
+        **ARSIAL_HEADERS,
+        "Accept": "text/csv,application/json;q=0.9,*/*;q=0.5",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    for chart_id in sorted(identifiers)[:24]:
+        form_data: dict[str, Any] = {"slice_id": chart_id}
+        metadata = _optional_get(
+            session,
+            f"{base}/api/v1/chart/{chart_id}",
+            headers=ARSIAL_HEADERS,
+            timeout=ARSIAL_TIMEOUT,
+        )
+        if metadata is not None and metadata.ok:
+            try:
+                result = metadata.json().get("result") or {}
+                params = result.get("params")
+                if isinstance(params, str):
+                    parsed = json.loads(params)
+                    if isinstance(parsed, dict):
+                        form_data.update(parsed)
+                form_data["slice_id"] = chart_id
+            except (ValueError, AttributeError):
+                pass
+        for endpoint in (
+            f"{base}/superset/explore_json/",
+            f"{base}/superset/explore_json",
+        ):
+            exported = _optional_get(
+                session,
+                endpoint,
+                params={"form_data": json.dumps(form_data), "csv": "true"},
+                headers=export_headers,
+                timeout=ARSIAL_TIMEOUT,
+            )
+            if exported is not None and exported.ok:
+                frames.extend(_response_frames(exported))
+                if any(_frame_has_weather_data(frame) for frame in frames):
+                    break
+    return frames
 
 
 def _arsial_export_frames(
@@ -381,34 +445,67 @@ def _arsial_export_frames(
             raise OfficialObservationError("ARSIAL: CSV pubblico non interpretabile")
         return frames
 
-    response = _get(session, cfg.arsial_dashboard_url)
-    if not response.ok:
-        raise OfficialObservationError(
-            f"ARSIAL: risposta HTTP {response.status_code}"
-        )
-    dashboard_text = response.text
-    frames = _response_frames(response)
-    base, dashboard_id = _dashboard_parts(str(response.url or cfg.arsial_dashboard_url))
-    identifiers = {
-        int(value)
-        for value in re.findall(
-            r'(?:"slice_id"|"chartId"|"chart_id")\s*:\s*(\d+)',
-            dashboard_text,
-        )
-    }
+    base, dashboard_id = _dashboard_parts(cfg.arsial_dashboard_url)
+    identifiers = set(cfg.arsial_chart_ids)
+    frames: list[pd.DataFrame] = []
+    dashboard_text = ""
+    dashboard_response: requests.Response | None = None
+    reachable = False
 
+    # Superset's HTML dashboard is occasionally slow while its JSON/chart
+    # endpoints remain available. Discover those endpoints first so one page
+    # timeout cannot take the entire ARSIAL source offline.
     for endpoint in (
         f"{base}/api/v1/dashboard/{dashboard_id}/charts",
         f"{base}/api/v1/dashboard/{dashboard_id}",
     ):
-        candidate = _optional_get(session, endpoint)
-        if candidate is None or not candidate.ok:
+        candidate = _optional_get(
+            session,
+            endpoint,
+            headers=ARSIAL_HEADERS,
+            timeout=ARSIAL_TIMEOUT,
+        )
+        if candidate is None:
             continue
+        reachable = True
+        if not candidate.ok:
+            continue
+        frames.extend(_response_frames(candidate))
         try:
             payload = candidate.json()
         except ValueError:
             continue
         identifiers.update(_chart_ids(payload))
+
+    if identifiers:
+        frames.extend(_arsial_chart_frames(session, base, identifiers))
+        useful = [frame for frame in frames if _frame_has_weather_data(frame)]
+        if useful:
+            return useful
+
+    response = _optional_get(
+        session,
+        cfg.arsial_dashboard_url,
+        headers=ARSIAL_HEADERS,
+        timeout=ARSIAL_TIMEOUT,
+    )
+    if response is not None:
+        reachable = True
+        if response.ok:
+            dashboard_response = response
+            dashboard_text = response.text
+            frames.extend(_response_frames(response))
+            base, dashboard_id = _dashboard_parts(
+                str(response.url or cfg.arsial_dashboard_url)
+            )
+            identifiers.update(
+                int(value)
+                for value in re.findall(
+                    r'(?:(?:"|&quot;)(?:slice_id|chartId|chart_id)(?:"|&quot;))'
+                    r"\s*:\s*(\d+)",
+                    dashboard_text,
+                )
+            )
 
     links = re.findall(
         r'href=["\']([^"\']*(?:\.csv|explore_json)[^"\']*)["\']',
@@ -416,37 +513,31 @@ def _arsial_export_frames(
         flags=re.IGNORECASE,
     )
     for link in links[:12]:
-        export_url = urljoin(cfg.arsial_dashboard_url, link)
+        export_url = urljoin(
+            str(
+                dashboard_response.url
+                if dashboard_response is not None
+                else cfg.arsial_dashboard_url
+            ),
+            link,
+        )
         if urlsplit(export_url).netloc != urlsplit(cfg.arsial_dashboard_url).netloc:
             continue
-        exported = _optional_get(session, export_url)
-        if exported is not None and exported.ok:
-            frames.extend(_response_frames(exported))
-
-    for chart_id in sorted(identifiers)[:16]:
-        form_data: dict[str, Any] = {"slice_id": chart_id}
-        metadata = _optional_get(session, f"{base}/api/v1/chart/{chart_id}")
-        if metadata is not None and metadata.ok:
-            try:
-                result = metadata.json().get("result") or {}
-                params = result.get("params")
-                if isinstance(params, str):
-                    parsed = json.loads(params)
-                    if isinstance(parsed, dict):
-                        form_data.update(parsed)
-                form_data["slice_id"] = chart_id
-            except (ValueError, AttributeError):
-                pass
         exported = _optional_get(
             session,
-            f"{base}/superset/explore_json/",
-            params={"form_data": json.dumps(form_data), "csv": "true"},
+            export_url,
+            headers=ARSIAL_HEADERS,
+            timeout=ARSIAL_TIMEOUT,
         )
         if exported is not None and exported.ok:
             frames.extend(_response_frames(exported))
 
+    frames.extend(_arsial_chart_frames(session, base, identifiers))
+
     useful = [frame for frame in frames if _frame_has_weather_data(frame)]
     if not useful:
+        if not reachable:
+            raise OfficialObservationError("ARSIAL: servizio non raggiungibile")
         raise OfficialObservationError(
             "ARSIAL: esportazione pubblica temporaneamente non disponibile"
         )
@@ -809,7 +900,7 @@ def fetch_arsial_observations(
     if session is None:
         from forecast_providers import build_session
 
-        session = build_session()
+        session = build_session(retries=1)
     try:
         try:
             tables = _arsial_export_frames(cfg, session)

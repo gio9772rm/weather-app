@@ -251,6 +251,16 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
             return "disabled"
         if not bool(row["enabled"]) and not has_telemetry:
             return "disabled"
+        if stored_status == "cached":
+            observed_age = _age_minutes(now, row.get("last_observation_at"))
+            # Cached regional observations remain useful for historical scoring,
+            # but the UI must never present an old archive as a live source.
+            cache_hours = (
+                cfg.arsial_cache_hours
+                if str(row.get("source")) == "arsial_siarl"
+                else 24
+            )
+            return "cached" if observed_age <= cache_hours * 60 else "offline"
         failures = int(row["consecutive_failures"])
         if failures >= 2:
             return "offline"

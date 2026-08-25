@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 import pandas as pd
+import requests
 
 from config import Settings
 from regional_observations import (
@@ -105,6 +106,39 @@ class FailOnRequestSession:
     def get(self, url: str, **kwargs: Any) -> None:
         del url, kwargs
         raise AssertionError("the dormant CFR connector performed a request")
+
+
+class ConfiguredChartSession:
+    """The saved chart remains usable even when dashboard discovery is down."""
+
+    def __init__(self, cfg: Settings) -> None:
+        self.cfg = cfg
+        self.calls: list[str] = []
+
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
+        del kwargs
+        self.calls.append(url)
+        if "/api/v1/dashboard/" in url:
+            raise requests.ConnectionError("dashboard API unavailable")
+        if url.endswith("/api/v1/chart/77"):
+            return FakeResponse("{}", url=url, status=404)
+        if "/superset/explore_json" in url:
+            return FakeResponse(
+                "Stazione;Data;Ora;Temperatura med (°C);Umidità aria med (%)\n"
+                "ROMA Lanciani-SEDE ARSIAL;2026-08-24;20;26,4;61\n",
+                url=url,
+                content_type="text/csv",
+            )
+        if url == self.cfg.arsial_station_registry_url:
+            return FakeResponse(
+                "Cod staz;Nome stazione;ALTITUDINE;lat;lon\n"
+                "501;ROMA Lanciani-SEDE ARSIAL;52;41,92;12,52\n",
+                url=url,
+                content_type="text/csv",
+            )
+        if url.startswith(self.cfg.arsial_dashboard_url):
+            raise AssertionError("the slow dashboard page should not be required")
+        raise AssertionError(f"unexpected URL {url}")
 
 
 def test_arsial_wide_tables_are_normalised_and_merged():
@@ -221,7 +255,19 @@ def test_arsial_fetch_discovers_public_superset_csv():
     assert len(frame) == 1
     assert frame.iloc[0]["station_id"] == "ARSIAL-501"
     assert any(url.endswith("/superset/explore_json/") for url in session.calls)
+    assert cfg.arsial_dashboard_url not in session.calls
     assert session.closed is False
+
+
+def test_arsial_configured_chart_survives_dashboard_outage():
+    cfg = replace(_settings(), arsial_chart_ids=(77,))
+    session = ConfiguredChartSession(cfg)
+
+    frame = fetch_arsial_observations(cfg, session)
+
+    assert len(frame) == 1
+    assert frame.iloc[0]["temp_c"] == 26.4
+    assert not any(url.startswith(cfg.arsial_dashboard_url) for url in session.calls)
 
 
 def test_cfr_connector_is_completely_dormant_by_default():

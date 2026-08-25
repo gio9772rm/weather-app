@@ -2644,6 +2644,7 @@ with tab_system:
         status_labels = {
             "online": "Operativa",
             "delayed": "In ritardo",
+            "cached": "Archivio disponibile",
             "offline": "Non disponibile",
             "waiting": "In attesa",
             "disabled": "Disattivata",
