@@ -60,7 +60,7 @@ def build_session(*, retries: int = 3) -> requests.Session:
         allowed_methods=frozenset({"GET"}),
     )
     session.mount("https://", HTTPAdapter(max_retries=retry))
-    session.headers.update({"User-Agent": "weather-app-v3/1.0"})
+    session.headers.update({"User-Agent": "weather-app-v4/1.0"})
     return session
 
 

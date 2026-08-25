@@ -97,6 +97,22 @@ def weather_cell_style(value: Any, metric: str) -> str:
         if number < 65:
             return yellow
         return green
+    if metric == "aqi":
+        if number > 80:
+            return red
+        if number > 60:
+            return orange
+        if number > 40:
+            return yellow
+        return green
+    if metric == "pollen":
+        if number >= 100:
+            return red
+        if number >= 50:
+            return orange
+        if number >= 10:
+            return yellow
+        return green
     if metric == "sqm":
         if number >= 21.3:
             return green
