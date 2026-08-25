@@ -32,6 +32,8 @@ services:
         value: ROMA Lanciani-SEDE ARSIAL
       - key: ARSIAL_TZ
         value: UTC
+      - key: ARSIAL_CACHE_HOURS
+        value: "72"
       # Mantiene CFR fuori dall'interfaccia finché non viene attivato anche
       # sul Cron Job dopo aver ricevuto l'endpoint ufficiale.
       - key: CFR_OBSERVATIONS_ENABLED
@@ -98,6 +100,8 @@ services:
         value: ROMA Lanciani-SEDE ARSIAL
       - key: ARSIAL_TZ
         value: UTC
+      - key: ARSIAL_CACHE_HOURS
+        value: "72"
       # Dormiente per impostazione predefinita. Aggiungere URL/token solo dopo
       # la risposta ufficiale del Centro Funzionale Regionale.
       - key: CFR_OBSERVATIONS_ENABLED

@@ -51,6 +51,19 @@ def _station_ids(value: str) -> tuple[str, ...]:
     )
 
 
+def _positive_integer_ids(value: str) -> tuple[int, ...]:
+    """Parse a comma-separated list of positive numeric identifiers."""
+    identifiers: list[int] = []
+    for item in str(value or "").split(","):
+        try:
+            identifier = int(item.strip())
+        except (TypeError, ValueError):
+            continue
+        if identifier > 0 and identifier not in identifiers:
+            identifiers.append(identifier)
+    return tuple(identifiers)
+
+
 @dataclass(frozen=True)
 class Settings:
     latitude: float
@@ -88,6 +101,8 @@ class Settings:
         "anagraficastazioniagrometeoarsial.csv"
     )
     arsial_csv_url: str = ""
+    arsial_chart_ids: tuple[int, ...] = ()
+    arsial_cache_hours: int = 72
     cfr_observations_enabled: bool = False
     cfr_observations_url: str = ""
     cfr_api_token: str = ""
@@ -186,6 +201,16 @@ class Settings:
                 ),
             ),
             arsial_csv_url=_first_env("ARSIAL_CSV_URL"),
+            arsial_chart_ids=_positive_integer_ids(
+                _first_env("ARSIAL_CHART_IDS")
+            ),
+            arsial_cache_hours=max(
+                6,
+                min(
+                    168,
+                    _as_int(_first_env("ARSIAL_CACHE_HOURS"), 72),
+                ),
+            ),
             cfr_observations_enabled=_as_bool(
                 _first_env("CFR_OBSERVATIONS_ENABLED", default="false"), False
             ),

@@ -60,6 +60,7 @@ def record_source_result(
     source: str,
     *,
     success: bool,
+    status: str | None = None,
     rows_received: int = 0,
     last_observation_at: Any = None,
     latency_ms: float | None = None,
@@ -67,6 +68,10 @@ def record_source_result(
     engine: Engine | None = None,
 ) -> bool:
     """Upsert one health result; telemetry failure never stops the pipeline."""
+    resolved_status = str(status or ("online" if success else "error")).lower()
+    if resolved_status not in {"online", "error", "cached"}:
+        resolved_status = "online" if success else "error"
+    is_online = resolved_status == "online"
     attempted = _iso(pd.Timestamp.now(tz="UTC"))
     observed = _iso(last_observation_at)
     latency = (
@@ -95,13 +100,13 @@ def record_source_result(
     payload = {
         "source": source,
         "attempted": attempted,
-        "succeeded": attempted if success else None,
+        "succeeded": attempted if is_online else None,
         "observed": observed,
-        "status": "online" if success else "error",
+        "status": resolved_status,
         "rows": max(0, int(rows_received or 0)),
         "latency": latency,
-        "failures": 0 if success else 1,
-        "error": "" if success else _safe_text(error or "errore sconosciuto"),
+        "failures": 0 if is_online else 1,
+        "error": "" if is_online else _safe_text(error or "errore sconosciuto"),
     }
     try:
         with (engine or get_engine()).begin() as connection:

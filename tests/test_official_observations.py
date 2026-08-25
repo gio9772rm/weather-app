@@ -12,6 +12,7 @@ from forecast_blend import (
     score_forecasts_against_references,
 )
 from official_observations import (
+    OBSERVATION_COLUMNS,
     OfficialObservationError,
     archive_official_observations,
     ingest_official_observations,
@@ -271,6 +272,61 @@ def test_arsial_failure_never_discards_metar_or_touches_ecowitt(
         assert connection.execute(
             text("SELECT COUNT(*) FROM station_raw")
         ).scalar_one() == 0
+
+
+def test_recent_arsial_archive_is_reused_without_being_reported_live(
+    sqlite_engine,
+    monkeypatch,
+):
+    cfg = replace(
+        _settings(),
+        arsial_observations_enabled=True,
+        arsial_cache_hours=72,
+        cfr_observations_enabled=False,
+    )
+    now = pd.Timestamp.now(tz="UTC").floor("h")
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO official_observations "
+                "(source,station_id,time,station_name,temp_c,quality_flag,fetched_at) "
+                "VALUES ('arsial_siarl','ARSIAL-501',:time,'Roma Lanciani',"
+                "26.4,'official',:fetched)"
+            ),
+            {
+                "time": (now - pd.Timedelta(hours=1)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "fetched": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
+
+    monkeypatch.setattr(
+        "official_observations.fetch_metar_observations",
+        lambda configured: pd.DataFrame(columns=OBSERVATION_COLUMNS),
+    )
+
+    def unavailable(configured):
+        del configured
+        raise OfficialObservationError("ARSIAL: timeout temporaneo")
+
+    monkeypatch.setattr(
+        "regional_observations.fetch_arsial_observations",
+        unavailable,
+    )
+
+    result = ingest_official_observations(cfg, sqlite_engine)
+
+    assert result["rows"] == 1
+    assert result["stations"] == ["ARSIAL-501"]
+    assert result["cached_sources"] == ["arsial_siarl"]
+    assert "uso ultimo archivio valido" in result["warnings"][0]
+    with sqlite_engine.connect() as connection:
+        health = connection.execute(
+            text("SELECT * FROM source_health WHERE source='arsial_siarl'")
+        ).mappings().one()
+    assert health["status"] == "cached"
+    assert health["rows_received"] == 1
 
 
 def test_disabled_cfr_scores_cannot_affect_the_blend():

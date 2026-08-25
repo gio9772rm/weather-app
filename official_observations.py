@@ -299,6 +299,36 @@ def archive_official_observations(
     return len(records)
 
 
+def _cached_source_observations(
+    source: str,
+    *,
+    max_age_hours: int,
+    engine: Engine,
+) -> pd.DataFrame:
+    """Return a bounded last-known-good archive for a temporarily failing feed."""
+    cutoff = (
+        pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=max(1, max_age_hours))
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with engine.connect() as connection:
+        frame = pd.read_sql(
+            text(
+                "SELECT "
+                + ",".join(OBSERVATION_COLUMNS)
+                + " FROM official_observations "
+                "WHERE source=:source AND time>=:cutoff ORDER BY time"
+            ),
+            connection,
+            params={"source": source, "cutoff": cutoff},
+        )
+    if frame.empty:
+        return pd.DataFrame(columns=OBSERVATION_COLUMNS)
+    frame["time"] = pd.to_datetime(frame["time"], utc=True, errors="coerce")
+    frame["fetched_at"] = pd.to_datetime(
+        frame["fetched_at"], utc=True, errors="coerce"
+    )
+    return frame.dropna(subset=["time"]).reindex(columns=OBSERVATION_COLUMNS)
+
+
 def ingest_official_observations(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> dict[str, Any]:
@@ -311,6 +341,7 @@ def ingest_official_observations(
     engine = engine or get_engine()
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
+    cached_sources: list[str] = []
     sources = (
         ("awc_metar", True, fetch_metar_observations),
         ("arsial_siarl", cfg.arsial_observations_enabled, fetch_arsial_observations),
@@ -334,14 +365,44 @@ def ingest_official_observations(
                 engine=engine,
             )
         except OfficialObservationError as exc:
-            warnings.append(str(exc))
-            record_source_result(
-                source,
-                success=False,
-                latency_ms=(perf_counter() - started) * 1000,
-                error=exc,
-                engine=engine,
+            message = str(exc)
+            cached = (
+                _cached_source_observations(
+                    source,
+                    max_age_hours=cfg.arsial_cache_hours,
+                    engine=engine,
+                )
+                if source == "arsial_siarl"
+                else pd.DataFrame(columns=OBSERVATION_COLUMNS)
             )
+            if not cached.empty:
+                latest = cached["time"].max()
+                cache_note = (
+                    f"{message}; uso ultimo archivio valido ({len(cached)} righe, "
+                    f"ultimo dato {latest.strftime('%Y-%m-%d %H:%M UTC')})"
+                )
+                warnings.append(cache_note)
+                cached_sources.append(source)
+                frames.append(cached)
+                record_source_result(
+                    source,
+                    success=False,
+                    status="cached",
+                    rows_received=len(cached),
+                    last_observation_at=latest,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error=cache_note,
+                    engine=engine,
+                )
+            else:
+                warnings.append(message)
+                record_source_result(
+                    source,
+                    success=False,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error=message,
+                    engine=engine,
+                )
         except Exception:  # noqa: BLE001 - isolate every external source
             message = f"{source}: errore inatteso"
             warnings.append(message)
@@ -362,7 +423,12 @@ def ingest_official_observations(
     stations = sorted(
         set(combined.get("station_id", pd.Series(dtype="string")).dropna().astype(str))
     )
-    return {"rows": rows, "stations": stations, "warnings": warnings}
+    return {
+        "rows": rows,
+        "stations": stations,
+        "warnings": warnings,
+        "cached_sources": sorted(cached_sources),
+    }
 
 
 def observation_sources_json(frame: pd.DataFrame) -> str:

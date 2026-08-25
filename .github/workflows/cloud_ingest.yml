@@ -85,6 +85,7 @@ jobs:
           ARSIAL_DASHBOARD_URL: https://siarl.arsial.it/bi/superset/dashboard/7
           ARSIAL_STATION_NAME: ROMA Lanciani-SEDE ARSIAL
           ARSIAL_TZ: UTC
+          ARSIAL_CACHE_HOURS: "72"
           CFR_OBSERVATIONS_ENABLED: "false"
           RECONCILIATION_HOURS: "168"
           SCHEDULE_EXPRESSION: ${{ github.event.schedule }}

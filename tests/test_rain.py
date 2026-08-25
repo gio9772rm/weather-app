@@ -103,8 +103,28 @@ def test_quality_check_marks_spikes_stuck_sensors_and_wind_inconsistency():
 
     assert "spike_temp_c" in checked.loc[6, "data_quality"]
     assert "stuck_humidity" in checked.loc[0, "data_quality"]
-    assert "stuck_pressure_hpa" in checked.loc[12, "data_quality"]
+    assert "stuck_pressure_hpa" not in checked.loc[12, "data_quality"]
     assert "gust_below_mean_wind" in checked.loc[12, "data_quality"]
+
+
+def test_quality_check_marks_pressure_only_after_six_flat_hours():
+    start = pd.Timestamp("2026-08-24T10:00:00Z")
+    frame = _frame(
+        [
+            {
+                "time": start + pd.Timedelta(minutes=offset * 5),
+                "temp_c": 20.0 + offset / 100.0,
+                "humidity": 55.0 + (offset % 3),
+                "pressure_hpa": 1012.0,
+            }
+            for offset in range(73)
+        ]
+    )
+
+    checked = _quality_check(frame)
+
+    assert "stuck_pressure_hpa" in checked.iloc[0]["data_quality"]
+    assert "stuck_pressure_hpa" in checked.iloc[-1]["data_quality"]
 
 
 def test_quality_check_preserves_existing_flags_when_filtering_range():
