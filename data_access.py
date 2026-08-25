@@ -260,9 +260,20 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
                 if str(row.get("source")) == "arsial_siarl"
                 else 24
             )
-            return "cached" if observed_age <= cache_hours * 60 else "offline"
+            if observed_age <= cache_hours * 60:
+                return "cached"
+            return (
+                "external_unavailable"
+                if str(row.get("source")) == "arsial_siarl"
+                else "offline"
+            )
         failures = int(row["consecutive_failures"])
         if failures >= 2:
+            # ARSIAL is an optional institutional cross-check. A portal outage
+            # must remain visible without looking like a failure of Ecowitt or
+            # of the forecast pipeline itself.
+            if str(row.get("source")) == "arsial_siarl":
+                return "external_unavailable"
             return "offline"
         if failures == 1:
             return "delayed"

@@ -85,6 +85,24 @@ def test_dashboard_labels_recent_cached_arsial_data_without_calling_it_live(
     assert health.loc["arsial_siarl", "consecutive_failures"] == 1
 
 
+def test_dashboard_marks_repeated_arsial_outage_as_optional_external_failure(
+    sqlite_engine,
+):
+    cfg = Settings.from_env()
+    for message in ("portale in timeout", "export non disponibile"):
+        assert record_source_result(
+            "arsial_siarl",
+            success=False,
+            error=message,
+            engine=sqlite_engine,
+        )
+
+    health = load_source_health(cfg).set_index("source")
+
+    assert health.loc["arsial_siarl", "display_status"] == "external_unavailable"
+    assert health.loc["arsial_siarl", "consecutive_failures"] == 2
+
+
 def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine):
     now = pd.Timestamp.now(tz="UTC").floor("5min")
     rows = []
