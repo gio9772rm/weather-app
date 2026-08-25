@@ -778,8 +778,8 @@ def render_color_legend(kind: str = "weather") -> None:
     elif kind == "status":
         items = (
             ("green", "Esecuzione regolare"),
-            ("yellow", "Da controllare / dato storico"),
-            ("red", "Errore o servizio offline"),
+            ("yellow", "Da controllare / archivio / fonte esterna"),
+            ("red", "Errore della pipeline o servizio primario offline"),
         )
         note = "La colorazione aiuta a individuare rapidamente anomalie nella pipeline."
     elif kind == "astronomy":
@@ -2645,6 +2645,7 @@ with tab_system:
             "online": "Operativa",
             "delayed": "In ritardo",
             "cached": "Archivio disponibile",
+            "external_unavailable": "Fonte esterna indisponibile",
             "offline": "Non disponibile",
             "waiting": "In attesa",
             "disabled": "Disattivata",
@@ -2661,6 +2662,7 @@ with tab_system:
                 "Componente": sources["label"],
                 "Categoria": sources["category"].map(category_labels),
                 "Stato": sources["display_status"].map(status_labels),
+                "Ultimo tentativo": sources["last_attempt_at"].map(_local_time),
                 "Ultimo successo": sources["last_success_at"].map(_local_time),
                 "Ultimo dato/copertura": sources["last_observation_at"].map(
                     _local_time
@@ -2683,6 +2685,18 @@ with tab_system:
             _style_status_table(source_table, dark_mode, "Stato"),
             height=470,
         )
+        arsial_state = sources.loc[
+            sources["source"].eq("arsial_siarl"), "display_status"
+        ]
+        if not arsial_state.empty and arsial_state.iloc[0] == "external_unavailable":
+            st.warning(
+                "Il portale pubblico ARSIAL/SIARL al momento non restituisce un "
+                "export leggibile. Il connettore ritenta automaticamente ogni "
+                f"{CFG.official_observation_refresh_minutes} minuti; Ecowitt, METAR "
+                "e previsioni continuano normalmente. Dopo il primo campione valido, "
+                f"l'archivio resta utilizzabile fino a {CFG.arsial_cache_hours} ore "
+                "durante eventuali nuovi disservizi."
+            )
 
     st.markdown("#### Qualità delle osservazioni")
     recent_quality = station[
