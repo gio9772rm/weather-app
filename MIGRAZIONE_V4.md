@@ -6,8 +6,8 @@ La V4 modifica soprattutto l'esperienza grafica. Non cancella né trasforma in m
 
 - V3 stabile: ramo `archive/meteo-v3-stable`;
 - commit V3: `527e3a47ebdeefdc480d5dd007246f3d5a3c125d`;
-- sviluppo V4: ramo `meteo-v4`;
-- produzione Render: ramo `main`, quindi resta V3 fino al merge finale.
+- produzione V4: ramo `main`;
+- V3 separata e immutata nel ramo archivio, pronta per una pull request di ripristino.
 
 ## Provare la V4 in locale su Windows 11
 

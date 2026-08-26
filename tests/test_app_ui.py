@@ -23,9 +23,13 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         ".hero-v4",
         ".current-grid",
         ".hourly-strip",
+        ".hourly-cloud",
+        ".hourly-strip::-webkit-scrollbar-thumb",
+        "--weather-icon-bg",
         ".insight-grid",
         ".activity-grid",
         ".air-grid",
+        "_use_local_subplot_keys",
     ):
         assert selector in source
 
@@ -54,6 +58,10 @@ def test_app_opens_local_dashboard_and_city_search(
     ]
     assert any("hero-v4" in item.value for item in app.markdown)
     assert any("Pianifica la giornata" in item.value for item in app.markdown)
+    assert any("Pollini" in item.value for item in app.markdown)
+    assert any("Luna e cielo" in item.value for item in app.markdown)
+    assert not any("Bicicletta" in item.value for item in app.markdown)
+    assert not any("Bucato" in item.value for item in app.markdown)
     assert any(
         "Apri questa scheda per caricare la previsione ambientale" in item.value
         for item in app.caption

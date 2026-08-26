@@ -73,8 +73,6 @@ def test_activity_outlooks_are_bounded_and_choose_local_times() -> None:
 
     assert [item.activity for item in activities] == [
         "Passeggiata",
-        "Bicicletta",
-        "Bucato",
         "Astronomia",
     ]
     assert all(0 <= item.score <= 100 for item in activities)

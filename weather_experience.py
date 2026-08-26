@@ -274,7 +274,6 @@ def activity_outlooks(
     probability = _series(upcoming, "precip_probability", 0).clip(0, 100)
     gust = _series(upcoming, "wind_gust_kmh", 0).clip(lower=0)
     wind = _series(upcoming, "wind_kmh", 0).clip(lower=0)
-    humidity = _series(upcoming, "humidity", 60).clip(0, 100)
     clouds = _series(upcoming, "clouds", 50).clip(0, 100)
     temp = _series(upcoming, "temp_c", 20)
     local_hours = upcoming["valid_time"].dt.tz_convert(timezone).dt.hour
@@ -284,16 +283,11 @@ def activity_outlooks(
     ).clip(0, 1)
 
     walk = 100 - probability * 0.48 - rain * 18 - np.maximum(gust - 28, 0) * 1.2 - (temp - 21).abs() * 1.5
-    cycling = 100 - probability * 0.55 - rain * 22 - np.maximum(wind - 18, 0) * 1.8 - np.maximum(gust - 30, 0) * 1.5 - (temp - 20).abs()
-    laundry = 92 - probability * 0.75 - rain * 30 - np.maximum(humidity - 65, 0) * 0.8 - clouds * 0.18 - np.maximum(wind - 35, 0) * 1.3
-    laundry = laundry.where(is_day >= 0.5, laundry - 35)
     astronomy = 100 - clouds * 0.72 - probability * 0.45 - rain * 25 - np.maximum(wind - 18, 0) * 1.2
     astronomy = astronomy.where(is_day < 0.5, astronomy - 55)
 
     return [
         _best_activity(upcoming, walk, timezone=timezone, icon="🚶", activity="Passeggiata", detail="considera pioggia, raffiche e comfort termico"),
-        _best_activity(upcoming, cycling, timezone=timezone, icon="🚲", activity="Bicicletta", detail="penalizza vento, raffiche e fondo bagnato"),
-        _best_activity(upcoming, laundry, timezone=timezone, icon="👕", activity="Bucato", detail="considera pioggia, umidità, nuvole e vento"),
         _best_activity(upcoming, astronomy, timezone=timezone, icon="🔭", activity="Astronomia", detail="considera notte, nuvole, pioggia e vento"),
     ]
 
