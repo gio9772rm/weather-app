@@ -812,6 +812,36 @@ def _latest_provider_runs(engine: Engine) -> pd.DataFrame:
     return frame.dropna(subset=["valid_time", "issued_at"])
 
 
+def _latest_ensemble(engine: Engine) -> pd.DataFrame:
+    """Load the newest probabilistic emission without treating members as providers."""
+    query = text(
+        "SELECT * FROM forecast_ensemble_runs WHERE issued_at = "
+        "(SELECT MAX(issued_at) FROM forecast_ensemble_runs) ORDER BY valid_time,variable"
+    )
+    with engine.connect() as connection:
+        frame = pd.read_sql(query, connection)
+    if frame.empty:
+        return frame
+    frame.columns = [column.lower() for column in frame.columns]
+    for column in ("issued_at", "valid_time", "fetched_at"):
+        frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    for column in (
+        "p10",
+        "p25",
+        "p50",
+        "p75",
+        "p90",
+        "mean",
+        "member_count",
+        "event_probability",
+    ):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    newest = frame["issued_at"].max()
+    if pd.isna(newest) or pd.Timestamp.now(tz="UTC") - newest > pd.Timedelta(hours=8):
+        return frame.iloc[0:0]
+    return frame.dropna(subset=["valid_time"])
+
+
 def _score_lookup(
     scores: pd.DataFrame,
     provider: str,
@@ -965,6 +995,7 @@ def build_blend(
     if forecasts.empty:
         return pd.DataFrame()
     scores = _latest_scores(engine)
+    ensemble = _latest_ensemble(engine) if cfg.ensemble_forecast_enabled else pd.DataFrame()
     reference_scores = _enabled_reference_frame(_latest_reference_scores(engine), cfg)
     interval_coverage = pd.to_timedelta(
         (forecasts["interval_hours"].fillna(1.0) - 1.0).clip(lower=0),
@@ -1084,6 +1115,41 @@ def build_blend(
         result[variable] = values
 
     result = _station_correction(result, engine)
+    ensemble_used = False
+    if not ensemble.empty:
+        temperature_ensemble = ensemble[ensemble["variable"] == "temp_c"].set_index(
+            "valid_time"
+        )
+        if not temperature_ensemble.empty:
+            probabilistic_spread = (
+                pd.to_numeric(temperature_ensemble["p90"], errors="coerce")
+                - pd.to_numeric(temperature_ensemble["p10"], errors="coerce")
+            ).clip(lower=0) / 2.0
+            aligned_spread = probabilistic_spread.reindex(timeline).to_numpy()
+            temp_spreads = np.fmax(
+                np.asarray(temp_spreads, dtype=float),
+                np.nan_to_num(aligned_spread, nan=0.0),
+            ).tolist()
+            ensemble_used = True
+        rain_ensemble = ensemble[ensemble["variable"] == "rain_mm"].set_index(
+            "valid_time"
+        )
+        if not rain_ensemble.empty:
+            ensemble_probability = pd.to_numeric(
+                rain_ensemble["event_probability"], errors="coerce"
+            ).reindex(timeline)
+            deterministic_probability = pd.to_numeric(
+                result["precip_probability"], errors="coerce"
+            )
+            has_ensemble = ensemble_probability.notna().to_numpy()
+            result.loc[has_ensemble, "precip_probability"] = (
+                deterministic_probability[has_ensemble].fillna(
+                    ensemble_probability[has_ensemble]
+                )
+                * 0.80
+                + ensemble_probability[has_ensemble] * 0.20
+            )
+            ensemble_used = True
     result["is_day"] = np.nan
     descriptions: list[str] = []
     codes: list[str] = []
@@ -1122,7 +1188,10 @@ def build_blend(
     result["provider_weights"] = [
         json.dumps(item, sort_keys=True) for item in weights_by_time
     ]
-    result["method"] = "inverse_mae+bias+ecowitt_primary+official_reference_v2"
+    result["method"] = (
+        "inverse_mae+bias+ecowitt_primary+official_reference_v2"
+        + ("+ensemble_guidance_v1" if ensemble_used else "")
+    )
     result["issued_at"] = issued_at
     result = enforce_physical_bounds(result)
     result = result.reset_index(names="valid_time")
@@ -1162,6 +1231,22 @@ def build_blend(
         records.append({key: _native(value) for key, value in row.items()})
     placeholders = ",".join(f":{column}" for column in db_columns)
     with engine.begin() as connection:
+        # Rebuilding the same hourly emission is idempotent.  A new emission is
+        # appended and becomes the basis for the user-facing change summary.
+        connection.execute(
+            text("DELETE FROM forecast_blend_history WHERE issued_at=:issued_at"),
+            {"issued_at": records[0]["issued_at"]},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO forecast_blend_history ("
+                + ",".join(db_columns)
+                + ") VALUES ("
+                + placeholders
+                + ")"
+            ),
+            records,
+        )
         connection.execute(text("DELETE FROM forecast_blend"))
         connection.execute(
             text(

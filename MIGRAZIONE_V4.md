@@ -1,6 +1,6 @@
 # Meteo V4 — prova, pubblicazione e ritorno alla V3
 
-La V4 modifica soprattutto l'esperienza grafica. Non cancella né trasforma in modo distruttivo i dati PostgreSQL e non cambia il Cron Job di acquisizione.
+La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA: la migrazione V5 è automatica e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
 
 ## Sicurezze già predisposte
 
@@ -14,8 +14,10 @@ La V4 modifica soprattutto l'esperienza grafica. Non cancella né trasforma in m
 ```bat
 cd /d C:\Meteo\weather-app-v3-upload
 git fetch origin
-git switch -c meteo-v4 origin/meteo-v4
+git switch main
+git pull --ff-only origin main
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe ingest_all.py --force-forecast
 .\.venv\Scripts\python.exe -m streamlit run app_streamlit.py
 ```
 
@@ -31,7 +33,7 @@ La pull request V4 deve essere unita a `main` soltanto dopo:
 4. creazione e verifica di un backup PostgreSQL;
 5. conferma esplicita della pubblicazione.
 
-Render distribuirà automaticamente il nuovo commit di `main`.
+Render distribuirà automaticamente il nuovo commit di `main`. Il primo ciclo orario popola ensemble, storico emissioni e aria EEA; se una fonte opzionale non risponde, Ecowitt e il blend deterministico continuano normalmente.
 
 ## Ripristino
 

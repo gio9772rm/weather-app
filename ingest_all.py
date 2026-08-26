@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings
 from db import ensure_schema, get_engine, get_meta, set_meta
+from ensemble_forecast import refresh_ensemble
 from forecast_blend import (
     archive_forecast,
     build_blend,
@@ -29,6 +30,7 @@ from forecast_blend import (
     score_forecasts_against_references,
 )
 from forecast_providers import fetch_all_forecasts
+from observed_air import refresh_observed_air
 from official_observations import ingest_official_observations
 from source_health import record_source_result
 from weather_ingest_ecowitt_cloud import run_station_ingest
@@ -199,6 +201,15 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         raise RuntimeError("Nessun provider di previsione ha restituito dati")
     archived = sum(archive_forecast(frame) for frame in frames)
     try:
+        ensemble, ensemble_warning = refresh_ensemble(cfg)
+    except Exception as exc:  # noqa: BLE001 - optional guidance cannot stop forecasts
+        ensemble = pd.DataFrame()
+        ensemble_warning = _safe_message(exc) or "errore interno isolato"
+    if ensemble_warning:
+        warnings.append(
+            f"Guida probabilistica rinviata: {_safe_message(ensemble_warning)}"
+        )
+    try:
         scores = score_forecasts(cfg)
         local_score_rows = len(scores)
     except Exception as exc:  # noqa: BLE001 - scoring must not discard a valid forecast
@@ -220,12 +231,23 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         "forecast_providers",
         json.dumps(sorted({str(frame.iloc[0]["provider"]) for frame in frames})),
     )
+    try:
+        observed_air, air_warning = refresh_observed_air(cfg)
+    except Exception as exc:  # noqa: BLE001 - optional environment feed is isolated
+        observed_air = pd.DataFrame()
+        air_warning = _safe_message(exc) or "errore interno isolato"
+    if air_warning:
+        warnings.append(
+            f"Aria ufficiale osservata rinviata: {_safe_message(air_warning)}"
+        )
     return {
         "archived": archived,
         "blend_rows": len(blend),
         "score_rows": local_score_rows + reference_score_rows,
         "local_score_rows": local_score_rows,
         "reference_score_rows": reference_score_rows,
+        "ensemble_rows": len(ensemble),
+        "observed_air_rows": len(observed_air),
         "warnings": warnings,
     }
 
@@ -235,9 +257,7 @@ def prune_derived_history() -> None:
     now = pd.Timestamp.now(tz="UTC")
     forecast_cutoff = (now - pd.Timedelta(days=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
     score_cutoff = (now - pd.Timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    observation_cutoff = (now - pd.Timedelta(days=180)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    observation_cutoff = (now - pd.Timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_cutoff = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with get_engine().begin() as connection:
         connection.execute(
@@ -245,17 +265,27 @@ def prune_derived_history() -> None:
             {"cutoff": forecast_cutoff},
         )
         connection.execute(
+            text("DELETE FROM forecast_blend_history WHERE issued_at < :cutoff"),
+            {"cutoff": forecast_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM forecast_ensemble_runs WHERE issued_at < :cutoff"),
+            {"cutoff": forecast_cutoff},
+        )
+        connection.execute(
             text("DELETE FROM forecast_scores WHERE evaluated_at < :cutoff"),
             {"cutoff": score_cutoff},
         )
         connection.execute(
-            text(
-                "DELETE FROM forecast_reference_scores WHERE evaluated_at < :cutoff"
-            ),
+            text("DELETE FROM forecast_reference_scores WHERE evaluated_at < :cutoff"),
             {"cutoff": score_cutoff},
         )
         connection.execute(
             text("DELETE FROM official_observations WHERE time < :cutoff"),
+            {"cutoff": observation_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM environment_observations WHERE time < :cutoff"),
             {"cutoff": observation_cutoff},
         )
         connection.execute(
@@ -410,7 +440,9 @@ def run_all(
             if official["rows"]:
                 now = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
                 set_meta("last_official_observation_success", now)
-                set_meta("official_observation_stations", json.dumps(official["stations"]))
+                set_meta(
+                    "official_observation_stations", json.dumps(official["stations"])
+                )
         except Exception as exc:  # noqa: BLE001 - official feeds never stop Ecowitt
             message = _safe_message(exc)
             result["official"] = {"rows": 0, "stations": [], "warnings": [message]}

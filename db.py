@@ -132,7 +132,7 @@ def ensure_schema() -> None:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO meta (k,v) VALUES ('schema_version','4') "
+                "INSERT INTO meta (k,v) VALUES ('schema_version','5') "
                 "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
             )
         )

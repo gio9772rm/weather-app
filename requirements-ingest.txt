@@ -1,6 +1,7 @@
 -c constraints.txt
 requests>=2.32,<3
 pandas>=2.2,<3
+pyarrow>=16,<26
 numpy>=1.26,<2.4
 SQLAlchemy>=2.0,<3
 python-dotenv>=1.0,<2
