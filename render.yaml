@@ -38,6 +38,16 @@ services:
       # sul Cron Job dopo aver ricevuto l'endpoint ufficiale.
       - key: CFR_OBSERVATIONS_ENABLED
         value: "false"
+      - key: ENSEMBLE_FORECAST_ENABLED
+        value: "true"
+      - key: RADAR_NOWCAST_ENABLED
+        value: "true"
+      - key: EEA_AIR_OBSERVATIONS_ENABLED
+        value: "true"
+      - key: EEA_AIR_COUNTRY
+        value: IT
+      - key: EEA_AIR_CITY
+        value: Roma
 
   # Acquisizione primaria: Render garantisce una sola esecuzione attiva per
   # questo Cron Job. Il lock PostgreSQL protegge anche da avvii GitHub/locali.
@@ -106,5 +116,15 @@ services:
       # la risposta ufficiale del Centro Funzionale Regionale.
       - key: CFR_OBSERVATIONS_ENABLED
         value: "false"
+      - key: ENSEMBLE_FORECAST_ENABLED
+        value: "true"
+      - key: ENSEMBLE_MODEL
+        value: icon_seamless
+      - key: EEA_AIR_OBSERVATIONS_ENABLED
+        value: "true"
+      - key: EEA_AIR_COUNTRY
+        value: IT
+      - key: EEA_AIR_CITY
+        value: Roma
       - key: LOG_LEVEL
         value: INFO

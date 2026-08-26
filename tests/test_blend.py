@@ -62,6 +62,10 @@ def test_blend_combines_two_providers_and_tracks_uncertainty(sqlite_engine):
     assert np.allclose(result["temp_uncertainty_c"], 2.0)
     assert result["temp_c"].between(20, 24).all()
     assert result["confidence"].between(20, 99).all()
+    with sqlite_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM forecast_blend_history")
+        ).scalar_one() == 3
 
     issued = pd.Timestamp.now(tz="UTC").floor("h")
     three_hour = provider_frame("openweather", [20, 21])

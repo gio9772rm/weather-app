@@ -2,7 +2,7 @@
 
 Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, verifica automatica degli errori e una nuova esperienza quotidiana più immediata.
 
-La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`; lo sviluppo V4 vive nel ramo `meteo-v4` finché non viene approvato e unito a `main`.
+La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la V4 viene pubblicata su `main` soltanto dopo test e CI verdi.
 
 ## Cosa offre
 
@@ -16,11 +16,17 @@ La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`; lo sviluppo V
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
 - nuova home **Oggi** con meteo dinamico, riepilogo in linguaggio naturale, timeline scorrevole, pioggia/vento/fiducia e tendenza settimanale;
-- indici orientativi per passeggiata, bicicletta, bucato e astronomia, con il momento meteorologicamente migliore e criteri espliciti;
+- indici orientativi per passeggiata, pollini, ricambio d'aria e astronomia, con il momento migliore e criteri espliciti;
 - qualità dell'aria europea, PM2.5, PM10, NO₂, ozono e pollini CAMS/Open‑Meteo, caricati soltanto quando si apre la scheda dedicata e senza nuove chiavi;
 - tema chiaro/scuro completo, tabelle semantiche a contrasto con intestazione fissa e passo selezionabile ogni 1, 3 o 6 ore;
 - stato di vista, tema, città, intervallo e scheda conservato nell'URL per riaprire o salvare direttamente la stessa schermata;
 - ricerca meteo mondiale per città o CAP, con condizioni attuali, previsione internet a 7 giorni, grafico, CSV e mappa senza mescolare la stazione locale;
+- città preferite riapribili dall'URL e confronto giornaliero fra Roma e la località scelta;
+- confronto automatico fra le ultime due emissioni con stato **stabile**, **in evoluzione** o **cambiata**;
+- guida probabilistica ICON-EPS con percentili P10–P90 e probabilità di pioggia calcolata sui membri, mantenuta separata dal peso dei provider;
+- nowcast puntuale RainViewer, quando sono pubblicati fotogrammi futuri, oltre alle mappe osservate Windy;
+- misure orarie ufficiali preliminari EEA/Italia per l'aria, confrontate con CAMS senza entrare nei dati Ecowitt;
+- origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - scheda **Sistema** con salute di ogni fonte, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
@@ -35,13 +41,16 @@ flowchart TD
   E["Ecowitt Cloud"] --> P["Cron Job Render · ogni 5 min"]
   OM["Open-Meteo"] --> P
   OW["OpenWeather"] --> P
+  ENS["ICON-EPS · ensemble"] --> P
   METAR["METAR ufficiali · LIRF/LIRA"] --> P
   ARSIAL["ARSIAL/SIARL · Roma-Lanciani"] --> P
+  EEA["EEA UTD · aria osservata"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
   DB --> BK["Backup locale verificato / PITR Render"]
   DB --> UI["Dashboard Streamlit su Render"]
   AIR["Open-Meteo Air Quality · CAMS"] --> UI
+  RV["RainViewer · nowcast"] --> UI
   DB --> Q["Verifica e calibrazione locale"]
   Q --> DB
 ```
@@ -64,6 +73,8 @@ La home **Oggi** privilegia ciò che serve nella vita quotidiana, lasciando inva
 - mantiene **Panoramica**, **7 giorni**, **Stazione**, **Astronomia**, **Radar** e **Sistema** come viste di approfondimento.
 
 La qualità dell'aria è un dato modellistico a scala territoriale, non una misura Ecowitt. L'indice segue le fasce AQI europee; i pollini sono disponibili in Europa durante la stagione. Un errore della fonte ambientale mostra un messaggio circoscritto e non interferisce con stazione, previsioni o Cron Job.
+
+La scheda Aria affianca a CAMS le misure **EEA UTD** trasmesse dall'Italia. Sono osservazioni orarie reali ma preliminari, possono arrivare in ritardo e restano nella tabella `environment_observations`: non vengono mai presentate come misure della stazione. Il nowcast RainViewer è ugualmente facoltativo; se il provider non pubblica fotogrammi futuri, la dashboard lo dichiara e continua a mostrare il radar osservato.
 
 ## Avvio rapido su Windows 11
 
@@ -133,6 +144,15 @@ Backfill Ecowitt di 7 giorni:
 | `CFR_OBSERVATIONS_URL` | futura | endpoint HTTPS ufficiale CSV/JSON fornito dal CFR |
 | `CFR_API_TOKEN` | futura | token opzionale, da salvare soltanto come secret |
 | `CFR_STATION_IDS` | futura | codici stazione ammessi, separati da virgola |
+| `ENSEMBLE_FORECAST_ENABLED` | no | abilita la guida ICON-EPS, default `true` |
+| `ENSEMBLE_MODEL` | no | famiglia ensemble Open-Meteo, default `icon_seamless` |
+| `RADAR_NOWCAST_ENABLED` | no | abilita la stima puntuale RainViewer in pagina, default `true` |
+| `EEA_AIR_OBSERVATIONS_ENABLED` | no | archivia le misure aria UTD ufficiali, default `true` |
+| `EEA_AIR_COUNTRY`, `EEA_AIR_CITY` | no | filtro EEA, default `IT` e `Roma` |
+| `FEATURE_CLIMATOLOGY_ENABLED` | futura | hook V4.2, default `false` |
+| `FEATURE_MEASURED_POLLEN_ENABLED` | futura | hook POLLnet/misure, default `false` |
+| `FEATURE_OFFICIAL_ALERTS_ENABLED` | futura | hook bollettini in pagina, default `false`; non invia notifiche |
+| `FEATURE_EXPERIENCE_MODE_ENABLED` | futura | hook vista semplice/esperta, default `false` |
 
 ## Qualità della previsione
 
@@ -145,7 +165,8 @@ Il risultato combina sei livelli:
 3. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
 4. controllo secondario LIRF/LIRA e ARSIAL Roma-Lanciani: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi i dati ufficiali possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
 5. validazione sulla coda temporale più recente, non confusa con il riepilogo storico, e confronto con la previsione banale “resta come l'ultima misura”;
-6. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
+6. guida ICON-EPS: la fascia P10–P90 amplia l'incertezza e il 20% della probabilità di pioggia può provenire dalla quota di membri piovosi, senza contare i membri come provider;
+7. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
 
 La tabella di accuratezza distingue MAE storico e MAE di validazione e mostra lo **skill rispetto alla persistenza**: un valore positivo indica che il modello migliora il semplice mantenimento dell'ultima osservazione. Per la pioggia, il grafico di affidabilità confronta probabilità dichiarata e frequenza realmente osservata per fasce del 10%.
 
@@ -230,7 +251,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, home e indici V4, qualità dell'aria/pollini, ricerca città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, isolamento delle osservazioni ufficiali, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, apprendimento e correlazione fra siti, priorità Ecowitt, validazione temporale, affidabilità pioggia, backup verificato, incrementi di pioggia, fusione multi‑provider e punteggio astronomico.
+I test coprono avvio dell'interfaccia, home e indici V4, qualità dell'aria/pollini, ensemble, confronto emissioni, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, affidabilità pioggia, backup verificato e punteggio astronomico.
 
 ## Dipendenze riproducibili
 

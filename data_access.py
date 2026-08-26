@@ -134,6 +134,87 @@ def load_forecast(hours: int = 192) -> pd.DataFrame:
     )
 
 
+def load_forecast_history(hours: int = 48, emissions: int = 2) -> pd.DataFrame:
+    """Load matching future hours for the newest archived blend emissions."""
+    emissions = max(2, min(int(emissions), 12))
+    start = pd.Timestamp.now(tz="UTC").floor("h").strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=hours)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    frame = _read(
+        "SELECT * FROM forecast_blend_history WHERE issued_at IN ("
+        " SELECT DISTINCT issued_at FROM forecast_blend_history "
+        f" ORDER BY issued_at DESC LIMIT {emissions}"
+        ") AND valid_time BETWEEN :start AND :end ORDER BY issued_at,valid_time",
+        {"start": start, "end": end},
+    )
+    if frame.empty:
+        return frame
+    for column in ("issued_at", "valid_time"):
+        frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    for column in (
+        "temp_c",
+        "humidity",
+        "pressure_hpa",
+        "wind_kmh",
+        "wind_gust_kmh",
+        "rain_mm",
+        "precip_probability",
+        "confidence",
+    ):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame.dropna(subset=["issued_at", "valid_time"])
+
+
+def load_ensemble(hours: int = 192) -> pd.DataFrame:
+    """Return long-form quantiles from the latest probabilistic emission."""
+    start = pd.Timestamp.now(tz="UTC").floor("h").strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=hours)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    frame = _read(
+        "SELECT * FROM forecast_ensemble_runs WHERE issued_at = "
+        "(SELECT MAX(issued_at) FROM forecast_ensemble_runs) "
+        "AND valid_time BETWEEN :start AND :end ORDER BY valid_time,variable",
+        {"start": start, "end": end},
+    )
+    if frame.empty:
+        return frame
+    for column in ("issued_at", "valid_time", "fetched_at"):
+        frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    for column in (
+        "p10",
+        "p25",
+        "p50",
+        "p75",
+        "p90",
+        "mean",
+        "member_count",
+        "event_probability",
+    ):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    return frame.dropna(subset=["valid_time", "variable"])
+
+
+def load_observed_air() -> pd.DataFrame:
+    """Load the latest real EEA/Italian measurement for every pollutant."""
+    frame = _read(
+        "SELECT e.* FROM environment_observations e JOIN ("
+        " SELECT source,metric,MAX(time) AS time FROM environment_observations "
+        " WHERE source='eea_utd_air' GROUP BY source,metric"
+        ") latest ON e.source=latest.source AND e.metric=latest.metric "
+        "AND e.time=latest.time ORDER BY e.metric"
+    )
+    if frame.empty:
+        return frame
+    for column in ("time", "fetched_at"):
+        frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    for column in ("value", "latitude", "longitude", "distance_km", "is_modelled"):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    return frame.dropna(subset=["time", "metric", "value"])
+
+
 def load_provider_scores() -> pd.DataFrame:
     frame = _read(
         "SELECT * FROM forecast_scores WHERE evaluated_at = "

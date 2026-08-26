@@ -1,5 +1,18 @@
 # Changelog Meteo V4
 
+## V4.1 · esperienza, probabilità e dati ambientali osservati
+
+- confronto delle due ultime emissioni con indicatore di stabilità e dettaglio delle variazioni;
+- archivio additivo `forecast_blend_history` e guida ICON-EPS P10/P50/P90 in `forecast_ensemble_runs`;
+- probabilità ensemble usata con peso prudente, senza trasformare i membri in provider indipendenti;
+- nowcast RainViewer puntuale con gestione esplicita dell'assenza di fotogrammi futuri;
+- aria osservata EEA UTD separata da Ecowitt e affiancata al modello CAMS;
+- finestra orientativa per arieggiare casa, preferiti e confronto Roma–città;
+- provenienza/età/qualità dei dati e riepilogo quotidiano PNG;
+- palette semantica Okabe–Ito, testi e tratteggi per non affidare il significato al solo colore;
+- predisposti, ma disattivati, climatologia, pollini misurati, bollettini in pagina e modalità semplice/esperta;
+- schema dati V5, migrazione solo additiva e V3 invariata nel ramo di archivio.
+
 ## Home quotidiana
 
 - nuova scheda predefinita **Oggi**, costruita sopra la pipeline V3 senza modificare l'acquisizione Ecowitt;
@@ -31,7 +44,7 @@
 
 ## Compatibilità e rollback
 
-- nessuna migrazione distruttiva e nessuna nuova tabella necessaria;
+- nessuna migrazione distruttiva; le nuove tabelle V5 vengono create automaticamente;
 - Cron Job, riconciliazione, database e fonti ufficiali restano invariati;
 - V3 conservata al commit `527e3a47ebdeefdc480d5dd007246f3d5a3c125d` nel ramo `archive/meteo-v3-stable`;
 - V4 in produzione su `main`; ogni correzione successiva passa da CI e pull request.

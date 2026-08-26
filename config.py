@@ -107,6 +107,16 @@ class Settings:
     cfr_observations_url: str = ""
     cfr_api_token: str = ""
     cfr_station_ids: tuple[str, ...] = ()
+    ensemble_forecast_enabled: bool = True
+    ensemble_model: str = "icon_seamless"
+    radar_nowcast_enabled: bool = True
+    eea_air_observations_enabled: bool = True
+    eea_air_country: str = "IT"
+    eea_air_city: str = "Roma"
+    feature_climatology_enabled: bool = False
+    feature_measured_pollen_enabled: bool = False
+    feature_official_alerts_enabled: bool = False
+    feature_experience_mode_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -217,6 +227,35 @@ class Settings:
             cfr_observations_url=_first_env("CFR_OBSERVATIONS_URL"),
             cfr_api_token=_first_env("CFR_API_TOKEN"),
             cfr_station_ids=_station_ids(_first_env("CFR_STATION_IDS")),
+            ensemble_forecast_enabled=_as_bool(
+                _first_env("ENSEMBLE_FORECAST_ENABLED", default="true"), True
+            ),
+            ensemble_model=_first_env(
+                "ENSEMBLE_MODEL", default="icon_seamless"
+            ),
+            radar_nowcast_enabled=_as_bool(
+                _first_env("RADAR_NOWCAST_ENABLED", default="true"), True
+            ),
+            eea_air_observations_enabled=_as_bool(
+                _first_env("EEA_AIR_OBSERVATIONS_ENABLED", default="true"), True
+            ),
+            eea_air_country=_first_env("EEA_AIR_COUNTRY", default="IT").upper(),
+            eea_air_city=_first_env("EEA_AIR_CITY", default="Roma"),
+            feature_climatology_enabled=_as_bool(
+                _first_env("FEATURE_CLIMATOLOGY_ENABLED", default="false"), False
+            ),
+            feature_measured_pollen_enabled=_as_bool(
+                _first_env("FEATURE_MEASURED_POLLEN_ENABLED", default="false"),
+                False,
+            ),
+            feature_official_alerts_enabled=_as_bool(
+                _first_env("FEATURE_OFFICIAL_ALERTS_ENABLED", default="false"),
+                False,
+            ),
+            feature_experience_mode_enabled=_as_bool(
+                _first_env("FEATURE_EXPERIENCE_MODE_ENABLED", default="false"),
+                False,
+            ),
         )
 
     @property
