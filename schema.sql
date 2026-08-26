@@ -201,6 +201,119 @@ CREATE TABLE IF NOT EXISTS forecast_blend (
   method TEXT
 );
 
+-- Every emitted blend is retained before the current cache is replaced.  This
+-- lets the UI explain how the forecast changed between two consecutive runs
+-- without changing the fast, one-row-per-hour forecast_blend table.
+CREATE TABLE IF NOT EXISTS forecast_blend_history (
+  issued_at TEXT NOT NULL,
+  valid_time TEXT NOT NULL,
+  temp_c REAL,
+  feels_like_c REAL,
+  humidity REAL,
+  dewpoint_c REAL,
+  pressure_hpa REAL,
+  wind_kmh REAL,
+  wind_gust_kmh REAL,
+  wind_dir REAL,
+  rain_mm REAL,
+  snow_mm REAL,
+  precip_probability REAL,
+  clouds REAL,
+  cloud_low REAL,
+  cloud_mid REAL,
+  cloud_high REAL,
+  visibility_m REAL,
+  weather_code TEXT,
+  description TEXT,
+  is_day INTEGER,
+  temp_uncertainty_c REAL,
+  confidence REAL,
+  provider_count INTEGER,
+  provider_weights TEXT,
+  method TEXT,
+  PRIMARY KEY (issued_at, valid_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_blend_history_valid
+  ON forecast_blend_history (valid_time, issued_at);
+
+-- Probabilistic guidance stays separate from deterministic providers so forty
+-- perturbed members cannot accidentally outweigh Ecowitt-calibrated forecasts.
+CREATE TABLE IF NOT EXISTS forecast_ensemble_runs (
+  source TEXT NOT NULL,
+  model TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  valid_time TEXT NOT NULL,
+  variable TEXT NOT NULL,
+  p10 REAL,
+  p25 REAL,
+  p50 REAL,
+  p75 REAL,
+  p90 REAL,
+  mean REAL,
+  member_count INTEGER NOT NULL,
+  event_probability REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (source, model, issued_at, valid_time, variable)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_ensemble_latest
+  ON forecast_ensemble_runs (issued_at, valid_time, variable);
+
+-- Long-form external environmental observations.  EEA air measurements use it
+-- now. Measured pollen and other official environmental feeds can be added later
+-- without mixing any value into station_raw (Ecowitt remains the sole primary).
+CREATE TABLE IF NOT EXISTS environment_observations (
+  source TEXT NOT NULL,
+  station_id TEXT NOT NULL,
+  time TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL,
+  unit TEXT,
+  station_name TEXT,
+  latitude REAL,
+  longitude REAL,
+  distance_km REAL,
+  quality_flag TEXT,
+  is_modelled INTEGER NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (source, station_id, time, metric)
+);
+
+CREATE INDEX IF NOT EXISTS idx_environment_observations_metric_time
+  ON environment_observations (metric, time);
+
+-- Reserved additive stores for the next V4 increments (climatology and official
+-- alert banners).  They are dormant until their feature flags are enabled.
+CREATE TABLE IF NOT EXISTS climate_normals (
+  source TEXT NOT NULL,
+  month INTEGER NOT NULL,
+  day INTEGER NOT NULL,
+  hour INTEGER NOT NULL,
+  metric TEXT NOT NULL,
+  p10 REAL,
+  p50 REAL,
+  p90 REAL,
+  sample_years INTEGER,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (source, month, day, hour, metric)
+);
+
+CREATE TABLE IF NOT EXISTS official_alerts (
+  source TEXT NOT NULL,
+  alert_id TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  starts_at TEXT,
+  ends_at TEXT,
+  severity TEXT,
+  title TEXT,
+  description TEXT,
+  area TEXT,
+  source_url TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (source, alert_id, issued_at)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_log (
   id TEXT PRIMARY KEY,
   started_at TEXT NOT NULL,

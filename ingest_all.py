@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings
 from db import ensure_schema, get_engine, get_meta, set_meta
+from ensemble_forecast import refresh_ensemble
 from forecast_blend import (
     archive_forecast,
     build_blend,
@@ -29,6 +30,7 @@ from forecast_blend import (
     score_forecasts_against_references,
 )
 from forecast_providers import fetch_all_forecasts
+from observed_air import refresh_observed_air
 from official_observations import ingest_official_observations
 from source_health import record_source_result
 from weather_ingest_ecowitt_cloud import run_station_ingest
@@ -193,11 +195,23 @@ def official_observations_are_due(cfg: Settings, force: bool = False) -> bool:
     )
 
 
+def observed_air_is_due(cfg: Settings, force: bool = False) -> bool:
+    if not cfg.eea_air_observations_enabled:
+        return False
+    if force:
+        return True
+    last = pd.to_datetime(get_meta("last_observed_air_success"), utc=True, errors="coerce")
+    return pd.isna(last) or pd.Timestamp.now(tz="UTC") - last >= pd.Timedelta(hours=1)
+
+
 def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     frames, warnings = fetch_all_forecasts(cfg)
     if not frames:
         raise RuntimeError("Nessun provider di previsione ha restituito dati")
     archived = sum(archive_forecast(frame) for frame in frames)
+    ensemble, ensemble_warning = refresh_ensemble(cfg)
+    if ensemble_warning:
+        warnings.append(ensemble_warning)
     try:
         scores = score_forecasts(cfg)
         local_score_rows = len(scores)
@@ -227,6 +241,7 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         "local_score_rows": local_score_rows,
         "reference_score_rows": reference_score_rows,
         "warnings": warnings,
+        "ensemble_rows": len(ensemble),
     }
 
 
@@ -261,6 +276,18 @@ def prune_derived_history() -> None:
         connection.execute(
             text("DELETE FROM ingest_log WHERE started_at < :cutoff"),
             {"cutoff": log_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM forecast_blend_history WHERE issued_at < :cutoff"),
+            {"cutoff": forecast_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM forecast_ensemble_runs WHERE issued_at < :cutoff"),
+            {"cutoff": forecast_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM environment_observations WHERE time < :cutoff"),
+            {"cutoff": observation_cutoff},
         )
 
 
@@ -459,6 +486,20 @@ def run_all(
             "skipped": True,
             "reason": "aggiornamento non ancora dovuto",
         }
+
+    # Official air measurements are deliberately independent from both the
+    # station and the forecast. A temporary EEA failure is visible in Sistema
+    # but can never turn a successful weather pipeline into a failed one.
+    if observed_air_is_due(cfg, force_forecast):
+        air_frame, air_warning = refresh_observed_air(cfg)
+        if not air_frame.empty:
+            set_meta(
+                "last_observed_air_success",
+                pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        result["observed_air"] = {"rows": len(air_frame), "warning": air_warning}
+    else:
+        result["observed_air"] = {"skipped": True, "reason": "aggiornamento non ancora dovuto"}
 
     set_meta(
         "last_pipeline_run", pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")

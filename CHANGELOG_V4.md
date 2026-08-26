@@ -1,5 +1,16 @@
 # Changelog Meteo V4
 
+## V4.1 · utilità e integrazione dati
+
+- nuova scheda **Cosa è cambiato**, con confronto fra le ultime due emissioni e indicatore stabile/in evoluzione;
+- previsione Open-Meteo Ensemble a membri multipli, mostrata come fascia P10–P90 e usata con peso prudente nella fiducia e nella probabilità di pioggia;
+- nowcast RainViewer vicino alla stazione, caricato solo aprendo **Oggi** e sempre indicato come orientativo;
+- misure preliminari EEA della qualità dell'aria, con stazione e distanza, separate da CAMS e da Ecowitt;
+- pannello apribile con origine, età e ruolo delle sorgenti;
+- riepilogo giornaliero scaricabile come immagine PNG;
+- archivi additivi e registro funzioni già predisposti per climatologia, pollini misurati, allerte ufficiali e modalità semplice/esperta;
+- ogni fonte esterna fallisce in modo indipendente e non interrompe stazione o previsione principale.
+
 ## Home quotidiana
 
 - nuova scheda predefinita **Oggi**, costruita sopra la pipeline V3 senza modificare l'acquisizione Ecowitt;

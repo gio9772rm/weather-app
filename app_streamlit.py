@@ -38,8 +38,11 @@ from data_access import (
     daily_forecast,
     data_completeness_snapshot,
     health_snapshot,
+    load_ensemble,
     load_forecast,
+    load_forecast_history,
     load_forecast_reliability,
+    load_observed_air,
     load_official_station_status,
     load_provider_scores,
     load_recent_logs,
@@ -47,11 +50,14 @@ from data_access import (
     load_source_health,
     load_station,
 )
+from forecast_change import ForecastChangeSummary, summarize_forecast_change
 from light_pollution import (
     LightPollutionError,
     LightPollutionEstimate,
     fetch_light_pollution,
 )
+from radar_nowcast import RadarNowcast, RadarNowcastError, fetch_radar_nowcast
+from share_card import ShareCardSummary, render_share_card
 from weather_display import compass_direction, forecast_interval, weather_cell_style
 from weather_experience import (
     activity_outlooks,
@@ -351,6 +357,26 @@ def station_data(hours: int) -> pd.DataFrame:
 @st.cache_data(ttl=180, show_spinner=False)
 def forecast_data() -> pd.DataFrame:
     return load_forecast()
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def forecast_history_data() -> pd.DataFrame:
+    return load_forecast_history()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def ensemble_data() -> pd.DataFrame:
+    return load_ensemble()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def observed_air_data() -> pd.DataFrame:
+    return load_observed_air()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def radar_nowcast_data(latitude: float, longitude: float) -> RadarNowcast:
+    return fetch_radar_nowcast(latitude, longitude)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1562,11 +1588,139 @@ def render_air_quality_dashboard(
     )
 
 
+def render_forecast_change(summary: ForecastChangeSummary) -> None:
+    """Put forecast stability where it is useful, without adding another tab."""
+    icon = {"stable": "✓", "evolving": "↗", "changed": "!"}.get(summary.status, "…")
+    score = "—" if summary.score is None else f"{summary.score:.0f}/100"
+    st.markdown(
+        '<div class="v4-section-head"><h3>Cosa è cambiato</h3>'
+        '<span>Confronto automatico con l’aggiornamento precedente</span></div>',
+        unsafe_allow_html=True,
+    )
+    render_current_grid(
+        [(icon, summary.headline, score, summary.detail)]
+    )
+    if summary.latest_issued_at is not None:
+        previous = (
+            "—" if summary.previous_issued_at is None
+            else _local_time(summary.previous_issued_at, "%d/%m %H:%M")
+        )
+        st.caption(
+            f"Emissione attuale {_local_time(summary.latest_issued_at, '%d/%m %H:%M')} · "
+            f"precedente {previous}. Più alto è il punteggio, più stabile è la previsione."
+        )
+
+
+def render_ensemble_guidance(frame: pd.DataFrame, dark_mode: bool) -> None:
+    st.markdown(
+        '<div class="v4-section-head"><h3>Intervallo probabilistico</h3>'
+        '<span>Non un solo numero: fascia plausibile dei membri ensemble</span></div>',
+        unsafe_allow_html=True,
+    )
+    temperature = frame[frame.get("variable", pd.Series(dtype=str)) == "temp_c"].copy()
+    if temperature.empty:
+        st.info("La previsione probabilistica comparirà dopo il prossimo aggiornamento del Cron Job.")
+        return
+    figure = go.Figure()
+    figure.add_trace(go.Scatter(
+        x=temperature["valid_time"], y=temperature["p90"], name="Limite alto (P90)",
+        line={"color": "rgba(37,99,235,.30)", "width": 1}, hovertemplate="P90 %{y:.1f} °C<extra></extra>",
+    ))
+    figure.add_trace(go.Scatter(
+        x=temperature["valid_time"], y=temperature["p10"], name="Fascia probabile P10–P90",
+        line={"color": "rgba(37,99,235,.30)", "width": 1}, fill="tonexty",
+        fillcolor="rgba(37,99,235,.15)", hovertemplate="P10 %{y:.1f} °C<extra></extra>",
+    ))
+    figure.add_trace(go.Scatter(
+        x=temperature["valid_time"], y=temperature["p50"], name="Mediana (P50)",
+        line={"color": "#2563eb", "width": 3}, hovertemplate="Mediana %{y:.1f} °C<extra></extra>",
+    ))
+    figure.update_layout(height=350, hovermode="x unified", margin={"l": 15, "r": 15, "t": 20, "b": 10})
+    figure.update_yaxes(title_text="Temperatura °C")
+    st.plotly_chart(_style_plotly(figure, dark_mode), width="stretch", theme=None)
+    members = int(pd.to_numeric(temperature["member_count"], errors="coerce").max())
+    st.caption(
+        f"Elaborazione Open-Meteo Ensemble · {members} membri · fascia P10–P90. "
+        "La linea centrale è la mediana; l’ampiezza della fascia mostra l’incertezza."
+    )
+
+
+def render_nowcast_card(nowcast: RadarNowcast | None, error: str | None = None) -> None:
+    st.markdown(
+        '<div class="v4-section-head"><h3>Pioggia nell’immediato</h3>'
+        '<span>Nowcast radar vicino alla stazione</span></div>',
+        unsafe_allow_html=True,
+    )
+    if nowcast is None:
+        st.info(error or "Nowcast temporaneamente non disponibile; la previsione principale continua normalmente.")
+        return
+    icon = "🌧️" if nowcast.status == "rain" else "☂️"
+    probability = "—" if nowcast.echo_probability is None else f"{nowcast.echo_probability:.0f}%"
+    render_current_grid([(icon, "Eco radar", probability, nowcast.message)])
+    st.caption(
+        f"Fonte {nowcast.attribution} · {nowcast.frame_count} fotogrammi · "
+        f"stima {nowcast.confidence}. Non è un’allerta ufficiale."
+    )
+
+
+def render_observed_air(frame: pd.DataFrame) -> None:
+    st.subheader("Misure reali più vicine")
+    if frame.empty:
+        st.info("Le misure EEA compariranno dopo il primo aggiornamento disponibile.")
+        return
+    labels = {"PM2.5": "PM2.5", "PM10": "PM10", "O3": "Ozono", "NO2": "NO₂"}
+    cards = []
+    for _, row in frame.head(6).iterrows():
+        metric = labels.get(str(row.get("metric")), str(row.get("metric")))
+        value = _number(row.get("value"), 1, f" {row.get('unit') or ''}")
+        distance = _number(row.get("distance_km"), 1, " km")
+        cards.append(("📍", metric, value, f"{row.get('station_name') or 'Stazione EEA'} · {distance}"))
+    render_current_grid(cards)
+    newest = pd.to_datetime(frame["time"], utc=True, errors="coerce").max()
+    st.caption(
+        f"Osservazioni preliminari EEA/Italia · ultimo dato {_local_time(newest, '%d/%m %H:%M')} · "
+        "separate dalla previsione CAMS e dalla stazione Ecowitt."
+    )
+
+
+def render_share_download(forecast: pd.DataFrame, air: AirQualityForecast | None) -> None:
+    if forecast.empty:
+        return
+    briefing = build_daily_briefing(forecast)
+    daily = daily_forecast(forecast, CFG.local_timezone)
+    today = daily.iloc[0] if not daily.empty else pd.Series(dtype="object")
+    current = nearest_forecast(forecast)
+    current = current if current is not None else pd.Series(dtype="object")
+    aqi = "—"
+    if air is not None:
+        aqi = f"AQI {_number(air.current.get('european_aqi'), 0)}"
+    card = render_share_card(ShareCardSummary(
+        location=CFG.location_name,
+        date_label=pd.Timestamp.now(tz=CFG.local_timezone).strftime("%d/%m/%Y"),
+        condition=str(current.get("description") or "Condizioni locali"),
+        temperature=f"{_number(today.get('temp_min'), 0, '°')} / {_number(today.get('temp_max'), 0, '°')}",
+        rain=f"{_number(today.get('rain_mm'), 1, ' mm')}",
+        wind=f"max {_number(today.get('wind_max'), 0, ' km/h')}",
+        confidence=f"{_number(briefing.confidence, 0, '%')}",
+        briefing=briefing.detail,
+        air=aqi,
+    ))
+    st.download_button("Scarica riepilogo come immagine", card, "meteo-oggi.png", "image/png")
+
+
 def render_today_dashboard(
     forecast: pd.DataFrame,
     *,
     air: AirQualityForecast | None = None,
+    change: ForecastChangeSummary | None = None,
+    ensemble: pd.DataFrame | None = None,
+    nowcast: RadarNowcast | None = None,
+    nowcast_error: str | None = None,
+    dark_mode: bool = False,
 ) -> None:
+    if change is not None:
+        render_forecast_change(change)
+    render_nowcast_card(nowcast, nowcast_error)
     st.markdown(
         '<div class="v4-section-head"><h3>Le prossime ore</h3><span>Scorri orizzontalmente · dati calibrati sulla stazione</span></div>',
         unsafe_allow_html=True,
@@ -1582,11 +1736,15 @@ def render_today_dashboard(
         unsafe_allow_html=True,
     )
     render_v4_activities(forecast, air=air, settings=CFG)
+    render_ensemble_guidance(
+        ensemble if ensemble is not None else pd.DataFrame(), dark_mode
+    )
     st.markdown(
         '<div class="v4-section-head"><h3>Tendenza a 7 giorni</h3><span>Minime, massime, pioggia, vento e fiducia</span></div>',
         unsafe_allow_html=True,
     )
     render_daily_cards(daily_forecast(forecast, CFG.local_timezone))
+    render_share_download(forecast, air)
 
 
 def _city_future_hours(city: CityForecast, hours: int = 72) -> pd.DataFrame:
@@ -2638,6 +2796,10 @@ requested_tab = next(
 
 with tab_today:
     today_air_quality = None
+    today_nowcast = None
+    today_nowcast_error = None
+    today_change = summarize_forecast_change(forecast_history_data())
+    today_ensemble = ensemble_data()
     if st.session_state.get("main_tab") == "Oggi" and not forecast.empty:
         try:
             today_air_quality = air_quality_data(
@@ -2645,7 +2807,27 @@ with tab_today:
             )
         except AirQualityError:
             pass
-    render_today_dashboard(forecast, air=today_air_quality)
+        if CFG.radar_nowcast_enabled:
+            try:
+                today_nowcast = radar_nowcast_data(CFG.latitude, CFG.longitude)
+            except RadarNowcastError as exc:
+                today_nowcast_error = str(exc)
+    render_today_dashboard(
+        forecast,
+        air=today_air_quality,
+        change=today_change,
+        ensemble=today_ensemble,
+        nowcast=today_nowcast,
+        nowcast_error=today_nowcast_error,
+        dark_mode=dark_mode,
+    )
+    with st.expander("Sorgenti, età e qualità dei dati"):
+        st.markdown(
+            "**Adesso:** Ecowitt quando disponibile. **Previsione:** combinazione calibrata "
+            "Open-Meteo/OpenWeather. **Incertezza:** Open-Meteo Ensemble. "
+            "**Aria:** CAMS modellistica ed EEA osservata, sempre separate. "
+            "**Pioggia immediata:** RainViewer, indicazione orientativa."
+        )
 
 with tab_overview:
     st.markdown(
@@ -3003,6 +3185,7 @@ with tab_air:
                 dark_mode,
                 location_label=CFG.location_name,
             )
+        render_observed_air(observed_air_data())
 
 with tab_station:
     st.markdown(
