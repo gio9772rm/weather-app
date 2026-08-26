@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import time
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -91,6 +92,8 @@ st.markdown(
   --ink:#10243d; --muted:#64748b; --subtle:#475569; --line:rgba(148,163,184,.28);
   --blue:#2563eb; --card-bg:linear-gradient(155deg,rgba(255,255,255,.98),rgba(241,245,249,.9));
   --control-bg:#ffffff; --shadow:0 7px 22px rgba(15,23,42,.055);
+  --scrollbar-track:#dbe7f1; --scrollbar-thumb:#267fc0; --scrollbar-hover:#155f96;
+  --weather-icon-bg:linear-gradient(145deg,#dbeafe,#bfdbfe); --weather-icon-ring:rgba(37,99,235,.25);
 }
 html,body { color-scheme:light !important; }
 html, body, [class*="css"] { font-family:'DM Sans',system-ui,sans-serif; }
@@ -180,7 +183,11 @@ section[data-testid="stSidebar"] { background:var(--sidebar-bg) !important; bord
 .day-card { border:1px solid var(--line); border-radius:17px; padding:.92rem; background:var(--card-bg);
   box-shadow:var(--shadow); min-height:205px; }
 .day-name { color:var(--blue); font-size:.76rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; }
-.day-icon { font-size:1.75rem; margin:.32rem 0; }.day-temp { font-size:1.18rem; font-weight:700; color:var(--ink); }
+.day-icon { display:flex; align-items:center; justify-content:center; width:2.65rem; height:2.65rem;
+  font-size:1.75rem; margin:.32rem 0; border-radius:50%; background:var(--weather-icon-bg);
+  border:1px solid var(--weather-icon-ring); filter:saturate(1.12) contrast(1.08);
+  text-shadow:0 1px 2px rgba(15,23,42,.22); }
+.day-temp { font-size:1.18rem; font-weight:700; color:var(--ink); }
 .day-desc { color:var(--muted); font-size:.76rem; min-height:2.1rem; line-height:1.3; }
 .day-meta { margin-top:.55rem; color:var(--subtle); font-size:.72rem; line-height:1.55; }
 .hour-grid { display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:.75rem; margin:.5rem 0 1.25rem; }
@@ -230,7 +237,11 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
   margin:.2rem 0 .35rem; color:var(--muted); font-size:.74rem; }
 .city-current { display:flex; align-items:center; gap:.85rem; padding:.9rem 1rem; margin:.7rem 0 1rem;
   border:1px solid var(--line); border-radius:17px; background:var(--surface); box-shadow:var(--shadow); }
-.city-current-icon { font-size:2.4rem; line-height:1; }.city-current-copy strong { color:var(--ink); font-size:1.05rem; }
+.city-current-icon { display:flex; align-items:center; justify-content:center; width:3.35rem; height:3.35rem;
+  flex:0 0 3.35rem; border-radius:50%; font-size:2.4rem; line-height:1; background:var(--weather-icon-bg);
+  border:1px solid var(--weather-icon-ring); filter:saturate(1.12) contrast(1.08);
+  text-shadow:0 1px 2px rgba(15,23,42,.22); }
+.city-current-copy strong { color:var(--ink); font-size:1.05rem; }
 .city-current-copy div { color:var(--muted); font-size:.78rem; margin-top:.15rem; }
 .hero-v4 { position:relative; overflow:hidden; color:#fff; padding:1.4rem 1.55rem; border-radius:26px;
   min-height:245px; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:1rem;
@@ -267,12 +278,28 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
 .current-detail { display:inline-block; max-width:100%; color:var(--subtle); background:var(--surface-soft); border-radius:999px;
   padding:.23rem .46rem; font-size:.66rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .hourly-strip { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(116px,1fr); gap:.65rem;
-  overflow-x:auto; overscroll-behavior-inline:contain; padding:.15rem .05rem .65rem; scrollbar-width:thin; }
-.hourly-tile { min-height:151px; padding:.8rem .72rem; border-radius:17px; border:1px solid var(--line);
+  overflow-x:auto; overscroll-behavior-inline:contain; padding:.15rem .05rem .9rem;
+  scrollbar-width:auto; scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-gutter:stable; }
+.hourly-tile { min-height:174px; padding:.8rem .72rem; border-radius:17px; border:1px solid var(--line);
   background:var(--surface); box-shadow:var(--shadow); text-align:center; }
 .hourly-tile.is-now { border-color:var(--blue); box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 20%,transparent); }
-.hourly-time { color:var(--muted); font-size:.72rem; font-weight:700; }.hourly-icon { font-size:1.7rem; margin:.32rem 0; }
+.hourly-time { color:var(--muted); font-size:.72rem; font-weight:700; }
+.hourly-icon { display:flex; align-items:center; justify-content:center; width:2.55rem; height:2.55rem;
+  margin:.32rem auto; border-radius:50%; font-size:1.7rem; background:var(--weather-icon-bg);
+  border:1px solid var(--weather-icon-ring); filter:saturate(1.12) contrast(1.08);
+  text-shadow:0 1px 2px rgba(15,23,42,.22); }
 .hourly-temp { color:var(--ink); font-size:1.2rem; font-weight:700; }.hourly-rain,.hourly-wind { color:var(--subtle); font-size:.69rem; margin-top:.2rem; }
+.hourly-cloud { color:var(--subtle); font-size:.69rem; margin-top:.2rem; font-weight:650; }
+.hourly-strip::-webkit-scrollbar,.weather-table-wrap::-webkit-scrollbar,
+div[data-baseweb="tab-list"]::-webkit-scrollbar { height:11px; width:11px; }
+.hourly-strip::-webkit-scrollbar-track,.weather-table-wrap::-webkit-scrollbar-track,
+div[data-baseweb="tab-list"]::-webkit-scrollbar-track { background:var(--scrollbar-track); border-radius:999px; }
+.hourly-strip::-webkit-scrollbar-thumb,.weather-table-wrap::-webkit-scrollbar-thumb,
+div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:999px;
+  border:2px solid var(--scrollbar-track); min-width:44px; }
+.hourly-strip::-webkit-scrollbar-thumb:hover,.weather-table-wrap::-webkit-scrollbar-thumb:hover,
+div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-hover); }
+.weather-table-wrap,div[data-baseweb="tab-list"] { scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track); }
 .insight-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.7rem; margin:.35rem 0 1.1rem; }
 .insight-card,.activity-card,.air-card { border:1px solid var(--line); border-radius:18px; padding:.95rem;
   background:var(--surface); box-shadow:var(--shadow); position:relative; overflow:hidden; }
@@ -419,6 +446,8 @@ def _apply_theme(dark_mode: bool) -> None:
   --ink:#f8fafc; --muted:#b6c2d1; --subtle:#d5deea; --line:rgba(226,232,240,.2);
   --blue:#60a5fa; --card-bg:linear-gradient(155deg,#111b2b,#0b1320);
   --control-bg:#111827; --shadow:0 9px 28px rgba(0,0,0,.28);
+  --scrollbar-track:#172235; --scrollbar-thumb:#60a5fa; --scrollbar-hover:#93c5fd;
+  --weather-icon-bg:linear-gradient(145deg,#1e3a5f,#172554); --weather-icon-ring:rgba(147,197,253,.4);
 }
 html,body { color-scheme:dark !important; }
 .stApp,[data-testid="stAppViewContainer"],[data-testid="stHeader"] { background:#05070b !important; color:var(--ink) !important; }
@@ -605,9 +634,15 @@ def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
         font={"color": ink, "family": "DM Sans, system-ui, sans-serif"},
         title={"font": {"color": ink}},
         legend={
+            "orientation": "h",
+            "x": 0,
+            "xanchor": "left",
+            "y": 1.02,
+            "yanchor": "bottom",
             "bgcolor": "rgba(0,0,0,0)",
             "font": {"color": ink},
             "title": {"font": {"color": ink}},
+            "tracegroupgap": 6,
         },
         modebar={
             "bgcolor": "rgba(0,0,0,0)",
@@ -632,6 +667,19 @@ def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
         title_font={"color": ink},
         zerolinecolor=line,
     )
+    return figure
+
+
+def _use_local_subplot_keys(figure: go.Figure) -> go.Figure:
+    """Keep each visual key beside its subplot instead of in a distant legend."""
+    for annotation in figure.layout.annotations or ():
+        annotation.update(
+            x=0,
+            xanchor="left",
+            align="left",
+            font={"size": 12},
+        )
+    figure.update_layout(showlegend=False)
     return figure
 
 
@@ -1182,6 +1230,7 @@ def render_v4_hourly_strip(
             f'<div class="hourly-time">{time_label}</div>'
             f'<div class="hourly-icon">{_weather_icon(description)}</div>'
             f'<div class="hourly-temp">{_number(row.get("temp_c"), 0, "°")}</div>'
+            f'<div class="hourly-cloud">☁️ {_number(row.get("clouds"), 0, "%")} nuvole</div>'
             f'<div class="hourly-rain">☔ {_number(row.get("precip_probability"), 0, "%")} · {_number(row.get("rain_mm"), 1, " mm")}</div>'
             f'<div class="hourly-wind">💨 {_number(row.get("wind_kmh"), 0, " km/h")}</div>'
             "</div>"
@@ -1215,33 +1264,139 @@ def render_v4_insights(
     )
 
 
+def _planner_card(
+    *,
+    icon: str,
+    title: str,
+    value: str,
+    label: str,
+    timing: str,
+    detail: str,
+    tone: str,
+) -> str:
+    return (
+        f'<div class="activity-card tone-{html.escape(tone)}">'
+        '<div class="activity-top">'
+        f'<div><div class="activity-icon">{icon}</div><div class="activity-title">{html.escape(title)}</div></div>'
+        f'<div class="activity-score">{html.escape(value)}</div></div>'
+        f'<div class="activity-label">{html.escape(label)}</div>'
+        f'<div class="activity-time">{html.escape(timing)}</div>'
+        f'<div class="activity-detail">{html.escape(detail)}</div>'
+        "</div>"
+    )
+
+
+def _pollen_planner_card(air: AirQualityForecast | None) -> str:
+    if air is None or air.hourly.empty:
+        return _planner_card(
+            icon="🌿",
+            title="Pollini",
+            value="—",
+            label="In aggiornamento",
+            timing="Previsione temporaneamente non disponibile",
+            detail="Il meteo principale continua normalmente.",
+            tone="neutral",
+        )
+    now = pd.Timestamp.now(tz=air.timezone)
+    upcoming = air.hourly[
+        (air.hourly["time"] >= now.floor("h"))
+        & (air.hourly["time"] <= now + pd.Timedelta(hours=24))
+    ].copy()
+    available = [column for column in POLLEN_LABELS if column in upcoming]
+    if upcoming.empty or not available:
+        return _pollen_planner_card(None)
+    matrix = upcoming[available].apply(pd.to_numeric, errors="coerce")
+    stacked = matrix.stack(future_stack=True).dropna()
+    if stacked.empty:
+        return _pollen_planner_card(None)
+    row_index, pollen_column = stacked.idxmax()
+    value = float(stacked.loc[(row_index, pollen_column)])
+    category, tone = pollen_category(value)
+    moment = pd.Timestamp(upcoming.loc[row_index, "time"])
+    return _planner_card(
+        icon="🌿",
+        title="Pollini",
+        value=category,
+        label=f"{POLLEN_LABELS[pollen_column]} · {value:.1f} grani/m³",
+        timing=f"Picco previsto: {_hour_label(moment)}",
+        detail="Previsione CAMS orientativa, non sensore locale.",
+        tone=tone,
+    )
+
+
+def _moon_planner_card(settings: Settings) -> str:
+    events = astronomy_events(settings, days=2)
+    if events.empty:
+        return _planner_card(
+            icon="🌙",
+            title="Luna e cielo",
+            value="—",
+            label="Effemeridi in aggiornamento",
+            timing="Consulta la scheda Astronomia",
+            detail="Il punteggio astronomico meteo resta disponibile.",
+            tone="neutral",
+        )
+    today = pd.Timestamp.now(tz=settings.local_timezone).date()
+    candidates = events[events["date"] == today]
+    event = candidates.iloc[0] if not candidates.empty else events.iloc[0]
+    illumination = pd.to_numeric(
+        pd.Series([event.get("moon_illumination")]), errors="coerce"
+    ).iloc[0]
+    if pd.isna(illumination):
+        phase_label, tone, value = "Illuminazione non disponibile", "neutral", "—"
+    elif illumination < 15:
+        phase_label, tone, value = "Cielo più buio", "good", f"{illumination:.0f}%"
+    elif illumination < 65:
+        phase_label, tone, value = "Fase intermedia", "warning", f"{illumination:.0f}%"
+    else:
+        phase_label, tone, value = "Luna luminosa", "warning", f"{illumination:.0f}%"
+
+    def event_time(value: Any) -> str:
+        return "—" if value is None or pd.isna(value) else pd.Timestamp(value).strftime("%H:%M")
+
+    return _planner_card(
+        icon="🌙",
+        title="Luna e cielo",
+        value=value,
+        label=phase_label,
+        timing=f"Sorge {event_time(event.get('moonrise'))} · tramonta {event_time(event.get('moonset'))}",
+        detail="Illuminazione e orari locali; dettagli completi in Astronomia.",
+        tone=tone,
+    )
+
+
 def render_v4_activities(
-    forecast: pd.DataFrame, *, timezone: str | None = None
+    forecast: pd.DataFrame,
+    *,
+    timezone: str | None = None,
+    air: AirQualityForecast | None = None,
+    settings: Settings | None = None,
 ) -> None:
     activities = activity_outlooks(
         forecast, timezone=timezone or CFG.local_timezone
     )
-    if not activities:
-        return
-    cards = []
-    for item in activities:
-        cards.append(
-            f'<div class="activity-card tone-{item.tone}">'
-            '<div class="activity-top">'
-            f'<div><div class="activity-icon">{item.icon}</div><div class="activity-title">{html.escape(item.activity)}</div></div>'
-            f'<div class="activity-score">{item.score}</div></div>'
-            f'<div class="activity-label">{html.escape(item.label)}</div>'
-            f'<div class="activity-time">Momento migliore: {html.escape(item.best_time)}</div>'
-            f'<div class="activity-detail">{html.escape(item.detail)}</div>'
-            "</div>"
+    cards = [
+        _planner_card(
+            icon=item.icon,
+            title=item.activity,
+            value=str(item.score),
+            label=item.label,
+            timing=f"Momento migliore: {item.best_time}",
+            detail=item.detail,
+            tone=item.tone,
         )
+        for item in activities
+    ]
+    cards.insert(1, _pollen_planner_card(air))
+    cards.append(_moon_planner_card(settings or CFG))
     st.markdown(
         '<div class="activity-grid">' + "".join(cards) + "</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="v4-note">Gli indici attività sono orientativi e derivano da soglie '
-        "trasparenti su pioggia, vento, temperatura, umidità e nuvole; non sono allerte ufficiali.</div>",
+        '<div class="v4-note">Gli indici sono orientativi: passeggiata e astronomia usano soglie '
+        "trasparenti su pioggia, vento, temperatura, umidità e nuvole. Pollini e Luna provengono "
+        "da modelli CAMS ed effemeridi; non sono allerte sanitarie o ufficiali.</div>",
         unsafe_allow_html=True,
     )
 
@@ -1280,6 +1435,10 @@ def _air_quality_figure(air: AirQualityForecast, dark_mode: bool) -> go.Figure:
         shared_xaxes=True,
         vertical_spacing=0.11,
         row_heights=[0.58, 0.42],
+        subplot_titles=(
+            "Qualità dell’aria · ━ AQI europeo · ┄ PM2.5",
+            "Pollini · linee colorate per specie",
+        ),
     )
     figure.add_trace(
         go.Scatter(
@@ -1325,10 +1484,9 @@ def _air_quality_figure(air: AirQualityForecast, dark_mode: bool) -> go.Figure:
     figure.update_layout(
         height=570,
         hovermode="x unified",
-        legend={"orientation": "h", "y": 1.08},
-        margin={"l": 15, "r": 15, "t": 35, "b": 10},
+        margin={"l": 15, "r": 15, "t": 48, "b": 10},
     )
-    return _style_plotly(figure, dark_mode)
+    return _style_plotly(_use_local_subplot_keys(figure), dark_mode)
 
 
 def render_air_quality_dashboard(
@@ -1404,7 +1562,11 @@ def render_air_quality_dashboard(
     )
 
 
-def render_today_dashboard(forecast: pd.DataFrame) -> None:
+def render_today_dashboard(
+    forecast: pd.DataFrame,
+    *,
+    air: AirQualityForecast | None = None,
+) -> None:
     st.markdown(
         '<div class="v4-section-head"><h3>Le prossime ore</h3><span>Scorri orizzontalmente · dati calibrati sulla stazione</span></div>',
         unsafe_allow_html=True,
@@ -1419,7 +1581,7 @@ def render_today_dashboard(forecast: pd.DataFrame) -> None:
         '<div class="v4-section-head"><h3>Pianifica la giornata</h3><span>Indici orientativi · momento meteo migliore</span></div>',
         unsafe_allow_html=True,
     )
-    render_v4_activities(forecast)
+    render_v4_activities(forecast, air=air, settings=CFG)
     st.markdown(
         '<div class="v4-section-head"><h3>Tendenza a 7 giorni</h3><span>Minime, massime, pioggia, vento e fiducia</span></div>',
         unsafe_allow_html=True,
@@ -1500,6 +1662,10 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
         vertical_spacing=0.09,
         row_heights=[0.64, 0.36],
         specs=[[{}], [{"secondary_y": True}]],
+        subplot_titles=(
+            "Temperatura · ━ temperatura · ··· percepita",
+            "Pioggia · ▮ quantità · ━ probabilità",
+        ),
     )
     figure.add_trace(
         go.Scatter(
@@ -1566,10 +1732,9 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
     figure.update_layout(
         height=570,
         hovermode="x unified",
-        legend={"orientation": "h", "y": 1.08},
-        margin={"l": 15, "r": 15, "t": 30, "b": 10},
+        margin={"l": 15, "r": 15, "t": 48, "b": 10},
     )
-    return _style_plotly(figure, dark_mode)
+    return _style_plotly(_use_local_subplot_keys(figure), dark_mode)
 
 
 def _city_hourly_table(hourly: pd.DataFrame) -> pd.DataFrame:
@@ -1687,9 +1852,27 @@ def render_city_dashboard(
             city_briefing_frame,
             timezone=city.timezone,
         )
+        city_planner_air = None
+        if st.session_state.get("city_tab") == "Oggi":
+            try:
+                city_planner_air = air_quality_data(
+                    location.latitude, location.longitude, city.timezone
+                )
+            except AirQualityError:
+                pass
+        city_settings = replace(
+            CFG,
+            latitude=location.latitude,
+            longitude=location.longitude,
+            elevation_m=location.elevation_m or 0.0,
+            local_timezone=city.timezone,
+            location_name=location.label,
+        )
         render_v4_activities(
             city_briefing_frame,
             timezone=city.timezone,
+            air=city_planner_air,
+            settings=city_settings,
         )
         st.subheader("Temperatura e precipitazioni")
         st.plotly_chart(
@@ -1814,6 +1997,10 @@ def combined_chart(
         row_heights=[0.68, 0.32],
         vertical_spacing=0.08,
         specs=[[{}], [{"secondary_y": True}]],
+        subplot_titles=(
+            "Temperatura · ━ misurata · ┄ previsione · ┄· stima buco · fascia = incertezza",
+            "Pioggia · ▮ misurata/prevista · ━ probabilità · linea arancione = adesso",
+        ),
     )
     if not observations.empty and "temp_c" in observations:
         figure.add_trace(
@@ -1983,13 +2170,12 @@ def combined_chart(
     )
     figure.update_layout(
         height=570,
-        margin={"l": 15, "r": 15, "t": 30, "b": 10},
+        margin={"l": 15, "r": 15, "t": 48, "b": 10},
         hovermode="x unified",
-        legend={"orientation": "h", "y": 1.08, "x": 0},
         template=theme,
         bargap=0.1,
     )
-    return figure
+    return _use_local_subplot_keys(figure)
 
 
 def weather_details_chart(
@@ -2009,6 +2195,11 @@ def weather_details_chart(
         shared_xaxes=True,
         vertical_spacing=0.08,
         specs=[[{}], [{}], [{"secondary_y": True}]],
+        subplot_titles=(
+            "Umidità · ━ misurata · ┄ previsione · ┄· stima buco",
+            "Pressione · ━ misurata · ┄ previsione · ┄· stima buco",
+            "Vento · verde = vento · arancio = raffiche · rosa = direzione · ━ misura · ┄ previsione",
+        ),
     )
 
     metrics = (
@@ -2143,12 +2334,11 @@ def weather_details_chart(
     )
     figure.update_layout(
         height=760,
-        margin={"l": 15, "r": 15, "t": 45, "b": 10},
+        margin={"l": 15, "r": 15, "t": 48, "b": 10},
         hovermode="x unified",
-        legend={"orientation": "h", "y": 1.09, "x": 0},
         template=theme,
     )
-    return figure
+    return _use_local_subplot_keys(figure)
 
 
 def forecast_alerts(forecast: pd.DataFrame) -> None:
@@ -2447,7 +2637,15 @@ requested_tab = next(
 )
 
 with tab_today:
-    render_today_dashboard(forecast)
+    today_air_quality = None
+    if st.session_state.get("main_tab") == "Oggi" and not forecast.empty:
+        try:
+            today_air_quality = air_quality_data(
+                CFG.latitude, CFG.longitude, CFG.local_timezone
+            )
+        except AirQualityError:
+            pass
+    render_today_dashboard(forecast, air=today_air_quality)
 
 with tab_overview:
     st.markdown(
@@ -2663,7 +2861,7 @@ with tab_forecast:
                             x=group["mean_probability"] * 100.0,
                             y=group["observed_frequency"] * 100.0,
                             mode="lines+markers",
-                            name=f"{provider} · {horizon}",
+                            name=f"━ {provider} · {horizon}",
                             marker={
                                 "size": 7
                                 + np.sqrt(pd.to_numeric(group["n"], errors="coerce")),
@@ -2681,7 +2879,7 @@ with tab_forecast:
                         x=[0, 100],
                         y=[0, 100],
                         mode="lines",
-                        name="Calibrazione ideale",
+                        name="··· Calibrazione ideale",
                         line={"color": "#94a3b8", "dash": "dot"},
                     )
                 )
@@ -2816,7 +3014,18 @@ with tab_station:
     else:
         cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=observation_hours)
         recent = station[station["time"] >= cutoff].copy()
-        figure = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.055)
+        figure = make_subplots(
+            rows=4,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.065,
+            subplot_titles=(
+                "Temperatura · ━ misura Ecowitt",
+                "Umidità · ━ misura Ecowitt",
+                "Pressione · ━ misura Ecowitt",
+                "Vento · ━ velocità · ┄ raffiche · misure Ecowitt",
+            ),
+        )
         figure.add_trace(
             go.Scatter(
                 x=recent["time"],
@@ -2862,7 +3071,7 @@ with tab_station:
                 x=recent["time"],
                 y=recent.get("windgust_kmh"),
                 name="Raffiche",
-                line={"color": "#f59e0b", "width": 1.5},
+                line={"color": "#f59e0b", "width": 1.8, "dash": "dash"},
             ),
             row=4,
             col=1,
@@ -2875,18 +3084,19 @@ with tab_station:
             height=850,
             template=theme,
             hovermode="x unified",
-            margin={"l": 10, "r": 10, "t": 20, "b": 10},
-            legend={"orientation": "h"},
+            margin={"l": 10, "r": 10, "t": 45, "b": 10},
         )
         st.plotly_chart(
-            _style_plotly(figure, dark_mode), width="stretch", theme=None
+            _style_plotly(_use_local_subplot_keys(figure), dark_mode),
+            width="stretch",
+            theme=None,
         )
 
         rain_figure = go.Figure(
             go.Bar(
                 x=recent["time"],
                 y=_numeric_series(recent, "rain_mm", 0).clip(lower=0),
-                name="Incremento",
+                name="▮ Quantità misurata per campione",
                 marker_color="#38bdf8",
             )
         )
@@ -2897,8 +3107,8 @@ with tab_station:
                     y=pd.to_numeric(
                         recent["rain_rate_mm_h"], errors="coerce"
                     ).clip(lower=0),
-                    name="Intensità",
-                    line={"color": "#2563eb"},
+                    name="━ Intensità misurata",
+                    line={"color": "#2563eb", "width": 2.2},
                 )
             )
         rain_figure.update_layout(
@@ -2906,6 +3116,7 @@ with tab_station:
             title="Pioggia: quantità per campione e intensità",
             template=theme,
             hovermode="x unified",
+            margin={"l": 10, "r": 10, "t": 72, "b": 10},
         )
         rain_figure.update_yaxes(rangemode="nonnegative", title_text="Pioggia mm")
         st.plotly_chart(
@@ -3046,7 +3257,7 @@ with tab_astro:
             go.Scatter(
                 x=night["local_time"],
                 y=night["astro_score"],
-                name="Qualità cielo",
+                name="▰ Qualità cielo",
                 fill="tozeroy",
                 line={"color": "#8b5cf6", "width": 3},
             ),
@@ -3062,7 +3273,7 @@ with tab_astro:
                     go.Scatter(
                         x=night["local_time"],
                         y=night[column],
-                        name=name,
+                        name=f"··· {name}",
                         line={"color": color, "width": 1.5, "dash": "dot"},
                     ),
                     secondary_y=True,
@@ -3075,8 +3286,7 @@ with tab_astro:
             height=450,
             template=theme,
             hovermode="x unified",
-            legend={"orientation": "h"},
-            margin={"l": 10, "r": 10, "t": 20, "b": 10},
+            margin={"l": 10, "r": 10, "t": 62, "b": 10},
         )
         st.plotly_chart(
             _style_plotly(figure, dark_mode), width="stretch", theme=None
