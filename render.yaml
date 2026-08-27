@@ -48,6 +48,14 @@ services:
         value: IT
       - key: EEA_AIR_CITY
         value: Roma
+      - key: FEATURE_CLIMATOLOGY_ENABLED
+        value: "true"
+      - key: FEATURE_MEASURED_POLLEN_ENABLED
+        value: "true"
+      - key: FEATURE_OFFICIAL_ALERTS_ENABLED
+        value: "true"
+      - key: FEATURE_EXPERIENCE_MODE_ENABLED
+        value: "true"
 
   # Acquisizione primaria: Render garantisce una sola esecuzione attiva per
   # questo Cron Job. Il lock PostgreSQL protegge anche da avvii GitHub/locali.
@@ -126,5 +134,13 @@ services:
         value: IT
       - key: EEA_AIR_CITY
         value: Roma
+      - key: FEATURE_CLIMATOLOGY_ENABLED
+        value: "true"
+      - key: FEATURE_MEASURED_POLLEN_ENABLED
+        value: "true"
+      - key: FEATURE_OFFICIAL_ALERTS_ENABLED
+        value: "true"
+      - key: FEATURE_EXPERIENCE_MODE_ENABLED
+        value: "true"
       - key: LOG_LEVEL
         value: INFO

@@ -28,9 +28,19 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
     """Return the sources that the current deployment knows how to operate."""
     official = cfg.official_observations_enabled
     return (
-        SourceDefinition("ecowitt", "Ecowitt", cfg.has_station_credentials, 5, "misure"),
-        SourceDefinition("open_meteo", "Open-Meteo", True, cfg.forecast_refresh_minutes, "previsioni"),
-        SourceDefinition("openweather", "OpenWeather", bool(cfg.openweather_api_key), cfg.forecast_refresh_minutes, "previsioni"),
+        SourceDefinition(
+            "ecowitt", "Ecowitt", cfg.has_station_credentials, 5, "misure"
+        ),
+        SourceDefinition(
+            "open_meteo", "Open-Meteo", True, cfg.forecast_refresh_minutes, "previsioni"
+        ),
+        SourceDefinition(
+            "openweather",
+            "OpenWeather",
+            bool(cfg.openweather_api_key),
+            cfg.forecast_refresh_minutes,
+            "previsioni",
+        ),
         SourceDefinition(
             "open_meteo_ensemble",
             "Open-Meteo Ensemble",
@@ -38,16 +48,61 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.forecast_refresh_minutes,
             "probabilistica",
         ),
-        SourceDefinition("awc_metar", "METAR LIRF/LIRA", official, cfg.official_observation_refresh_minutes, "riferimenti"),
-        SourceDefinition("arsial_siarl", "ARSIAL/SIARL", official and cfg.arsial_observations_enabled, cfg.official_observation_refresh_minutes, "riferimenti"),
-        SourceDefinition("cfr_lazio", "CFR Lazio", official and cfg.cfr_observations_enabled, 15, "riferimenti"),
-        SourceDefinition("forecast_blend", "Previsione combinata", True, cfg.forecast_refresh_minutes, "elaborazione"),
+        SourceDefinition(
+            "awc_metar",
+            "METAR LIRF/LIRA",
+            official,
+            cfg.official_observation_refresh_minutes,
+            "riferimenti",
+        ),
+        SourceDefinition(
+            "arsial_siarl",
+            "ARSIAL/SIARL",
+            official and cfg.arsial_observations_enabled,
+            cfg.official_observation_refresh_minutes,
+            "riferimenti",
+        ),
+        SourceDefinition(
+            "cfr_lazio",
+            "CFR Lazio",
+            official and cfg.cfr_observations_enabled,
+            15,
+            "riferimenti",
+        ),
+        SourceDefinition(
+            "forecast_blend",
+            "Previsione combinata",
+            True,
+            cfg.forecast_refresh_minutes,
+            "elaborazione",
+        ),
         SourceDefinition(
             "eea_utd_air",
             "EEA UTD · aria osservata",
             cfg.eea_air_observations_enabled,
             max(60, cfg.forecast_refresh_minutes),
             "ambiente",
+        ),
+        SourceDefinition(
+            "pollnet",
+            "POLLnet · pollini misurati",
+            cfg.feature_measured_pollen_enabled,
+            14 * 24 * 60,
+            "ambiente",
+        ),
+        SourceDefinition(
+            "official_alerts",
+            "DPC + Regione Lazio · bollettini",
+            cfg.feature_official_alerts_enabled,
+            24 * 60,
+            "sicurezza",
+        ),
+        SourceDefinition(
+            "climatology_local",
+            "Baseline climatologica locale",
+            cfg.feature_climatology_enabled,
+            max(60, cfg.forecast_refresh_minutes),
+            "elaborazione",
         ),
         SourceDefinition(
             "database_backup",
