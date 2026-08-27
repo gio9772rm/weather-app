@@ -1150,7 +1150,7 @@ def render_three_hour_forecast(forecast: pd.DataFrame) -> None:
             f'<div class="hour-title">+{position} h · {local_time:%H:%M}</div>'
             f'<div class="hour-weather">{_weather_icon(description)} {html.escape(description)}</div>'
             f'<div class="hour-meta">☁️ nuvole {_number(row.get("clouds"), 0, "%")}'
-            f"<br>☔ {_number(row.get('rain_mm'), 1, ' mm')} · rischio {_number(row.get('precip_probability'), 0, '%')}"
+            f"<br>☔ {_number(reportable_rain_amount(row.get('rain_mm'), row.get('precip_probability')), 1, ' mm')} · rischio {_number(row.get('precip_probability'), 0, '%')}"
             f"<br>💨 {_number(row.get('wind_kmh'), 0, ' km/h')} · {compass_direction(row.get('wind_dir'))}</div>"
             "</div>"
         )
