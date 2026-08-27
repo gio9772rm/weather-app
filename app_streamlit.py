@@ -33,16 +33,20 @@ from city_weather import (
     fetch_city_forecast,
     search_cities,
 )
+from climatology import anomaly_snapshot
 from config import Settings
 from data_access import (
     daily_forecast,
     data_completeness_snapshot,
     health_snapshot,
+    load_climate_normals,
     load_ensemble,
     load_forecast,
     load_forecast_history,
     load_forecast_reliability,
+    load_measured_pollen,
     load_observed_air,
+    load_official_alerts,
     load_official_station_status,
     load_provider_scores,
     load_recent_logs,
@@ -388,6 +392,21 @@ def ensemble_guidance_data() -> pd.DataFrame:
 @st.cache_data(ttl=180, show_spinner=False)
 def observed_air_data() -> pd.DataFrame:
     return load_observed_air()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def measured_pollen_data() -> pd.DataFrame:
+    return load_measured_pollen()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def climate_normals_data() -> pd.DataFrame:
+    return load_climate_normals()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def official_alerts_data() -> pd.DataFrame:
+    return load_official_alerts()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1982,6 +2001,221 @@ def render_observed_air_comparison(
     )
 
 
+def render_measured_pollen(
+    measured: pd.DataFrame,
+    modelled: AirQualityForecast | None,
+    dark_mode: bool,
+    *,
+    expert_mode: bool,
+) -> None:
+    st.markdown(
+        '<div class="section-kicker">Monitoraggio aerobiologico ufficiale</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Pollini realmente misurati")
+    if measured.empty:
+        st.info(
+            "Le misure POLLnet/ISPRA appariranno dopo il primo aggiornamento valido. "
+            "La previsione CAMS resta disponibile e continua a essere indicata come modello."
+        )
+        return
+
+    measured = measured.sort_values("value", ascending=False).copy()
+    measured_at = pd.to_datetime(measured["time"].max(), utc=True, errors="coerce")
+    age_days = (
+        max(
+            0, int((pd.Timestamp.now(tz="UTC") - measured_at).total_seconds() // 86_400)
+        )
+        if pd.notna(measured_at)
+        else None
+    )
+    positive = measured[pd.to_numeric(measured["value"], errors="coerce") > 0]
+    leaders = (positive if not positive.empty else measured).head(4)
+    cards = []
+    for _, item in leaders.iterrows():
+        value = float(item["value"])
+        level, tone = pollen_category(value)
+        cards.append(
+            f'<div class="air-card tone-{tone}">'
+            f'<div class="air-title">◉ {html.escape(str(item.get("family") or item["metric"]))}</div>'
+            f'<div class="air-value">{value:.0f} granuli/m³</div>'
+            f'<div class="air-detail">{html.escape(level)} indicativo · misura giornaliera</div></div>'
+        )
+    st.markdown(
+        '<div class="air-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True
+    )
+    station_name = str(measured.iloc[0].get("station_name") or "POLLnet")
+    distance = _number(measured.iloc[0].get("distance_km"), 1, " km")
+    freshness = (
+        "dato recente"
+        if age_days is not None and age_days <= 14
+        else f"ultimo campione {age_days} giorni fa"
+        if age_days is not None
+        else "età non disponibile"
+    )
+    if age_days is not None and age_days > 21:
+        st.warning(
+            f"POLLnet pubblica misure con cadenza e tempi di validazione propri: {freshness}. "
+            "Il valore viene mostrato come archivio osservato, non come livello attuale."
+        )
+    if expert_mode:
+        cams_map = {
+            "pollen_gramineae": "grass_pollen",
+            "pollen_oleaceae": "olive_pollen",
+            "pollen_betulaceae": "birch_pollen",
+            "pollen_compositae": "mugwort_pollen",
+        }
+        model_current = {} if modelled is None else modelled.current
+        table = pd.DataFrame(
+            {
+                "Famiglia": measured["family"],
+                "POLLnet osservato granuli/m³": measured["value"].round(1),
+                "CAMS modellistico granuli/m³": measured["metric"].map(
+                    lambda metric: model_current.get(cams_map.get(str(metric), ""))
+                ),
+                "Data misura": measured["time"].map(
+                    lambda value: _local_time(value, "%d/%m/%Y")
+                ),
+            }
+        )
+        render_styled_table(_style_air_table(table, dark_mode), height=430)
+    st.caption(
+        f"{station_name} · {distance} dalla stazione Ecowitt · {freshness}. "
+        "Fonte istituzionale: [POLLnet ISPRA/SNPA](https://pollnet.isprambiente.it/opendata/). "
+        "Le fasce basso/medio/alto sono una lettura orientativa dell’app, non una "
+        "classificazione sanitaria POLLnet. Una misura giornaliera non è una previsione "
+        "e non sostituisce indicazioni mediche."
+    )
+
+
+def render_climate_context(
+    station: pd.DataFrame,
+    normals: pd.DataFrame,
+    dark_mode: bool,
+    *,
+    expert_mode: bool,
+) -> None:
+    st.markdown(
+        '<div class="section-kicker">Contesto storico della tua stazione</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Com’è rispetto al consueto?")
+    if station.empty or normals.empty:
+        st.info(
+            "La baseline locale si costruirà automaticamente quando l’archivio Ecowitt "
+            "conterrà campioni sufficienti per mese e ora."
+        )
+        return
+    snapshot = anomaly_snapshot(station.iloc[-1], normals, timezone=CFG.local_timezone)
+    if snapshot.empty:
+        st.caption("Nessuna baseline disponibile per questo mese e questa ora.")
+        return
+    cards = []
+    for _, item in snapshot.iterrows():
+        decimals = int(item["decimals"])
+        unit = str(item["unit"])
+        delta = float(item["delta"])
+        tone = "neutral" if item["state"] == "Nella fascia consueta" else "warning"
+        cards.append(
+            f'<div class="air-card tone-{tone}"><div class="air-title">{html.escape(str(item["label"]))}</div>'
+            f'<div class="air-value">{float(item["value"]):.{decimals}f} {html.escape(unit)}</div>'
+            f'<div class="air-detail">{delta:+.{decimals}f} {html.escape(unit)} dalla mediana · {html.escape(str(item["state"]))}</div></div>'
+        )
+    st.markdown(
+        '<div class="air-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True
+    )
+    years = int(snapshot["sample_years"].max())
+    if expert_mode:
+        table = pd.DataFrame(
+            {
+                "Parametro": snapshot["label"],
+                "Ora": snapshot["value"].round(1),
+                "Mediana locale": snapshot["normal"].round(1),
+                "Fascia consueta P10–P90": snapshot.apply(
+                    lambda row: f"{row['p10']:.1f}–{row['p90']:.1f} {row['unit']}",
+                    axis=1,
+                ),
+                "Scarto": snapshot["delta"].round(1),
+                "Esito": snapshot["state"],
+            }
+        )
+        render_styled_table(_style_status_table(table, dark_mode, "Esito"), height=360)
+    st.caption(
+        f"Baseline Ecowitt locale per questo mese e questa ora · {years} "
+        + ("anno rappresentato" if years == 1 else "anni rappresentati")
+        + ". Finché non copre molti anni è un confronto con lo storico disponibile, "
+        "non una normale climatica ufficiale 1991–2020."
+    )
+
+
+def render_official_alerts(alerts: pd.DataFrame, *, expert_mode: bool) -> None:
+    st.markdown(
+        '<div class="section-kicker">Fonti istituzionali</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Bollettini e allerte ufficiali")
+    if alerts.empty:
+        st.info(
+            "I bollettini ufficiali compariranno dopo il primo aggiornamento valido. "
+            "Gli avvisi previsionali dell’app restano indicazioni interne e non allerte."
+        )
+        return
+    latest_dpc = alerts[alerts["source"] == "dpc_nazionale"].head(1)
+    if not latest_dpc.empty:
+        item = latest_dpc.iloc[0]
+        message = f"**{item['title']}** — {item['description']} [Apri la fonte]({item['source_url']})"
+        severity = str(item.get("severity") or "information")
+        if severity == "green":
+            st.success(message)
+        elif severity in {"yellow", "orange", "official_notice"}:
+            st.warning(message)
+        elif severity == "red":
+            st.error(message)
+        else:
+            st.info(message)
+
+    regional = alerts[alerts["source"] == "regione_lazio"].copy()
+    if not regional.empty:
+        regional["age_hours"] = (
+            (pd.Timestamp.now(tz="UTC") - regional["issued_at"])
+            .dt.total_seconds()
+            .div(3600)
+        )
+        for kind in ("criticita-", "allertamento-"):
+            selected = regional[
+                regional["alert_id"].astype(str).str.startswith(kind)
+            ].head(1)
+            if selected.empty:
+                continue
+            item = selected.iloc[0]
+            current_note = (
+                "documento recente"
+                if float(item["age_hours"]) <= 48
+                else "ultimo documento disponibile in archivio"
+            )
+            st.markdown(
+                f"- **{item['title']}** · {current_note} · "
+                f"[{item['area']}]({item['source_url']})"
+            )
+    if expert_mode:
+        with st.expander("Archivio e metadati dei bollettini"):
+            table = pd.DataFrame(
+                {
+                    "Fonte": alerts["source"],
+                    "Emissione": alerts["issued_at"].map(_local_time),
+                    "Livello": alerts["severity"],
+                    "Titolo": alerts["title"],
+                    "Area": alerts["area"],
+                    "URL": alerts["source_url"],
+                }
+            )
+            render_styled_table(_base_table_style(table, st.session_state["dark_mode"]))
+    st.caption(
+        "Solo DPC e Regione Lazio possono emettere allerte ufficiali. Le soglie meteo "
+        "della dashboard restano avvisi contestuali e non sostituiscono i bollettini."
+    )
+
+
 def render_today_dashboard(
     forecast: pd.DataFrame,
     *,
@@ -2877,6 +3111,10 @@ if "app_section" not in st.session_state:
     )
 if "dark_mode" not in st.session_state:
     st.session_state["dark_mode"] = _query_value("theme", "light") == "dark"
+if "experience_mode" not in st.session_state:
+    st.session_state["experience_mode"] = (
+        "Esperta" if _query_value("detail", "simple") == "expert" else "Semplice"
+    )
 if "observation_hours" not in st.session_state:
     try:
         requested_hours = int(_query_value("hours", "24"))
@@ -2967,6 +3205,19 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Vista")
+    if CFG.feature_experience_mode_enabled:
+        experience_mode = st.radio(
+            "Livello di dettaglio",
+            options=("Semplice", "Esperta"),
+            horizontal=True,
+            key="experience_mode",
+            help=(
+                "Semplice privilegia sintesi e decisioni quotidiane; Esperta aggiunge "
+                "confronti grezzi, fasce statistiche e metadati delle fonti."
+            ),
+        )
+    else:
+        experience_mode = "Esperta"
     if app_section == "Stazione locale":
         observation_hours = st.select_slider(
             "Storico nel grafico",
@@ -2994,6 +3245,7 @@ with st.sidebar:
 
 _set_query_value("mode", "city" if app_section == "Meteo città" else "local")
 _set_query_value("theme", "dark" if dark_mode else "light")
+_set_query_value("detail", "expert" if experience_mode == "Esperta" else "simple")
 if app_section == "Stazione locale":
     _set_query_value("hours", observation_hours)
 elif st.session_state.get("city_query"):
@@ -3002,6 +3254,7 @@ _set_query_value("fav", "|".join(st.session_state.get("favorite_cities", [])))
 
 _refresh_controller(auto_refresh)
 _apply_theme(dark_mode)
+expert_mode = experience_mode == "Esperta"
 
 if app_section == "Meteo città":
     if selected_city is None:
@@ -3040,6 +3293,9 @@ forecast = forecast_data()
 forecast_history = forecast_history_data()
 ensemble_guidance = ensemble_guidance_data()
 official_air_observed = observed_air_data()
+official_pollen_observed = measured_pollen_data()
+climate_normals = climate_normals_data()
+official_alerts = official_alerts_data()
 health = health_data()
 theme = "plotly_dark" if dark_mode else "plotly_white"
 
@@ -3151,6 +3407,7 @@ requested_tab = next(
 )
 
 with tab_today:
+    render_official_alerts(official_alerts, expert_mode=expert_mode)
     today_air_quality = None
     if st.session_state.get("main_tab") == "Oggi" and not forecast.empty:
         try:
@@ -3533,6 +3790,12 @@ with tab_air:
             local_air_quality,
             dark_mode,
         )
+        render_measured_pollen(
+            official_pollen_observed,
+            local_air_quality,
+            dark_mode,
+            expert_mode=expert_mode,
+        )
 
 with tab_station:
     st.markdown(
@@ -3651,6 +3914,13 @@ with tab_station:
         rain_figure.update_yaxes(rangemode="nonnegative", title_text="Pioggia mm")
         st.plotly_chart(
             _style_plotly(rain_figure, dark_mode), width="stretch", theme=None
+        )
+
+        render_climate_context(
+            station,
+            climate_normals,
+            dark_mode,
+            expert_mode=expert_mode,
         )
 
         quality = recent.get("data_quality", pd.Series(dtype="object")).value_counts(
@@ -4053,9 +4323,9 @@ with tab_system:
         _style_status_table(registry_table, dark_mode, "Stato"),
     )
     st.caption(
-        "Climatologia, pollini misurati, bollettini ufficiali e modalità "
-        "semplice/esperta hanno già flag e archivi separati. Restano disattivati "
-        "finché non verranno collegati a fonti verificate; nessuna notifica è attiva."
+        "Climatologia locale, pollini misurati POLLnet, bollettini DPC/Regione Lazio "
+        "e modalità semplice/esperta sono moduli V4.2 indipendenti. Le fonti esterne "
+        "restano non bloccanti e nessuna notifica automatica è attiva."
     )
 
     st.markdown("#### Qualità delle osservazioni")

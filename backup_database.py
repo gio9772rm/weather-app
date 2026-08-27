@@ -29,6 +29,11 @@ BACKUP_TABLES = (
     "forecast_reference_scores",
     "forecast_reliability",
     "forecast_blend",
+    "forecast_blend_history",
+    "forecast_ensemble_runs",
+    "environment_observations",
+    "climate_normals",
+    "official_alerts",
     "ingest_log",
     "source_health",
     "meta",
@@ -54,9 +59,7 @@ def _destination(output: str | Path) -> Path:
     return destination / f"meteo-database-{stamp}.zip"
 
 
-def create_backup(
-    output: str | Path = "backups", engine: Engine | None = None
-) -> Path:
+def create_backup(output: str | Path = "backups", engine: Engine | None = None) -> Path:
     """Export known tables to CSV plus a checksummed manifest in one ZIP file."""
     if engine is None:
         ensure_schema()
@@ -169,7 +172,9 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backup portatile del database Meteo V3")
+    parser = argparse.ArgumentParser(
+        description="Backup portatile del database Meteo V3"
+    )
     parser.add_argument("--output", default="backups", help="Cartella o file ZIP")
     parser.add_argument("--verify", help="Verifica un archivio esistente")
     args = parser.parse_args()

@@ -46,3 +46,20 @@ def test_cfr_requires_explicit_activation(monkeypatch):
     assert configured.cfr_observations_enabled is True
     assert configured.cfr_observations_url == "https://example.test/cfr"
     assert configured.cfr_station_ids == ("37081", "13137")
+
+
+def test_v42_daily_features_are_enabled_by_default(monkeypatch):
+    for name in (
+        "FEATURE_CLIMATOLOGY_ENABLED",
+        "FEATURE_MEASURED_POLLEN_ENABLED",
+        "FEATURE_OFFICIAL_ALERTS_ENABLED",
+        "FEATURE_EXPERIENCE_MODE_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    configured = Settings.from_env()
+
+    assert configured.feature_climatology_enabled is True
+    assert configured.feature_measured_pollen_enabled is True
+    assert configured.feature_official_alerts_enabled is True
+    assert configured.feature_experience_mode_enabled is True

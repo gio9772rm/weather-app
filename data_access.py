@@ -216,6 +216,61 @@ def load_observed_air() -> pd.DataFrame:
     return frame.dropna(subset=["time", "metric", "value"])
 
 
+def load_measured_pollen() -> pd.DataFrame:
+    """Load every botanical family from the latest POLLnet measurement date."""
+    frame = _read(
+        "SELECT * FROM environment_observations WHERE source='pollnet' "
+        "AND time=(SELECT MAX(time) FROM environment_observations "
+        "WHERE source='pollnet') ORDER BY value DESC,metric"
+    )
+    if frame.empty:
+        return frame
+    for column in ("time", "fetched_at"):
+        frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    for column in ("value", "latitude", "longitude", "distance_km"):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    frame["family"] = (
+        frame["metric"]
+        .astype("string")
+        .str.removeprefix("pollen_")
+        .str.replace("_", " ", regex=False)
+        .str.title()
+    )
+    return frame.dropna(subset=["time", "metric", "value"])
+
+
+def load_climate_normals(source: str = "ecowitt_local") -> pd.DataFrame:
+    """Load the current local month/hour baseline."""
+    frame = _read(
+        "SELECT * FROM climate_normals WHERE source=:source ORDER BY month,hour,metric",
+        {"source": source},
+    )
+    if frame.empty:
+        return frame
+    frame["updated_at"] = pd.to_datetime(frame["updated_at"], utc=True, errors="coerce")
+    for column in ("month", "day", "hour", "p10", "p50", "p90", "sample_years"):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    return frame.dropna(subset=["month", "hour", "metric", "p50"])
+
+
+def load_official_alerts(days: int = 45) -> pd.DataFrame:
+    """Load recent institutional bulletins, newest first."""
+    days = max(2, min(int(days), 180))
+    cutoff = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    frame = _read(
+        "SELECT * FROM official_alerts WHERE issued_at>=:cutoff "
+        "ORDER BY issued_at DESC LIMIT 30",
+        {"cutoff": cutoff},
+    )
+    if frame.empty:
+        return frame
+    for column in ("issued_at", "starts_at", "ends_at", "fetched_at"):
+        frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    return frame.dropna(subset=["issued_at", "title", "source_url"])
+
+
 def load_provider_scores() -> pd.DataFrame:
     frame = _read(
         "SELECT * FROM forecast_scores WHERE evaluated_at = "
@@ -320,9 +375,7 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
 
     def state(row: pd.Series) -> str:
         raw_status = row.get("status")
-        stored_status = (
-            "" if pd.isna(raw_status) else str(raw_status).strip().lower()
-        )
+        stored_status = "" if pd.isna(raw_status) else str(raw_status).strip().lower()
         has_telemetry = bool(stored_status) or pd.notna(row["last_attempt_at"])
         # The dashboard and the Render Cron Job can intentionally have
         # different environment variables. Once the ingest process has
@@ -467,9 +520,7 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
     # reads independent prevents one incompatible legacy table from hiding the
     # healthy station and V3 forecast status.
     if pd.isna(forecast_issued) or pd.isna(forecast_until):
-        legacy_frame = _read(
-            "SELECT MAX(time) AS legacy_time FROM forecast_ow"
-        )
+        legacy_frame = _read("SELECT MAX(time) AS legacy_time FROM forecast_ow")
         legacy_time = _timestamp_from_frame(legacy_frame, "legacy_time")
         if pd.isna(forecast_issued):
             forecast_issued = legacy_time

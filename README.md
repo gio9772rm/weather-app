@@ -26,6 +26,10 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - guida probabilistica ICON-EPS con percentili P10–P90 e probabilità di pioggia calcolata sui membri, mantenuta separata dal peso dei provider;
 - nowcast puntuale RainViewer, quando sono pubblicati fotogrammi futuri, oltre alle mappe osservate Windy;
 - misure orarie ufficiali preliminari EEA/Italia per l'aria, confrontate con CAMS senza entrare nei dati Ecowitt;
+- pollini giornalieri realmente misurati dalla rete ufficiale POLLnet/ISPRA, con stazione, distanza, data ed età distinti dalla previsione CAMS;
+- baseline climatica locale Ecowitt per mese e ora, con mediana, fascia P10–P90 e anomalie correnti dichiarate come confronto con lo storico disponibile;
+- bollettini ufficiali DPC e Regione Lazio nella home, separati dagli avvisi contestuali calcolati dall'app;
+- modalità di lettura **Semplice/Esperta**, salvata nell'URL, per aggiungere confronti grezzi e metadati solo quando servono;
 - origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
@@ -45,6 +49,8 @@ flowchart TD
   METAR["METAR ufficiali · LIRF/LIRA"] --> P
   ARSIAL["ARSIAL/SIARL · Roma-Lanciani"] --> P
   EEA["EEA UTD · aria osservata"] --> P
+  POLL["POLLnet · pollini misurati"] --> P
+  DPC["DPC + Regione Lazio · bollettini"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
   DB --> BK["Backup locale verificato / PITR Render"]
@@ -75,6 +81,10 @@ La home **Oggi** privilegia ciò che serve nella vita quotidiana, lasciando inva
 La qualità dell'aria è un dato modellistico a scala territoriale, non una misura Ecowitt. L'indice segue le fasce AQI europee; i pollini sono disponibili in Europa durante la stagione. Un errore della fonte ambientale mostra un messaggio circoscritto e non interferisce con stazione, previsioni o Cron Job.
 
 La scheda Aria affianca a CAMS le misure **EEA UTD** trasmesse dall'Italia. Sono osservazioni orarie reali ma preliminari, possono arrivare in ritardo e restano nella tabella `environment_observations`: non vengono mai presentate come misure della stazione. Il nowcast RainViewer è ugualmente facoltativo; se il provider non pubblica fotogrammi futuri, la dashboard lo dichiara e continua a mostrare il radar osservato.
+
+La V4.2 aggiunge nella stessa tabella le misure giornaliere **POLLnet/ISPRA**, selezionando la stazione aerobiologica più vicina e contando soltanto le famiglie botaniche per evitare duplicazioni con generi e specie. La data del campione e la distanza restano sempre visibili. I bollettini DPC e Regione Lazio sono archiviati separatamente in `official_alerts` e mostrati con collegamento al documento istituzionale: l'app non attribuisce autonomamente un livello di allerta ai PDF regionali.
+
+La sezione Stazione costruisce una baseline Ecowitt per mese e ora. È un confronto personale con lo storico disponibile, non una normale climatica ufficiale 1991–2020. Dal menu laterale la modalità **Semplice** privilegia le sintesi; **Esperta** aggiunge tabelle statistiche, confronti misura-modello e metadati delle fonti.
 
 ## Avvio rapido su Windows 11
 
@@ -149,10 +159,10 @@ Backfill Ecowitt di 7 giorni:
 | `RADAR_NOWCAST_ENABLED` | no | abilita la stima puntuale RainViewer in pagina, default `true` |
 | `EEA_AIR_OBSERVATIONS_ENABLED` | no | archivia le misure aria UTD ufficiali, default `true` |
 | `EEA_AIR_COUNTRY`, `EEA_AIR_CITY` | no | filtro EEA, default `IT` e `Roma` |
-| `FEATURE_CLIMATOLOGY_ENABLED` | futura | hook V4.2, default `false` |
-| `FEATURE_MEASURED_POLLEN_ENABLED` | futura | hook POLLnet/misure, default `false` |
-| `FEATURE_OFFICIAL_ALERTS_ENABLED` | futura | hook bollettini in pagina, default `false`; non invia notifiche |
-| `FEATURE_EXPERIENCE_MODE_ENABLED` | futura | hook vista semplice/esperta, default `false` |
+| `FEATURE_CLIMATOLOGY_ENABLED` | no | baseline locale e anomalie, default `true` |
+| `FEATURE_MEASURED_POLLEN_ENABLED` | no | misure POLLnet/ISPRA, default `true` |
+| `FEATURE_OFFICIAL_ALERTS_ENABLED` | no | bollettini DPC/Lazio in pagina, default `true`; non invia notifiche |
+| `FEATURE_EXPERIENCE_MODE_ENABLED` | no | vista semplice/esperta, default `true` |
 
 ## Qualità della previsione
 
@@ -251,7 +261,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, home e indici V4, qualità dell'aria/pollini, ensemble, confronto emissioni, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, affidabilità pioggia, backup verificato e punteggio astronomico.
+I test coprono avvio dell'interfaccia, modalità semplice/esperta, home e indici V4, qualità dell'aria, pollini CAMS e misure POLLnet, climatologia locale, bollettini ufficiali, ensemble, confronto emissioni, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, affidabilità pioggia, backup verificato e punteggio astronomico.
 
 ## Dipendenze riproducibili
 

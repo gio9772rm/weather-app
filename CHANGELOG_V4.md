@@ -1,5 +1,17 @@
 # Changelog Meteo V4
 
+## V4.2 · contesto climatico, misure e fonti ufficiali
+
+- climatologia locale Ecowitt per mese e ora con mediana, fascia P10–P90 e scarto del valore corrente;
+- dicitura esplicita **baseline locale** finché lo storico non ha profondità sufficiente per essere considerato una normale climatica;
+- pollini realmente misurati dalla stazione POLLnet/ISPRA più vicina, separati dalla previsione modellistica CAMS;
+- esclusione dei livelli botanici figli per evitare il doppio conteggio delle concentrazioni POLLnet;
+- data, distanza ed età del campione sempre visibili; una misura arretrata viene indicata come archivio e non come livello attuale;
+- riepilogo DPC nazionale e collegamenti agli ultimi bollettini del Centro Funzionale Regionale Lazio direttamente nella home;
+- distinzione netta tra allerte ufficiali e soglie contestuali interne della dashboard;
+- modalità **Semplice** ed **Esperta** conservata nell’URL: la seconda aggiunge fasce statistiche, confronti grezzi e metadati;
+- moduli isolati e non bloccanti, archivi V6 additivi e nessuna nuova chiave API.
+
 ## V4.1 · esperienza, probabilità e dati ambientali osservati
 
 - confronto delle due ultime emissioni con indicatore di stabilità e dettaglio delle variazioni;
@@ -10,7 +22,7 @@
 - finestra orientativa per arieggiare casa, preferiti e confronto Roma–città;
 - provenienza/età/qualità dei dati e riepilogo quotidiano PNG;
 - palette semantica Okabe–Ito, testi e tratteggi per non affidare il significato al solo colore;
-- predisposti, ma disattivati, climatologia, pollini misurati, bollettini in pagina e modalità semplice/esperta;
+- predisposti gli archivi poi attivati nella V4.2 per climatologia, pollini misurati, bollettini in pagina e modalità semplice/esperta;
 - schema dati V5, migrazione solo additiva e V3 invariata nel ramo di archivio.
 
 ## Home quotidiana

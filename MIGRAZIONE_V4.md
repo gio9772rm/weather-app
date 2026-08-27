@@ -1,6 +1,6 @@
 # Meteo V4 — prova, pubblicazione e ritorno alla V3
 
-La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA: la migrazione V5 è automatica e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
+La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA; la V4.2 attiva climatologia locale, pollini POLLnet, bollettini ufficiali e vista semplice/esperta. La migrazione V6 è automatica, soltanto additiva, e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
 
 ## Sicurezze già predisposte
 
@@ -33,7 +33,7 @@ La pull request V4 deve essere unita a `main` soltanto dopo:
 4. creazione e verifica di un backup PostgreSQL;
 5. conferma esplicita della pubblicazione.
 
-Render distribuirà automaticamente il nuovo commit di `main`. Il primo ciclo orario popola ensemble, storico emissioni e aria EEA; se una fonte opzionale non risponde, Ecowitt e il blend deterministico continuano normalmente.
+Render distribuirà automaticamente il nuovo commit di `main`. Il primo ciclo orario popola ensemble, storico emissioni, aria EEA, pollini POLLnet, baseline locale e bollettini ufficiali; se una fonte opzionale non risponde, Ecowitt e il blend deterministico continuano normalmente.
 
 ## Ripristino
 

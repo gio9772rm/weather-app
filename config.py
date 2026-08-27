@@ -44,9 +44,7 @@ def _as_bool(value: str, default: bool) -> bool:
 def _station_ids(value: str) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
-            item.strip().upper()
-            for item in str(value or "").split(",")
-            if item.strip()
+            item.strip().upper() for item in str(value or "").split(",") if item.strip()
         )
     )
 
@@ -90,9 +88,7 @@ class Settings:
     official_score_max_share: float = 0.20
     official_min_overlap_samples: int = 24
     arsial_observations_enabled: bool = True
-    arsial_dashboard_url: str = (
-        "https://siarl.arsial.it/bi/superset/dashboard/7"
-    )
+    arsial_dashboard_url: str = "https://siarl.arsial.it/bi/superset/dashboard/7"
     arsial_station_name: str = "ROMA Lanciani-SEDE ARSIAL"
     arsial_timezone: str = "UTC"
     arsial_station_registry_url: str = (
@@ -113,10 +109,10 @@ class Settings:
     eea_air_observations_enabled: bool = True
     eea_air_country: str = "IT"
     eea_air_city: str = "Roma"
-    feature_climatology_enabled: bool = False
-    feature_measured_pollen_enabled: bool = False
-    feature_official_alerts_enabled: bool = False
-    feature_experience_mode_enabled: bool = False
+    feature_climatology_enabled: bool = True
+    feature_measured_pollen_enabled: bool = True
+    feature_official_alerts_enabled: bool = True
+    feature_experience_mode_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -165,17 +161,13 @@ class Settings:
             ),
             official_observation_refresh_minutes=max(
                 15,
-                _as_int(
-                    _first_env("OFFICIAL_OBSERVATION_REFRESH_MINUTES"), 30
-                ),
+                _as_int(_first_env("OFFICIAL_OBSERVATION_REFRESH_MINUTES"), 30),
             ),
             official_observation_lookback_hours=max(
                 3,
                 min(
                     720,
-                    _as_int(
-                        _first_env("OFFICIAL_OBSERVATION_LOOKBACK_HOURS"), 48
-                    ),
+                    _as_int(_first_env("OFFICIAL_OBSERVATION_LOOKBACK_HOURS"), 48),
                 ),
             ),
             official_score_max_share=min(
@@ -211,9 +203,7 @@ class Settings:
                 ),
             ),
             arsial_csv_url=_first_env("ARSIAL_CSV_URL"),
-            arsial_chart_ids=_positive_integer_ids(
-                _first_env("ARSIAL_CHART_IDS")
-            ),
+            arsial_chart_ids=_positive_integer_ids(_first_env("ARSIAL_CHART_IDS")),
             arsial_cache_hours=max(
                 6,
                 min(
@@ -230,9 +220,7 @@ class Settings:
             ensemble_forecast_enabled=_as_bool(
                 _first_env("ENSEMBLE_FORECAST_ENABLED", default="true"), True
             ),
-            ensemble_model=_first_env(
-                "ENSEMBLE_MODEL", default="icon_seamless"
-            ),
+            ensemble_model=_first_env("ENSEMBLE_MODEL", default="icon_seamless"),
             radar_nowcast_enabled=_as_bool(
                 _first_env("RADAR_NOWCAST_ENABLED", default="true"), True
             ),
@@ -242,19 +230,19 @@ class Settings:
             eea_air_country=_first_env("EEA_AIR_COUNTRY", default="IT").upper(),
             eea_air_city=_first_env("EEA_AIR_CITY", default="Roma"),
             feature_climatology_enabled=_as_bool(
-                _first_env("FEATURE_CLIMATOLOGY_ENABLED", default="false"), False
+                _first_env("FEATURE_CLIMATOLOGY_ENABLED", default="true"), True
             ),
             feature_measured_pollen_enabled=_as_bool(
-                _first_env("FEATURE_MEASURED_POLLEN_ENABLED", default="false"),
-                False,
+                _first_env("FEATURE_MEASURED_POLLEN_ENABLED", default="true"),
+                True,
             ),
             feature_official_alerts_enabled=_as_bool(
-                _first_env("FEATURE_OFFICIAL_ALERTS_ENABLED", default="false"),
-                False,
+                _first_env("FEATURE_OFFICIAL_ALERTS_ENABLED", default="true"),
+                True,
             ),
             feature_experience_mode_enabled=_as_bool(
-                _first_env("FEATURE_EXPERIENCE_MODE_ENABLED", default="false"),
-                False,
+                _first_env("FEATURE_EXPERIENCE_MODE_ENABLED", default="true"),
+                True,
             ),
         )
 

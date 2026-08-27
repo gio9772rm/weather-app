@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
+from climatology import refresh_climatology
 from config import Settings
 from db import ensure_schema, get_engine, get_meta, set_meta
 from ensemble_forecast import refresh_ensemble
@@ -30,7 +31,9 @@ from forecast_blend import (
     score_forecasts_against_references,
 )
 from forecast_providers import fetch_all_forecasts
+from measured_pollen import refresh_measured_pollen
 from observed_air import refresh_observed_air
+from official_alerts import refresh_official_alerts
 from official_observations import ingest_official_observations
 from source_health import record_source_result
 from weather_ingest_ecowitt_cloud import run_station_ingest
@@ -240,6 +243,31 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         warnings.append(
             f"Aria ufficiale osservata rinviata: {_safe_message(air_warning)}"
         )
+    try:
+        measured_pollen, pollen_warning = refresh_measured_pollen(cfg)
+    except Exception as exc:  # noqa: BLE001 - institutional feed stays isolated
+        measured_pollen = pd.DataFrame()
+        pollen_warning = _safe_message(exc) or "errore interno isolato"
+    if pollen_warning:
+        warnings.append(f"Pollini misurati rinviati: {_safe_message(pollen_warning)}")
+    try:
+        official_alerts, alerts_warning = refresh_official_alerts(cfg)
+    except Exception as exc:  # noqa: BLE001 - bulletins never stop the forecast
+        official_alerts = pd.DataFrame()
+        alerts_warning = _safe_message(exc) or "errore interno isolato"
+    if alerts_warning:
+        warnings.append(
+            f"Bollettini ufficiali rinviati: {_safe_message(alerts_warning)}"
+        )
+    try:
+        climate_normals, climate_warning = refresh_climatology(cfg)
+    except Exception as exc:  # noqa: BLE001 - local baseline is an optional layer
+        climate_normals = pd.DataFrame()
+        climate_warning = _safe_message(exc) or "errore interno isolato"
+    if climate_warning:
+        warnings.append(
+            f"Climatologia locale rinviata: {_safe_message(climate_warning)}"
+        )
     return {
         "archived": archived,
         "blend_rows": len(blend),
@@ -248,6 +276,9 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         "reference_score_rows": reference_score_rows,
         "ensemble_rows": len(ensemble),
         "observed_air_rows": len(observed_air),
+        "measured_pollen_rows": len(measured_pollen),
+        "official_alert_rows": len(official_alerts),
+        "climate_normal_rows": len(climate_normals),
         "warnings": warnings,
     }
 
@@ -287,6 +318,10 @@ def prune_derived_history() -> None:
         connection.execute(
             text("DELETE FROM environment_observations WHERE time < :cutoff"),
             {"cutoff": observation_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM official_alerts WHERE issued_at < :cutoff"),
+            {"cutoff": score_cutoff},
         )
         connection.execute(
             text("DELETE FROM ingest_log WHERE started_at < :cutoff"),

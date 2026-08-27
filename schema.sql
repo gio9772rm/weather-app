@@ -283,8 +283,7 @@ CREATE TABLE IF NOT EXISTS environment_observations (
 CREATE INDEX IF NOT EXISTS idx_environment_observations_metric_time
   ON environment_observations (metric, time);
 
--- Reserved additive stores for the next V4 increments (climatology and official
--- alert banners).  They are dormant until their feature flags are enabled.
+-- Additive V4.2 stores for the local climatology and official alert banners.
 CREATE TABLE IF NOT EXISTS climate_normals (
   source TEXT NOT NULL,
   month INTEGER NOT NULL,
