@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import text
 
 from forecast_blend import (
+    _bias_correct_forecast_value,
     _to_hourly,
     archive_forecast,
     build_blend,
@@ -96,6 +97,12 @@ def test_physical_bounds_remove_negative_rain_and_invalid_percentages():
     assert bounded["snow_mm"].tolist() == [0.0, 0.0]
     assert bounded["precip_probability"].tolist() == [0.0, 100.0]
     assert bounded["humidity"].tolist() == [0.0, 100.0]
+
+
+def test_rain_bias_correction_never_creates_rain_from_a_dry_hour():
+    assert _bias_correct_forecast_value("rain_mm", 0.0, -0.3) == 0.0
+    assert _bias_correct_forecast_value("rain_mm", 1.0, 0.2) == pytest.approx(0.8)
+    assert _bias_correct_forecast_value("temp_c", 20.0, -1.0) == 21.0
 
 
 def test_recent_holdout_reports_skill_and_rain_reliability(sqlite_engine):

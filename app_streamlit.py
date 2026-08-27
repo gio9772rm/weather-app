@@ -58,6 +58,7 @@ from light_pollution import (
     fetch_light_pollution,
 )
 from radar_nowcast import RadarNowcastError, fetch_radar_nowcast
+from rain_consistency import reportable_rain_amount, reportable_rain_series
 from share_card import ShareCardSummary, render_share_card
 from ux_features import best_ventilation_window, daily_city_comparison
 from weather_display import compass_direction, forecast_interval, weather_cell_style
@@ -1282,7 +1283,7 @@ def render_v4_hourly_strip(
             f'<div class="hourly-icon">{_weather_icon(description)}</div>'
             f'<div class="hourly-temp">{_number(row.get("temp_c"), 0, "°")}</div>'
             f'<div class="hourly-cloud">☁️ {_number(row.get("clouds"), 0, "%")} nuvole</div>'
-            f'<div class="hourly-rain">☔ {_number(row.get("precip_probability"), 0, "%")} · {_number(row.get("rain_mm"), 1, " mm")}</div>'
+            f'<div class="hourly-rain">☔ {_number(row.get("precip_probability"), 0, "%")} · {_number(reportable_rain_amount(row.get("rain_mm"), row.get("precip_probability")), 1, " mm")}</div>'
             f'<div class="hourly-wind">💨 {_number(row.get("wind_kmh"), 0, " km/h")}</div>'
             "</div>"
         )
@@ -2837,7 +2838,7 @@ def forecast_alerts(forecast: pd.DataFrame) -> None:
     if next_24.empty:
         return
     messages = []
-    rain = _numeric_series(next_24, "rain_mm", 0).sum()
+    rain = reportable_rain_series(next_24).sum()
     pop = _numeric_series(next_24, "precip_probability", 0).max()
     gust = _numeric_series(next_24, "wind_gust_kmh", 0).max()
     confidence = _numeric_series(next_24, "confidence").mean()

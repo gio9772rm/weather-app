@@ -64,6 +64,19 @@ def test_daily_briefing_and_insights_explain_rain_and_confidence() -> None:
     assert insights[-1].value == "76%"
 
 
+def test_daily_experience_ignores_low_probability_rain_traces() -> None:
+    forecast = _forecast()
+    forecast["rain_mm"] = 0.2
+    forecast["precip_probability"] = 3.0
+    now = pd.Timestamp("2026-08-25T08:00:00Z")
+
+    briefing = build_daily_briefing(forecast, now=now)
+    insights = weather_insights(forecast, timezone="Europe/Rome", now=now)
+
+    assert "nessuna pioggia rilevante" in briefing.detail
+    assert insights[0].value == "Nessuna fase rilevante"
+
+
 def test_activity_outlooks_are_bounded_and_choose_local_times() -> None:
     activities = activity_outlooks(
         _forecast(),

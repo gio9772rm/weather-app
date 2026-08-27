@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from rain_consistency import reportable_rain_series
+
 
 @dataclass(frozen=True)
 class WeatherInsight:
@@ -107,7 +109,7 @@ def build_daily_briefing(
     first = upcoming.iloc[0]
     description = str(first.get("description") or "Variabile")
     temperatures = _series(upcoming, "temp_c")
-    rain = _series(upcoming, "rain_mm", 0).clip(lower=0)
+    rain = reportable_rain_series(upcoming)
     probability = _series(upcoming, "precip_probability", 0).clip(0, 100)
     gust = _series(upcoming, "wind_gust_kmh", 0).clip(lower=0)
     confidence_values = _series(upcoming, "confidence")
@@ -138,7 +140,12 @@ def build_daily_briefing(
     if pd.notna(minimum) and pd.notna(maximum):
         details.append(f"temperature tra {minimum:.0f}° e {maximum:.0f}°")
     if pd.notna(rain_total) and pd.notna(rain_max):
-        details.append(f"{rain_total:.1f} mm previsti, rischio massimo {rain_max:.0f}%")
+        if rain_total >= 0.05 or rain_max >= 20:
+            details.append(
+                f"{rain_total:.1f} mm previsti, rischio massimo {rain_max:.0f}%"
+            )
+        else:
+            details.append("nessuna pioggia rilevante")
     if pd.notna(gust_max):
         details.append(f"raffiche fino a {gust_max:.0f} km/h")
     detail = " · ".join(details) or "Dettagli in elaborazione"
@@ -163,7 +170,7 @@ def weather_insights(
     if upcoming.empty:
         return []
     local_time = upcoming["valid_time"].dt.tz_convert(timezone)
-    rain = _series(upcoming, "rain_mm", 0).clip(lower=0)
+    rain = reportable_rain_series(upcoming)
     probability = _series(upcoming, "precip_probability", 0).clip(0, 100)
     gust = _series(upcoming, "wind_gust_kmh", 0).clip(lower=0)
     temperatures = _series(upcoming, "temp_c")
