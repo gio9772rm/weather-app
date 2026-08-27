@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from data_access import daily_forecast
 from weather_display import compass_direction, forecast_interval, weather_cell_style
@@ -41,6 +42,22 @@ def test_daily_forecast_includes_humidity_and_mean_wind() -> None:
     assert result.loc[0, "humidity_mean"] == 70.0
     assert result.loc[0, "wind_mean"] == 9.0
     assert result.loc[0, "wind_max"] == 18.0
+
+
+def test_daily_forecast_does_not_sum_low_probability_traces() -> None:
+    times = pd.date_range("2026-08-20T00:00:00Z", periods=4, freq="h")
+    frame = pd.DataFrame(
+        {
+            "valid_time": times,
+            "rain_mm": [0.2, 0.2, 0.4, 0.8],
+            "precip_probability": [0.0, 3.0, 25.0, 70.0],
+            "description": ["Sereno", "Sereno", "Variabile", "Pioggia"],
+        }
+    )
+
+    result = daily_forecast(frame, "Europe/Rome")
+
+    assert result.loc[0, "rain_mm"] == pytest.approx(1.2)
 
 
 def test_weather_cell_styles_flag_thresholds() -> None:

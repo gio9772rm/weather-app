@@ -76,6 +76,15 @@ REFERENCE_OBSERVATION_VARIABLES = (
 )
 
 
+def _bias_correct_forecast_value(variable: str, value: float, bias: float) -> float:
+    """Apply additive bias without turning a dry forecast into rain."""
+    numeric = float(value)
+    if variable == "rain_mm" and numeric <= 0.0:
+        return 0.0
+    corrected = numeric - float(bias)
+    return max(corrected, 0.0) if variable == "rain_mm" else corrected
+
+
 def _enabled_reference_frame(frame: pd.DataFrame, cfg: Settings) -> pd.DataFrame:
     """Exclude disabled sources, including scores left by an earlier activation."""
     if frame.empty or not cfg.official_observations_enabled or "source" not in frame:
@@ -1089,8 +1098,10 @@ def build_blend(
                     reference_scores,
                     cfg.official_score_max_share,
                 )
-                corrected = float(value) - (
-                    bias if score_variable == variable else 0.0
+                corrected = _bias_correct_forecast_value(
+                    variable,
+                    float(value),
+                    bias if score_variable == variable else 0.0,
                 )
                 if variable == "wind_dir":
                     corrected %= 360.0

@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from config import Settings, settings
 from db import ensure_schema, get_engine
 from forecast_quality import enforce_physical_bounds
+from rain_consistency import reportable_rain_series
 from source_health import configured_sources
 
 
@@ -559,10 +560,12 @@ def daily_forecast(frame: pd.DataFrame, timezone_name: str) -> pd.DataFrame:
     data = frame.copy()
     data["local_time"] = data["valid_time"].dt.tz_convert(timezone_name)
     data["date"] = data["local_time"].dt.date
+    if "rain_mm" in data:
+        data["reportable_rain_mm"] = reportable_rain_series(data)
     aggregations: dict[str, tuple[str, str]] = {
         "temp_min": ("temp_c", "min"),
         "temp_max": ("temp_c", "max"),
-        "rain_mm": ("rain_mm", "sum"),
+        "rain_mm": ("reportable_rain_mm", "sum"),
         "pop_max": ("precip_probability", "max"),
         "humidity_mean": ("humidity", "mean"),
         "wind_mean": ("wind_kmh", "mean"),
