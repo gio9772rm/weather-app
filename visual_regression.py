@@ -129,59 +129,65 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                 browser = playwright.chromium.launch(headless=True)
                 for name, tab, theme, width, height in CASES:
                     page = browser.new_page(viewport={"width": width, "height": height})
-                    page.goto(
-                        f"{base_url}/?tab={tab}&theme={theme}",
-                        wait_until="domcontentloaded",
-                        timeout=45_000,
-                    )
-                    page.wait_for_selector(
-                        '[data-testid="stAppViewContainer"]', timeout=45_000
-                    )
-                    page.wait_for_timeout(2_000)
-                    body = page.locator("body").inner_text()
-                    if any(marker in body for marker in ("�", "Ã", "Â")):
-                        raise AssertionError(f"{name}: testo con encoding corrotto")
-                    page_background = page.evaluate(
-                        "getComputedStyle(document.documentElement)"
-                        ".getPropertyValue('--page-bg').trim()"
-                    )
-                    expected_background = "#05070b" if theme == "dark" else "#f6f8fb"
-                    if page_background.lower() != expected_background:
-                        raise AssertionError(f"{name}: tema {theme} non applicato")
-                    overflow = page.evaluate(
-                        "document.documentElement.scrollWidth - window.innerWidth"
-                    )
-                    if overflow > 3:
-                        raise AssertionError(
-                            f"{name}: overflow orizzontale pagina di {overflow}px"
-                        )
-                    if tab == "today":
-                        cards = page.locator("details.expandable-card")
-                        if cards.count() < 6:
-                            raise AssertionError(f"{name}: card espandibili mancanti")
-                        first = cards.first
-                        first.locator("summary").click()
-                        if not first.get_attribute("open"):
-                            raise AssertionError(
-                                f"{name}: apertura card non funzionante"
-                            )
-                        clipped = page.locator(
-                            ".current-card summary,.activity-card summary,.air-card summary"
-                        ).evaluate_all(
-                            "els => els.filter(el => el.scrollWidth > el.clientWidth + 3).length"
-                        )
-                        if clipped:
-                            raise AssertionError(
-                                f"{name}: {clipped} card con testo tagliato"
-                            )
-                    if tab == "system" and "Diagnostica Ecowitt" not in body:
-                        raise AssertionError(
-                            f"{name}: diagnostica Ecowitt non visibile"
-                        )
                     screenshot = output_path / f"{name}.png"
-                    page.screenshot(path=str(screenshot), full_page=True)
+                    try:
+                        page.goto(
+                            f"{base_url}/?tab={tab}&theme={theme}",
+                            wait_until="domcontentloaded",
+                            timeout=45_000,
+                        )
+                        page.wait_for_selector(
+                            '[data-testid="stAppViewContainer"]', timeout=45_000
+                        )
+                        page.wait_for_timeout(2_000)
+                        body = page.locator("body").inner_text()
+                        if any(marker in body for marker in ("�", "Ã", "Â")):
+                            raise AssertionError(f"{name}: testo con encoding corrotto")
+                        page_background = page.evaluate(
+                            "getComputedStyle(document.documentElement)"
+                            ".getPropertyValue('--page-bg').trim()"
+                        )
+                        expected_background = (
+                            "#05070b" if theme == "dark" else "#f6f8fb"
+                        )
+                        if page_background.lower() != expected_background:
+                            raise AssertionError(f"{name}: tema {theme} non applicato")
+                        overflow = page.evaluate(
+                            "document.documentElement.scrollWidth - window.innerWidth"
+                        )
+                        if overflow > 3:
+                            raise AssertionError(
+                                f"{name}: overflow orizzontale pagina di {overflow}px"
+                            )
+                        if tab == "today":
+                            cards = page.locator("details.expandable-card")
+                            if cards.count() < 6:
+                                raise AssertionError(
+                                    f"{name}: card espandibili mancanti"
+                                )
+                            first = cards.first
+                            first.locator("summary").click()
+                            if not first.evaluate("element => element.open"):
+                                raise AssertionError(
+                                    f"{name}: apertura card non funzionante"
+                                )
+                            clipped = page.locator(
+                                ".current-card summary,.activity-card summary,.air-card summary"
+                            ).evaluate_all(
+                                "els => els.filter(el => el.scrollWidth > el.clientWidth + 3).length"
+                            )
+                            if clipped:
+                                raise AssertionError(
+                                    f"{name}: {clipped} card con testo tagliato"
+                                )
+                        if tab == "system" and "Diagnostica Ecowitt" not in body:
+                            raise AssertionError(
+                                f"{name}: diagnostica Ecowitt non visibile"
+                            )
+                    finally:
+                        page.screenshot(path=str(screenshot), full_page=True)
+                        page.close()
                     digests[name] = hashlib.sha256(screenshot.read_bytes()).hexdigest()
-                    page.close()
                 browser.close()
             manifest = output_path / "manifest.json"
             manifest.write_text(
