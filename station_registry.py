@@ -95,7 +95,7 @@ def ensure_primary_station(
             enabled=True,
             engine=engine,
         )
-    except Exception as exc:  # noqa: BLE001 - registry must never stop Ecowitt
+    except Exception as exc:
         if strict:
             raise
         log.warning("Registro stazione non aggiornato: %s", str(exc)[:300])
@@ -153,7 +153,7 @@ def sync_primary_station_history(
                 {"station_id": identifier, "cutoff": cutoff},
             )
         return max(0, int(result.rowcount or 0))
-    except Exception as exc:  # noqa: BLE001 - mirror is secondary to station_raw
+    except Exception as exc:
         if strict:
             raise
         log.warning("Mirror stazione non aggiornato: %s", str(exc)[:300])
