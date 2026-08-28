@@ -56,7 +56,7 @@ narwhals==2.25.0
     # via
     #   altair
     #   plotly
-numpy==2.3.5
+numpy==2.4.6
     # via
     #   -r requirements.txt
     #   pandas
