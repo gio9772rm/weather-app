@@ -24,16 +24,23 @@ def test_source_health_preserves_last_success_and_counts_failures(sqlite_engine)
         engine=sqlite_engine,
     )
     assert record_source_result(
-        "ecowitt", success=False, error="temporaneamente non disponibile", engine=sqlite_engine
+        "ecowitt",
+        success=False,
+        error="temporaneamente non disponibile",
+        engine=sqlite_engine,
     )
     assert record_source_result(
         "ecowitt", success=False, error="secondo tentativo", engine=sqlite_engine
     )
 
     with sqlite_engine.connect() as connection:
-        row = connection.execute(
-            text("SELECT * FROM source_health WHERE source='ecowitt'")
-        ).mappings().one()
+        row = (
+            connection.execute(
+                text("SELECT * FROM source_health WHERE source='ecowitt'")
+            )
+            .mappings()
+            .one()
+        )
     assert row["last_success_at"] is not None
     assert row["last_observation_at"] == "2026-08-24T10:00:00Z"
     assert row["consecutive_failures"] == 2
@@ -126,10 +133,58 @@ def test_suspended_arsial_does_not_keep_showing_historical_portal_failures(
     assert health.loc["arsial_siarl", "display_status"] == "disabled"
 
 
-def test_unattempted_portable_backup_is_manual_not_waiting(sqlite_engine):
+def test_unattempted_automatic_protection_jobs_are_scheduled(sqlite_engine):
     health = load_source_health(Settings.from_env()).set_index("source")
 
-    assert health.loc["database_backup", "display_status"] == "manual"
+    assert health.loc["database_backup", "display_status"] == "scheduled"
+    assert health.loc["github_backup", "display_status"] == "scheduled"
+    assert health.loc["system_health", "display_status"] == "scheduled"
+
+
+def test_recent_archived_data_remains_usable_after_repeated_provider_failures(
+    sqlite_engine,
+):
+    assert record_source_result(
+        "eea_utd_air",
+        success=True,
+        rows_received=4,
+        last_observation_at=pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=2),
+        engine=sqlite_engine,
+    )
+    for message in ("timeout", "servizio in manutenzione"):
+        assert record_source_result(
+            "eea_utd_air",
+            success=False,
+            error=message,
+            engine=sqlite_engine,
+        )
+
+    health = load_source_health(Settings.from_env()).set_index("source")
+
+    assert health.loc["eea_utd_air", "display_status"] == "cached"
+    assert "CAMS" in health.loc["eea_utd_air", "continuity"]
+
+
+def test_zero_age_archive_is_available_during_provider_outage(sqlite_engine):
+    assert record_source_result(
+        "eea_utd_air",
+        success=True,
+        rows_received=1,
+        last_observation_at=pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=1),
+        engine=sqlite_engine,
+    )
+    for message in ("timeout", "secondo timeout"):
+        assert record_source_result(
+            "eea_utd_air",
+            success=False,
+            error=message,
+            engine=sqlite_engine,
+        )
+
+    health = load_source_health(Settings.from_env()).set_index("source")
+
+    assert health.loc["eea_utd_air", "observation_age_minutes"] == 0
+    assert health.loc["eea_utd_air", "display_status"] == "cached"
 
 
 def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine):
@@ -146,9 +201,7 @@ def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine
         )
     with sqlite_engine.begin() as connection:
         connection.execute(
-            text(
-                "INSERT INTO station_raw (time,data_quality) VALUES (:time,:quality)"
-            ),
+            text("INSERT INTO station_raw (time,data_quality) VALUES (:time,:quality)"),
             rows,
         )
 
@@ -169,3 +222,5 @@ def test_v43_source_catalog_labels_official_radar_and_climate_roles():
     assert catalog["dpc_radar_local"].category == "misure"
     assert catalog["dpc_lightning_local"].category == "sicurezza"
     assert "1991–2020" in catalog["climatology_era5_land"].label
+    assert catalog["github_backup"].expected_minutes == 24 * 60
+    assert catalog["dpc_radar_local"].cache_minutes == 30

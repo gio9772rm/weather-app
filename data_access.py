@@ -517,6 +517,8 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
                 "enabled": item.enabled,
                 "expected_minutes": item.expected_minutes,
                 "category": item.category,
+                "cache_minutes": item.cache_minutes,
+                "continuity": item.continuity,
             }
             for item in configured_sources(cfg)
         ]
@@ -531,16 +533,30 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
     frame["age_minutes"] = frame["last_success_at"].map(
         lambda value: _age_minutes(now, value)
     )
+    frame["observation_age_minutes"] = frame["last_observation_at"].map(
+        lambda value: max(0.0, _age_minutes(now, value))
+    )
 
     def state(row: pd.Series) -> str:
         raw_status = row.get("status")
         stored_status = "" if pd.isna(raw_status) else str(raw_status).strip().lower()
         has_telemetry = bool(stored_status) or pd.notna(row["last_attempt_at"])
         source = str(row.get("source"))
-        # A portable database export is intentionally manual: before the first
-        # verified archive it must not look like a stuck scheduled job.
-        if source == "database_backup" and not has_telemetry:
-            return "manual"
+        cache_minutes = max(0.0, float(row.get("cache_minutes") or 0.0))
+        raw_observation_age = row.get("observation_age_minutes")
+        observation_age = (
+            float(raw_observation_age)
+            if pd.notna(raw_observation_age)
+            else float("inf")
+        )
+        cache_available = cache_minutes > 0 and observation_age <= cache_minutes
+        # Health and backups are GitHub-scheduled processes. Before their first
+        # run, describe the plan rather than showing a false outage.
+        if (
+            source in {"system_health", "database_backup", "github_backup"}
+            and not has_telemetry
+        ):
+            return "scheduled"
         # SIARL is an optional connector. When explicitly suspended, do not
         # keep showing historical portal failures while the operational CFR
         # Lazio reference continues to run.
@@ -556,23 +572,13 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
         if not bool(row["enabled"]) and not has_telemetry:
             return "disabled"
         if stored_status == "cached":
-            observed_age = _age_minutes(now, row.get("last_observation_at"))
-            # Cached regional observations remain useful for historical scoring,
-            # but the UI must never present an old archive as a live source.
-            cache_hours = (
-                cfg.arsial_cache_hours
-                if source == "arsial_siarl"
-                else 24
-            )
-            if observed_age <= cache_hours * 60:
+            if cache_available:
                 return "cached"
-            return (
-                "external_unavailable"
-                if source == "arsial_siarl"
-                else "offline"
-            )
+            return "external_unavailable" if source == "arsial_siarl" else "offline"
         failures = int(row["consecutive_failures"])
         if failures >= 2:
+            if cache_available:
+                return "cached"
             # ARSIAL is an optional institutional cross-check. A portal outage
             # must remain visible without looking like a failure of Ecowitt or
             # of the forecast pipeline itself.
@@ -589,6 +595,8 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
             return "online"
         if age <= expected * 3.5:
             return "delayed"
+        if cache_available:
+            return "cached"
         return "offline"
 
     frame["display_status"] = frame.apply(state, axis=1)
@@ -664,7 +672,11 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
         "MAX(CASE WHEN temp_c IS NOT NULL THEN time END) AS temperature_time, "
         "MAX(CASE WHEN humidity IS NOT NULL THEN time END) AS humidity_time, "
         "MAX(CASE WHEN pressure_hpa IS NOT NULL THEN time END) AS pressure_time, "
-        "MAX(CASE WHEN wind_kmh IS NOT NULL THEN time END) AS wind_time "
+        "MAX(CASE WHEN wind_kmh IS NOT NULL THEN time END) AS wind_time, "
+        "MAX(CASE WHEN rain_mm IS NOT NULL OR rain_rate_mm_h IS NOT NULL "
+        "THEN time END) AS rain_time, "
+        "MAX(CASE WHEN solar_w_m2 IS NOT NULL OR uv_index IS NOT NULL "
+        "THEN time END) AS solar_time "
         "FROM station_raw"
     )
     blend_frame = _read(
@@ -681,6 +693,8 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
         "humidity": _metric_timestamp(station_frame, "humidity_time", station_time),
         "pressure": _metric_timestamp(station_frame, "pressure_time", station_time),
         "wind": _metric_timestamp(station_frame, "wind_time", station_time),
+        "rain": _metric_timestamp(station_frame, "rain_time", station_time),
+        "solar": _metric_timestamp(station_frame, "solar_time", station_time),
     }
     forecast_issued = _timestamp_from_frame(blend_frame, "forecast_issued")
     forecast_until = _timestamp_from_frame(blend_frame, "forecast_until")
@@ -706,8 +720,9 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
         }
         for name, timestamp in measurement_times.items()
     }
+    core_measurements = ("temperature", "humidity", "pressure", "wind")
     station_age = max(
-        (details["age_minutes"] for details in measurement_freshness.values()),
+        (measurement_freshness[name]["age_minutes"] for name in core_measurements),
         default=float("inf"),
     )
     station_sample_age = _age_minutes(now, station_time)
@@ -718,7 +733,7 @@ def health_snapshot(cfg: Settings = settings) -> dict[str, Any]:
     )
     status_rank = {"online": 0, "delayed": 1, "offline": 2}
     station_status = max(
-        (details["status"] for details in measurement_freshness.values()),
+        (measurement_freshness[name]["status"] for name in core_measurements),
         key=status_rank.get,
         default="offline",
     )

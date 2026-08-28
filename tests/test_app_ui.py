@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+import streamlit as st
+from sqlalchemy import text
 from streamlit.testing.v1 import AppTest
 
-from db import reset_engine_cache
+from db import ensure_schema, get_engine, reset_engine_cache
 
 
 def test_theme_css_covers_streamlit_native_widget_text() -> None:
@@ -31,14 +34,20 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         ".expandable-card",
         ".card-expanded",
         ".air-grid",
+        ".live-badge",
+        "@keyframes live-pulse",
         "_use_local_subplot_keys",
     ):
         assert selector in source
     assert '<details class="current-card expandable-card">' in source
     assert '<details class="activity-card expandable-card' in source
     assert '<details class="air-card expandable-card' in source
+    assert 'content:"↓"' in source
+    assert 'content:"\\2193"' not in source
     today = source[
-        source.index("def render_today_dashboard") : source.index("def _city_future_hours")
+        source.index("def render_today_dashboard") : source.index(
+            "def _city_future_hours"
+        )
     ]
     assert today.index("render_v4_activities") < today.index("render_official_alerts")
     assert "lat={CFG.latitude:.4f}" not in source
@@ -99,3 +108,51 @@ def test_simple_and_expert_modes_are_available(tmp_path, monkeypatch, request) -
     app.sidebar.radio[1].set_value("Esperta").run()
     assert not app.exception
     assert app.sidebar.radio[1].value == "Esperta"
+
+
+def test_recent_station_cards_show_real_live_badges(
+    tmp_path, monkeypatch, request
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "app-live.db"))
+    reset_engine_cache()
+    st.cache_data.clear()
+    request.addfinalizer(st.cache_data.clear)
+    request.addfinalizer(reset_engine_cache)
+    ensure_schema()
+    now = pd.Timestamp.now(tz="UTC")
+    older = (now - pd.Timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    current = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw ("
+                "time,temp_c,humidity,pressure_hpa,wind_kmh,windgust_kmh,"
+                "winddir,rain_mm,rain_rate_mm_h,solar_w_m2,uv_index,source,data_quality"
+                ") VALUES ("
+                ":time,23.8,57,1013,4,7,170,0,0,150,1,'test','ok')"
+            ),
+            {"time": older},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO station_raw ("
+                "time,temp_c,humidity,pressure_hpa,wind_kmh,windgust_kmh,"
+                "winddir,rain_mm,rain_rate_mm_h,solar_w_m2,uv_index,source,data_quality"
+                ") VALUES ("
+                ":time,24.2,55,1014,5,8,180,NULL,NULL,NULL,NULL,'test','ok')"
+            ),
+            {"time": current},
+        )
+
+    app = AppTest.from_file(
+        Path(__file__).parents[1] / "app_streamlit.py", default_timeout=30
+    ).run()
+
+    assert not app.exception
+    rendered = "\n".join(item.value for item in app.markdown)
+    assert rendered.count('<details class="current-card expandable-card">') == 6
+    assert "live-badge is-live" in rendered
+    assert "live-badge is-stale" in rendered
+    assert "NON LIVE" in rendered
+    assert "�" not in rendered

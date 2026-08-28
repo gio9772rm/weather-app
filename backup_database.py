@@ -182,13 +182,72 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
     return manifest
 
 
+def record_cloud_backup_result(
+    *,
+    success: bool,
+    rows: int = 0,
+    observed_at: Any = None,
+    error: str = "",
+    engine: Engine | None = None,
+) -> bool:
+    """Record the upload separately from local archive creation/verification."""
+    return record_source_result(
+        "github_backup",
+        success=success,
+        rows_received=max(0, int(rows or 0)),
+        last_observation_at=observed_at,
+        error=error or ("" if success else "caricamento cloud non riuscito"),
+        engine=engine,
+    )
+
+
+def _append_github_outputs(
+    output_file: str | Path,
+    destination: Path,
+    manifest: dict[str, Any],
+) -> None:
+    rows = sum(int(item.get("rows") or 0) for item in manifest["tables"].values())
+    created = pd.to_datetime(manifest.get("created_at"), utc=True, errors="coerce")
+    local_date = (
+        created.tz_convert("Europe/Rome").strftime("%Y-%m-%d")
+        if pd.notna(created)
+        else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    )
+    with Path(output_file).open("a", encoding="utf-8") as handle:
+        handle.write(f"path={destination.resolve()}\n")
+        handle.write(f"encrypted_path={destination.resolve()}.enc\n")
+        handle.write(f"created_at={manifest['created_at']}\n")
+        handle.write(f"local_date={local_date}\n")
+        handle.write(f"rows={rows}\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Backup portatile e verificato del database Meteo V4.3"
     )
     parser.add_argument("--output", default="backups", help="Cartella o file ZIP")
     parser.add_argument("--verify", help="Verifica un archivio esistente")
+    parser.add_argument(
+        "--github-output",
+        help="Scrive percorso e metadati nel file output di GitHub Actions",
+    )
+    parser.add_argument(
+        "--record-cloud-status",
+        choices=("success", "error"),
+        help="Registra l'esito del caricamento cifrato senza creare un nuovo ZIP",
+    )
+    parser.add_argument("--rows", type=int, default=0)
+    parser.add_argument("--observed-at")
+    parser.add_argument("--error", default="")
     args = parser.parse_args()
+    if args.record_cloud_status:
+        ok = record_cloud_backup_result(
+            success=args.record_cloud_status == "success",
+            rows=args.rows,
+            observed_at=args.observed_at,
+            error=args.error,
+        )
+        return 0 if ok else 2
     if args.verify:
         manifest = verify_backup(args.verify)
         print(
@@ -197,6 +256,9 @@ def main() -> int:
         )
         return 0
     destination = create_backup(args.output)
+    manifest = verify_backup(destination)
+    if args.github_output:
+        _append_github_outputs(args.github_output, destination, manifest)
     print(f"Backup creato e verificato: {destination}")
     return 0
 

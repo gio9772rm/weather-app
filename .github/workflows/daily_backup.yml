@@ -1,0 +1,99 @@
+name: Meteo V4.3 - Backup giornaliero
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 22 * * *"
+      timezone: "Europe/Rome"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meteo-v43-daily-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backup dependencies
+        run: pip install -r requirements-ingest.txt
+
+      - name: Check database secret
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Manca DATABASE_URL"
+            exit 2
+          fi
+
+      - name: Create and verify portable backup
+        id: backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python backup_database.py \
+            --output "$RUNNER_TEMP/meteo-database-${GITHUB_RUN_ID}.zip" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Encrypt backup before leaving the runner
+        id: encrypt
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PATH: ${{ steps.backup.outputs.path }}
+          ENCRYPTED_PATH: ${{ steps.backup.outputs.encrypted_path }}
+        shell: bash
+        run: |
+          set +x
+          METEO_BACKUP_KEY="$(printf '%s' "$DATABASE_URL" | openssl dgst -sha256 -binary | openssl base64 -A)"
+          export METEO_BACKUP_KEY
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 -md sha256 \
+            -in "$BACKUP_PATH" -out "$ENCRYPTED_PATH" -pass env:METEO_BACKUP_KEY
+          unset METEO_BACKUP_KEY
+          test -s "$ENCRYPTED_PATH"
+          shred -u "$BACKUP_PATH" || rm -f "$BACKUP_PATH"
+
+      - name: Store encrypted backup on GitHub
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: meteo-db-${{ steps.backup.outputs.local_date }}-${{ github.run_id }}
+          path: ${{ steps.backup.outputs.encrypted_path }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Record cloud-backup outcome
+        if: ${{ always() && steps.backup.outcome == 'success' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          BACKUP_ROWS: ${{ steps.backup.outputs.rows }}
+          BACKUP_CREATED_AT: ${{ steps.backup.outputs.created_at }}
+        shell: bash
+        run: |
+          if [ "$UPLOAD_OUTCOME" = "success" ]; then
+            cloud_status="success"
+            cloud_error=""
+          else
+            cloud_status="error"
+            cloud_error="caricamento artefatto GitHub non riuscito"
+          fi
+          python backup_database.py \
+            --record-cloud-status "$cloud_status" \
+            --rows "$BACKUP_ROWS" \
+            --observed-at "$BACKUP_CREATED_AT" \
+            --error "$cloud_error"
