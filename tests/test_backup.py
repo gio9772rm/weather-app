@@ -9,6 +9,7 @@ from backup_database import (
     _append_github_outputs,
     create_backup,
     record_cloud_backup_result,
+    restore_backup,
     verify_backup,
 )
 
@@ -29,7 +30,7 @@ def test_backup_is_portable_checksummed_and_contains_no_connection_string(
 
     assert manifest["format"] == "meteo-v4-portable-backup"
     assert manifest["version"] == 2
-    assert manifest["schema_version"] == 7
+    assert manifest["schema_version"] == 8
     assert manifest["tables"]["station_raw"]["rows"] == 1
     assert {
         "station_profiles",
@@ -37,6 +38,7 @@ def test_backup_is_portable_checksummed_and_contains_no_connection_string(
         "forecast_regime_scores",
         "climate_reference_normals",
         "radar_local_snapshots",
+        "ecowitt_telemetry",
     } <= set(manifest["tables"])
     with zipfile.ZipFile(destination) as archive:
         assert {"manifest.json", "schema.sql", "station_raw.csv"} <= set(
@@ -98,3 +100,25 @@ def test_github_outputs_and_cloud_upload_have_independent_health(
         )
     assert cloud["status"] == "online"
     assert cloud["last_success_at"] is not None
+
+
+def test_verified_backup_restores_to_new_disposable_sqlite(sqlite_engine, tmp_path):
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,temp_c,source,data_quality) "
+                "VALUES ('2026-08-28T10:00:00Z',23.5,'test','ok')"
+            )
+        )
+    archive = create_backup(tmp_path / "restore-source.zip", sqlite_engine)
+    destination = tmp_path / "restored.sqlite"
+
+    summary = restore_backup(archive, destination)
+
+    assert summary["tables"] >= 20
+    assert destination.exists()
+    import sqlite3
+
+    with sqlite3.connect(destination) as database:
+        assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert database.execute("SELECT temp_c FROM station_raw").fetchone()[0] == 23.5

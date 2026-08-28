@@ -601,7 +601,7 @@ def run_all(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Pipeline Meteo V4.3")
+    parser = argparse.ArgumentParser(description="Pipeline Meteo V4.4")
     parser.add_argument("--backfill-hours", type=int, default=None)
     parser.add_argument("--skip-station", action="store_true")
     parser.add_argument("--force-forecast", action="store_true")

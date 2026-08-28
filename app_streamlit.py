@@ -20,6 +20,7 @@ from astro_weather import (
     daily_astronomy_summary,
     prepare_astronomy,
 )
+from astronomy_planner import plan_targets, target_labels
 from chart_data import (
     clip_forecast,
     merge_intervals,
@@ -61,6 +62,7 @@ from data_access import (
     load_station_profiles,
 )
 from dpc_radar import DpcRadarError, fetch_dpc_radar_snapshot
+from ecowitt_diagnostics import load_ecowitt_diagnostics
 from feature_registry import features as feature_registry
 from forecast_change import ForecastChangeSummary, summarize_forecast_change
 from light_pollution import (
@@ -513,6 +515,14 @@ def completeness_data() -> dict[str, Any]:
     return data_completeness_snapshot(24)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def ecowitt_diagnostic_data(station_id: str):
+    return load_ecowitt_diagnostics(
+        station_id=station_id,
+        stale_minutes=min(CFG.station_stale_minutes, 30),
+    )
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def official_station_data() -> pd.DataFrame:
     return load_official_station_status()
@@ -900,7 +910,18 @@ def _style_status_table(
             lambda value: (
                 weather_cell_style(80, "confidence")
                 if str(value).lower()
-                in {"ok", "success", "online", "operativa", "riuscita", "attiva"}
+                in {
+                    "ok",
+                    "success",
+                    "online",
+                    "operativa",
+                    "operativo",
+                    "riuscita",
+                    "attiva",
+                    "regolare",
+                    "ottima",
+                    "favorevole",
+                }
                 else weather_cell_style(20, "confidence")
                 if str(value).lower()
                 in {
@@ -909,6 +930,9 @@ def _style_status_table(
                     "failure",
                     "offline",
                     "non disponibile",
+                    "non disponibili",
+                    "critica",
+                    "troppo basso",
                 }
                 else weather_cell_style(55, "confidence")
             ),
@@ -4609,6 +4633,84 @@ with tab_astro:
                 + ". Le altre previsioni astronomiche restano utilizzabili."
             )
 
+        st.divider()
+        st.markdown(
+            '<div class="section-kicker">Pianificazione personale</div>',
+            unsafe_allow_html=True,
+        )
+        st.subheader("Pianificatore oggetti")
+        available_targets = target_labels()
+        default_target_names = {"M31", "M42", "M45", "M13"}
+        selected_targets = st.multiselect(
+            "Oggetti da osservare o fotografare",
+            options=available_targets,
+            default=[
+                label
+                for label in available_targets
+                if label.split(" · ", 1)[0] in default_target_names
+            ],
+            key="astronomy_targets",
+        )
+        planner_controls = st.columns(2)
+        minimum_altitude = planner_controls[0].slider(
+            "Altezza minima",
+            min_value=10,
+            max_value=60,
+            value=25,
+            step=5,
+            format="%d°",
+            key="astronomy_min_altitude",
+        )
+        minimum_moon_separation = planner_controls[1].slider(
+            "Distanza minima dalla Luna",
+            min_value=10,
+            max_value=90,
+            value=30,
+            step=5,
+            format="%d°",
+            key="astronomy_moon_separation",
+        )
+        target_plan = plan_targets(
+            astro,
+            CFG,
+            selected_targets,
+            minimum_altitude=minimum_altitude,
+            minimum_moon_separation=minimum_moon_separation,
+        )
+        if target_plan.empty:
+            st.info("Seleziona almeno un oggetto per calcolare la finestra migliore.")
+        else:
+            planner_table = pd.DataFrame(
+                {
+                    "Oggetto": target_plan["target"] + " · " + target_plan["name"],
+                    "Tipo": target_plan["category"],
+                    "Mag.": target_plan["magnitude"],
+                    "Finestra migliore": target_plan["best_time"].map(
+                        lambda value: (
+                            "—" if pd.isna(value) else value.strftime("%a %d · %H:%M")
+                        )
+                    ),
+                    "Altezza °": target_plan["altitude"],
+                    "Azimut °": target_plan["azimuth"],
+                    "Score": target_plan["planner_score"],
+                    "Meteo": target_plan["weather_score"],
+                    "Nuvole %": target_plan["clouds"],
+                    "Condensa %": target_plan["dew_risk"],
+                    "Distanza Luna °": target_plan["moon_separation"],
+                    "Luna %": target_plan["moon_illumination"],
+                    "Esito": target_plan["status"],
+                }
+            )
+            render_styled_table(
+                _style_status_table(planner_table.round(0), dark_mode, "Esito"),
+                height=430,
+            )
+        st.caption(
+            "Posizioni e separazione dalla Luna sono calcoli astronomici orari; lo "
+            "score combina altezza, meteo, nuvole e luminosità lunare. Verifica sempre "
+            "ostacoli locali e limiti della montatura prima di iniziare."
+        )
+
         windows = best_observing_windows(astro)
         if windows.empty:
             st.warning(
@@ -4973,7 +5075,7 @@ with tab_system:
         delta_color="off",
     )
     st.caption(
-        "Schema dati v7 · migrazioni additive · controllo Render continuo + verifica "
+        "Schema dati v8 · migrazioni additive · controllo Render continuo + verifica "
         "indipendente GitHub ogni 30 minuti."
     )
     st.markdown("#### Fonti e processi indipendenti")
@@ -5101,8 +5203,95 @@ with tab_system:
     st.caption(
         "Climatologia locale, pollini misurati POLLnet, bollettini DPC/Regione Lazio "
         "e modalità semplice/esperta sono moduli V4.3 indipendenti. Le fonti esterne "
-        "restano non bloccanti e nessuna notifica automatica è attiva."
+        "restano non bloccanti; gli avvisi GitHub riguardano solo guasti operativi, "
+        "non notifiche meteo personali."
     )
+
+    st.markdown("#### Diagnostica Ecowitt")
+    sensor_diagnostics, device_telemetry, diagnostic_summary = ecowitt_diagnostic_data(
+        active_station_id
+    )
+    diagnostic_columns = st.columns(4)
+    diagnostic_columns[0].metric(
+        "Stato sensori",
+        {
+            "online": "Operativi",
+            "warning": "Da controllare",
+            "delayed": "In ritardo",
+            "offline": "Non disponibili",
+        }.get(diagnostic_summary.status, "Da controllare"),
+    )
+    diagnostic_columns[1].metric("Sensori online", str(diagnostic_summary.online))
+    diagnostic_columns[2].metric(
+        "Avvisi / ritardi", str(diagnostic_summary.warning), delta_color="inverse"
+    )
+    diagnostic_columns[3].metric(
+        "Copertura media · 24 h", f"{diagnostic_summary.average_coverage:.1f}%"
+    )
+    diagnostic_labels = {
+        "online": "Operativo",
+        "warning": "Dati sospetti",
+        "delayed": "In ritardo",
+        "offline": "Non disponibile",
+    }
+    diagnostic_table = pd.DataFrame(
+        {
+            "Sensore": sensor_diagnostics["sensor"],
+            "Stato": sensor_diagnostics["status"].map(diagnostic_labels),
+            "Ultimo dato": sensor_diagnostics["last_time"].map(_local_time),
+            "Età": sensor_diagnostics["age_minutes"].map(_age_text),
+            "Valore": sensor_diagnostics.apply(
+                lambda row: (
+                    "—"
+                    if pd.isna(row["last_value"])
+                    else f"{row['last_value']:.1f} {row['unit']}"
+                ),
+                axis=1,
+            ),
+            "Copertura 24 h": sensor_diagnostics["coverage"].map(
+                lambda value: f"{value:.1f}%"
+            ),
+            "Buco massimo": sensor_diagnostics["largest_gap_minutes"].map(
+                lambda value: "—" if pd.isna(value) else f"{value:.0f} min"
+            ),
+            "Campioni segnalati": sensor_diagnostics["quality_flags"],
+        }
+    )
+    if not expert_mode:
+        diagnostic_table = diagnostic_table[
+            ["Sensore", "Stato", "Ultimo dato", "Valore", "Copertura 24 h"]
+        ]
+    render_styled_table(
+        _style_status_table(diagnostic_table, dark_mode, "Stato"), height=390
+    )
+    if device_telemetry.empty:
+        st.caption(
+            "Batterie e segnale compariranno quando l'API cloud Ecowitt li espone. "
+            "La diagnostica non salva MAC, chiavi né risposte API complete."
+        )
+    else:
+        telemetry_labels = {
+            "ok": "Regolare",
+            "warning": "Bassa",
+            "critical": "Critica",
+            "unknown": "Da interpretare",
+        }
+        telemetry_table = pd.DataFrame(
+            {
+                "Dispositivo": device_telemetry["sensor"],
+                "Parametro": device_telemetry["metric"].map(
+                    {"battery": "Batteria", "signal": "Segnale"}
+                ),
+                "Valore": device_telemetry.apply(
+                    lambda row: f"{row['value']:.2f} {row['unit']}".strip(), axis=1
+                ),
+                "Stato": device_telemetry["status"].map(telemetry_labels),
+                "Aggiornato": device_telemetry["observed_at"].map(_local_time),
+            }
+        )
+        render_styled_table(_style_status_table(telemetry_table, dark_mode, "Stato"))
+        if not device_telemetry["metric"].eq("signal").any():
+            st.caption("Il segnale radio non è esposto dalla risposta cloud corrente.")
 
     st.markdown("#### Qualità delle osservazioni")
     recent_quality = (
@@ -5134,8 +5323,8 @@ with tab_system:
     st.markdown("#### Backup e ultime esecuzioni")
     st.caption(
         "Ogni giorno alle 22:00 Europe/Rome GitHub Actions crea lo ZIP portatile, "
-        "verifica conteggi e checksum, lo cifra prima dell'upload e conserva soltanto "
-        "le 30 copie più recenti. Il database non viene mai pubblicato nel repository "
+        "verifica conteggi e checksum, lo cifra prima dell'upload e lo conserva per "
+        "30 giorni. Il database non viene mai pubblicato nel repository "
         "né caricato in chiaro; la procedura funziona anche con il PC locale spento. "
         "I backup/PITR eventualmente inclusi nel piano PostgreSQL Render restano una "
         "protezione indipendente aggiuntiva."

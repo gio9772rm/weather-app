@@ -78,6 +78,8 @@ pillow==12.3.0
     # via streamlit
 plotly==6.9.0
     # via -r requirements.txt
+playwright==1.62.0
+    # via -r requirements-dev.txt
 pluggy==1.6.0
     # via pytest
 protobuf==7.36.0
@@ -92,6 +94,8 @@ pydeck==0.9.3
     # via
     #   -r requirements.txt
     #   streamlit
+pyee==13.0.1
+    # via playwright
 pygments==2.21.0
     # via pytest
 pytest==8.4.2

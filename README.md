@@ -1,4 +1,4 @@
-# Meteo V4.3
+# Meteo V4.4
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -38,7 +38,11 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - scheda **Sistema** con salute di ogni fonte, fallback disponibile, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
-- backup automatico cifrato su GitHub alle 22:00 `Europe/Rome`, indipendente dal PC locale, con 30 copie e verifica SHA-256;
+- diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
+- pianificatore astronomico personale con altezza, azimut, distanza dalla Luna e migliore ora prevista per una selezione di oggetti deep-sky;
+- backup automatico cifrato su GitHub alle 22:00 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
+- issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
+- controllo visuale Playwright su desktop/mobile e tema chiaro/scuro, audit privacy e riferimenti GitHub Actions bloccati a commit immutabili;
 - dipendenze riproducibili tramite `constraints.txt` e aggiornamenti settimanali minori/patch con Dependabot;
 - migrazione additiva: lo schema esistente viene esteso senza cancellare le osservazioni.
 
@@ -61,10 +65,12 @@ flowchart TD
   DPC["DPC + Regione Lazio · bollettini"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
-  DB --> BK["Backup GitHub cifrato · 30 copie"]
+  DB --> BK["Backup GitHub cifrato · 30 giorni"]
+  BK --> DR["Ripristino isolato · mensile"]
   DB --> PITR["PITR Render · se incluso nel piano"]
   DB --> UI["Dashboard Streamlit su Render"]
   HC["GitHub · salute ogni 30 min"] --> DB
+  HC --> OPS["Issue operativa deduplicata"]
   AIR["Open-Meteo Air Quality · CAMS"] --> UI
   RV["RainViewer · nowcast"] --> UI
   DB --> Q["Verifica e calibrazione locale"]
@@ -225,7 +231,7 @@ Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. U
 
 ### Backup verificato
 
-Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.3 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:00 Europe/Rome**, anche se il PC locale è spento.
+Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.4 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:00 Europe/Rome**, anche se il PC locale è spento.
 
 Poiché il repository è pubblico, lo ZIP non lascia mai il runner in chiaro: viene cifrato con AES-256-CBC/PBKDF2 usando una chiave derivata dal `DATABASE_URL` segreto in vigore al momento della copia. GitHub conserva ogni artefatto cifrato per 30 giorni e lo fa scadere automaticamente: con una copia giornaliera restano disponibili le circa 30 copie più recenti, senza concedere al workflow permessi di cancellazione. La pagina Sistema distingue la creazione/verifica dello ZIP dal caricamento cloud, così un upload fallito non viene mostrato come backup remoto riuscito. Se `DATABASE_URL` viene ruotato, conserva in modo sicuro il vecchio valore finché i relativi backup non sono scaduti.
 
@@ -240,7 +246,14 @@ $ultimo = Get-ChildItem backups\meteo-database-*.zip | Sort-Object LastWriteTime
 .\.venv\Scripts\python.exe backup_database.py --verify $ultimo.FullName
 ```
 
-Il formato è intenzionalmente portatile e di sola esportazione. Sposta lo ZIP in un supporto privato separato e cifrato. Un ripristino va eseguito su un database separato e verificato prima di sostituire quello di produzione.
+Il formato è intenzionalmente portatile. Il workflow mensile scarica l'ultimo artefatto non scaduto, lo decifra soltanto sul runner, verifica manifest/checksum, lo ripristina in un nuovo SQLite usa-e-getta e ne controlla l'integrità; non carica né conserva il database decifrato. Per una prova manuale locale:
+
+```powershell
+$ultimo = Get-ChildItem backups\meteo-database-*.zip | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+.\.venv\Scripts\python.exe backup_database.py --restore $ultimo.FullName --restore-sqlite .\data\restore-test.sqlite
+```
+
+Il file di destinazione non deve esistere: questa protezione impedisce di sovrascrivere per errore il database attivo. Sposta sempre gli ZIP locali in un supporto privato separato e cifrato.
 
 ## Stato del sistema e qualità dati
 
@@ -253,6 +266,7 @@ La scheda **Sistema** rende visibili, senza mostrare chiavi o URL sensibili:
 - campioni marcati `range_filtered`, `spike_*`, `stuck_*`, `gust_below_mean_wind` o `estimated_rain`;
 - ultime esecuzioni della pipeline, controllo salute e stato separato del backup cloud;
 - badge **LIVE** verde animato sulle misure recenti e **NON LIVE** rosso sui valori fuori soglia, senza usare il solo colore.
+- diagnostica per temperatura, umidità, pressione, vento, pioggia, solare e UV, con copertura a 5 minuti, buco massimo e stato batteria/segnale quando disponibile.
 
 I valori fisicamente impossibili vengono esclusi solo per il parametro interessato. Salti, sensori apparentemente fermi e incoerenze fra vento e raffica restano archiviati ma sono esplicitamente marcati, così non vengono scambiati per dati pienamente validati.
 
@@ -279,6 +293,8 @@ La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario
 
 **Astronomia Pro** aggiunge proxy previsionali di trasparenza e stabilità usando nuvolosità media/alta, visibilità, CAPE, umidità a 700 hPa, vento del jet a 300 hPa e rischio condensa. Quando questi campi non sono disponibili il punteggio base continua a funzionare; quando sono presenti incidono in modo limitato e tracciabile. Non viene stimato né dichiarato un seeing in arcosecondi.
 
+Il **Pianificatore oggetti** combina queste condizioni con coordinate celesti di un catalogo locale di oggetti deep-sky, altezza/azimut orari e separazione angolare dalla Luna. La selezione e le soglie restano nell'interfaccia; non vengono inviate a servizi esterni e non sostituiscono il controllo degli ostacoli locali o dei limiti della montatura.
+
 Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale serve un fotometro SQM calibrato. Anche la Bortle è una valutazione visuale dell'intero cielo e la conversione dalla sola luminosità zenitale è necessariamente approssimativa.
 
 ## Test
@@ -289,7 +305,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I 135 test coprono avvio dell'interfaccia, riquadri espandibili, modalità semplice/esperta, home e indici V4, qualità dell'aria, pollini CAMS e misure POLLnet, climatologia locale e riferimento 1991–2020, PDF/CSV mensili, bollettini ufficiali, ensemble, confronto emissioni, radar/fulmini DPC locali, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, registro multi-stazione, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/ICON-2I/METAR/ARSIAL/MeteoHub, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, calibrazione per regime, affidabilità pioggia, backup verificato e Astronomia Pro.
+I 148 test coprono anche diagnostica Ecowitt, telemetria sanitizzata, pianificatore oggetti, ripristino completo, avvisi operativi deduplicati e audit privacy. La CI aggiunge contratti visuali Playwright su quattro combinazioni desktop/mobile e chiaro/scuro, conservando gli screenshot per 14 giorni.
 
 ## Dipendenze riproducibili
 
@@ -317,3 +333,5 @@ Per provare e pubblicare questa versione segui [MIGRAZIONE_V4.md](MIGRAZIONE_V4.
 - La loro eliminazione dalla versione corrente non riscrive automaticamente la vecchia cronologia Git; una eventuale bonifica storica va eseguita come operazione separata e coordinata.
 - Vengono conservati 120 giorni di emissioni, 180 giorni di osservazioni/punteggi ufficiali e 30 giorni di log tecnici per limitare la crescita del database.
 - `render.yaml` descrive sia il servizio web sia il Cron Job Render; le chiavi restano variabili segrete e non vengono salvate nel repository.
+- tutti gli `uses:` dei workflow sono bloccati a SHA completi; l'audit privacy rifiuta token, chiavi private, credenziali database e nuovi riferimenti Actions mutabili nel tree corrente.
+- la cronologia Git precedente non viene riscritta automaticamente: un'eventuale bonifica storica richiede una procedura separata, backup dei riferimenti e autorizzazione esplicita al force-push coordinato.

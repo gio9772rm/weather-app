@@ -13,14 +13,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: pip
       - name: Install test dependencies
         run: pip install -r requirements-dev.txt
       - name: Static checks
-        run: ruff check .
+        run: |
+          ruff check .
+          python privacy_audit.py
       - name: Unit tests
         run: python -m pytest -q
+
+  visual:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install visual-test dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+      - name: Desktop and mobile visual contracts
+        run: python visual_regression.py --output visual-artifacts
+      - name: Store visual evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: meteo-v44-visual-${{ github.run_id }}
+          path: visual-artifacts
+          if-no-files-found: warn
+          retention-days: 14

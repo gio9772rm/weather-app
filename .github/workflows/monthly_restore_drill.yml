@@ -1,0 +1,102 @@
+name: Meteo V4.4 - Prova ripristino mensile
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 1 * *"
+      timezone: "Europe/Rome"
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: meteo-v44-monthly-restore-drill
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install restore dependencies
+        run: pip install -r requirements-ingest.txt
+
+      - name: Download latest non-expired encrypted backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | startswith("meteo-db-")))] | sort_by(.created_at) | last | .id // empty')"
+          if [ -z "$artifact_id" ]; then
+            echo "::error::Nessun backup cifrato non scaduto disponibile"
+            exit 2
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            > "$RUNNER_TEMP/backup-artifact.zip"
+          unzip -q "$RUNNER_TEMP/backup-artifact.zip" -d "$RUNNER_TEMP/encrypted-backup"
+
+      - name: Decrypt, verify and restore in an isolated SQLite database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        shell: bash
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Manca DATABASE_URL"
+            exit 2
+          fi
+          encrypted_path="$(find "$RUNNER_TEMP/encrypted-backup" -type f -name '*.enc' -print -quit)"
+          if [ -z "$encrypted_path" ]; then
+            echo "::error::Artefatto cifrato non valido"
+            exit 2
+          fi
+          set +x
+          METEO_BACKUP_KEY="$(printf '%s' "$DATABASE_URL" | openssl dgst -sha256 -binary | openssl base64 -A)"
+          export METEO_BACKUP_KEY
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 250000 -md sha256 \
+            -in "$encrypted_path" -out "$RUNNER_TEMP/portable-backup.zip" \
+            -pass env:METEO_BACKUP_KEY
+          unset METEO_BACKUP_KEY
+          python backup_database.py --verify "$RUNNER_TEMP/portable-backup.zip"
+          python backup_database.py --restore "$RUNNER_TEMP/portable-backup.zip" \
+            --restore-sqlite "$RUNNER_TEMP/restored-weather.sqlite"
+          python - <<'PY'
+          import sqlite3
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "restored-weather.sqlite"
+          with sqlite3.connect(path) as database:
+              assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+              assert database.execute("SELECT COUNT(*) FROM meta").fetchone()[0] >= 1
+          print("Prova di ripristino completata su database usa-e-getta")
+          PY
+          shred -u "$RUNNER_TEMP/portable-backup.zip" || rm -f "$RUNNER_TEMP/portable-backup.zip"
+          shred -u "$RUNNER_TEMP/restored-weather.sqlite" || rm -f "$RUNNER_TEMP/restored-weather.sqlite"
+
+  notify:
+    needs: restore
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout notification helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Sync deduplicated operational issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python operations_alert.py --key restore-drill
+          --status "${{ needs.restore.result }}"
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

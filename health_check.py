@@ -154,7 +154,7 @@ def run_check(app_url: str = "") -> HealthReport:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Controllo salute Meteo V4.3")
+    parser = argparse.ArgumentParser(description="Controllo salute Meteo V4.4")
     parser.add_argument(
         "--app-url",
         default=os.getenv("APP_HEALTH_URL") or os.getenv("APP_URL") or "",
