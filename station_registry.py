@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -11,6 +12,8 @@ from sqlalchemy.engine import Engine
 
 from config import Settings, settings
 from db import get_engine
+
+log = logging.getLogger("station_registry")
 
 
 def normalise_station_id(value: Any) -> str:
@@ -67,54 +70,80 @@ def register_station(
 
 
 def ensure_primary_station(
-    cfg: Settings = settings, engine: Engine | None = None
+    cfg: Settings = settings,
+    engine: Engine | None = None,
+    *,
+    strict: bool = False,
 ) -> str:
-    return register_station(
-        station_id=cfg.station_id,
-        display_name=cfg.location_name,
-        latitude=cfg.latitude,
-        longitude=cfg.longitude,
-        elevation_m=cfg.elevation_m,
-        timezone=cfg.local_timezone,
-        source="ecowitt",
-        role="primary",
-        enabled=True,
-        engine=engine,
-    )
+    """Ensure the primary profile exists without blocking live Ecowitt ingestion.
+
+    The registry is an additive convenience layer.  Unless ``strict`` is requested,
+    a registry/database migration problem is logged and the stable station id is
+    returned so the authoritative ``station_raw`` ingestion can continue.
+    """
+    identifier = normalise_station_id(cfg.station_id)
+    try:
+        return register_station(
+            station_id=identifier,
+            display_name=cfg.location_name,
+            latitude=cfg.latitude,
+            longitude=cfg.longitude,
+            elevation_m=cfg.elevation_m,
+            timezone=cfg.local_timezone,
+            source="ecowitt",
+            role="primary",
+            enabled=True,
+            engine=engine,
+        )
+    except Exception as exc:  # noqa: BLE001 - registry must never stop Ecowitt
+        if strict:
+            raise
+        log.warning("Registro stazione non aggiornato: %s", str(exc)[:300])
+        return identifier
 
 
 def sync_primary_station_history(
-    cfg: Settings = settings, engine: Engine | None = None
+    cfg: Settings = settings,
+    engine: Engine | None = None,
+    *,
+    strict: bool = False,
 ) -> int:
     """Incrementally mirror legacy Ecowitt rows into the station-aware store.
 
-    ``station_raw`` remains the authoritative primary-station store.  The mirror is
+    ``station_raw`` remains the authoritative primary-station store. The mirror is
     additive and must never make the live Ecowitt ingest depend on a full historical
-    scan every five minutes.
+    scan every five minutes. In normal pipeline operation mirror failures are logged
+    and isolated; tests or maintenance commands can request ``strict=True``.
     """
     engine = engine or get_engine()
-    identifier = ensure_primary_station(cfg, engine)
-    with engine.begin() as connection:
-        latest_mirrored = connection.execute(
-            text(
-                "SELECT MAX(time) FROM station_observations "
-                "WHERE station_id=:station_id"
-            ),
-            {"station_id": identifier},
-        ).scalar()
-        result = connection.execute(
-            text(
-                "INSERT INTO station_observations (station_id,time,temp_c,humidity,"
-                "pressure_hpa,wind_kmh,windgust_kmh,winddir,rain_mm,wind_ms,"
-                "rain_rate_mm_h,rain_total_mm,solar_w_m2,uv_index,source,data_quality) "
-                "SELECT :station_id,r.time,r.temp_c,r.humidity,r.pressure_hpa,"
-                "r.wind_kmh,r.windgust_kmh,r.winddir,r.rain_mm,r.wind_ms,"
-                "r.rain_rate_mm_h,r.rain_total_mm,r.solar_w_m2,r.uv_index,"
-                "r.source,r.data_quality FROM station_raw r "
-                "WHERE (:latest_mirrored IS NULL OR r.time > :latest_mirrored) "
-                "AND NOT EXISTS (SELECT 1 FROM station_observations s "
-                "WHERE s.station_id=:station_id AND s.time=r.time)"
-            ),
-            {"station_id": identifier, "latest_mirrored": latest_mirrored},
-        )
-    return max(0, int(result.rowcount or 0))
+    identifier = ensure_primary_station(cfg, engine, strict=strict)
+    try:
+        with engine.begin() as connection:
+            latest_mirrored = connection.execute(
+                text(
+                    "SELECT MAX(time) FROM station_observations "
+                    "WHERE station_id=:station_id"
+                ),
+                {"station_id": identifier},
+            ).scalar()
+            result = connection.execute(
+                text(
+                    "INSERT INTO station_observations (station_id,time,temp_c,humidity,"
+                    "pressure_hpa,wind_kmh,windgust_kmh,winddir,rain_mm,wind_ms,"
+                    "rain_rate_mm_h,rain_total_mm,solar_w_m2,uv_index,source,data_quality) "
+                    "SELECT :station_id,r.time,r.temp_c,r.humidity,r.pressure_hpa,"
+                    "r.wind_kmh,r.windgust_kmh,r.winddir,r.rain_mm,r.wind_ms,"
+                    "r.rain_rate_mm_h,r.rain_total_mm,r.solar_w_m2,r.uv_index,"
+                    "r.source,r.data_quality FROM station_raw r "
+                    "WHERE (:latest_mirrored IS NULL OR r.time > :latest_mirrored) "
+                    "AND NOT EXISTS (SELECT 1 FROM station_observations s "
+                    "WHERE s.station_id=:station_id AND s.time=r.time)"
+                ),
+                {"station_id": identifier, "latest_mirrored": latest_mirrored},
+            )
+        return max(0, int(result.rowcount or 0))
+    except Exception as exc:  # noqa: BLE001 - mirror is secondary to station_raw
+        if strict:
+            raise
+        log.warning("Mirror stazione non aggiornato: %s", str(exc)[:300])
+        return 0
