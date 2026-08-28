@@ -1,6 +1,6 @@
-# Meteo V4 — prova, pubblicazione e ritorno alla V3
+# Meteo V4.3 — prova, pubblicazione e ritorno alla V3
 
-La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA; la V4.2 attiva climatologia locale, pollini POLLnet, bollettini ufficiali e vista semplice/esperta. La migrazione V6 è automatica, soltanto additiva, e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
+La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA; la V4.2 attiva climatologia locale, pollini POLLnet, bollettini ufficiali e vista semplice/esperta. La V4.3 aggiunge ICON-2I esplicito, calibrazione per regime, radar/fulmini DPC locali, CFR via MeteoHub, riferimento 1991–2020, registro multi-stazione, rapporti mensili e Astronomia Pro. La migrazione V7 è automatica, soltanto additiva, e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
 
 ## Sicurezze già predisposte
 
@@ -29,11 +29,11 @@ La pull request V4 deve essere unita a `main` soltanto dopo:
 
 1. CI verde;
 2. prova di tema chiaro e scuro su desktop e telefono;
-3. verifica di Stazione, Previsioni, Astronomia, Radar e Sistema;
+3. verifica di riquadri espandibili, posizione dei bollettini, Stazione, rapporti PDF/CSV, Previsioni, Astronomia Pro, Radar DPC e Sistema;
 4. creazione e verifica di un backup PostgreSQL;
 5. conferma esplicita della pubblicazione.
 
-Render distribuirà automaticamente il nuovo commit di `main`. Il primo ciclo orario popola ensemble, storico emissioni, aria EEA, pollini POLLnet, baseline locale e bollettini ufficiali; se una fonte opzionale non risponde, Ecowitt e il blend deterministico continuano normalmente.
+Render distribuirà automaticamente il nuovo commit di `main` dopo i controlli verdi. Il primo ciclo popola registro stazione, radar locale e CFR; il primo ciclo orario aggiorna ICON-2I, ensemble, storico emissioni, aria EEA, pollini POLLnet, baseline locale, riferimento climatico e bollettini ufficiali. Se una fonte opzionale non risponde, Ecowitt e il blend deterministico continuano normalmente.
 
 ## Ripristino
 

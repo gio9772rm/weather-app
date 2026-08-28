@@ -65,6 +65,73 @@ def score_label(value: float) -> str:
     return "Scarso"
 
 
+def astronomy_pro_indicators(frame: pd.DataFrame) -> pd.DataFrame:
+    """Transparent atmospheric proxies; none is presented as measured seeing."""
+    if frame.empty:
+        return pd.DataFrame(index=frame.index)
+    index = frame.index
+
+    def numeric(column: str) -> pd.Series:
+        return pd.to_numeric(
+            frame.get(column, pd.Series(np.nan, index=index)), errors="coerce"
+        )
+
+    mid = numeric("cloud_mid").fillna(numeric("clouds")).fillna(50).clip(0, 100)
+    high = numeric("cloud_high").fillna(numeric("clouds")).fillna(50).clip(0, 100)
+    visibility = numeric("visibility_m").fillna(10000).clip(lower=0)
+    humidity_700 = numeric("humidity_700hpa")
+    cape = numeric("cape_j_kg")
+    jet = numeric("wind_300hpa_kmh")
+    temperature = numeric("temp_c")
+    dewpoint = numeric("dewpoint_c")
+    surface_humidity = numeric("humidity").fillna(65)
+    surface_wind = numeric("wind_kmh").fillna(5)
+
+    transparency = (
+        100
+        - mid * 0.42
+        - high * 0.30
+        - np.maximum(humidity_700.fillna(60) - 60, 0) * 0.65
+        - np.maximum(12000 - visibility, 0) / 1000.0 * 1.2
+    ).clip(0, 100)
+    stability = (
+        100
+        - cape.fillna(250).clip(lower=0, upper=2000) / 25.0
+        - np.maximum(jet.fillna(80) - 80, 0) * 0.12
+    ).clip(0, 100)
+    jet_quality = (100 - np.maximum(jet.fillna(70) - 60, 0) * 0.55).clip(0, 100)
+    dew_spread = (temperature - dewpoint).fillna(5)
+    dew_risk = (
+        np.maximum(4.0 - dew_spread, 0) * 20
+        + np.maximum(surface_humidity - 75, 0) * 0.8
+        - surface_wind.clip(0, 20) * 0.7
+    ).clip(0, 100)
+    pro_score = (
+        transparency * 0.45
+        + stability * 0.25
+        + jet_quality * 0.20
+        + (100 - dew_risk) * 0.10
+    ).clip(0, 100)
+    available = pd.concat([humidity_700, cape, jet], axis=1).notna().sum(axis=1)
+
+    def condition(value: float) -> str:
+        if value >= 75:
+            return "Favorevole"
+        if value >= 50:
+            return "Variabile"
+        return "Critica"
+
+    output = pd.DataFrame(index=index)
+    output["transparency_proxy"] = transparency.round(0)
+    output["stability_proxy"] = stability.round(0)
+    output["jet_quality"] = jet_quality.round(0)
+    output["dew_risk"] = dew_risk.round(0)
+    output["astro_pro_score"] = pro_score.round(0)
+    output["astro_pro_available"] = available
+    output["astro_pro_label"] = output["astro_pro_score"].map(condition)
+    return output
+
+
 def prepare_astronomy(frame: pd.DataFrame, cfg: Settings = settings) -> pd.DataFrame:
     if frame.empty:
         return frame
@@ -77,7 +144,15 @@ def prepare_astronomy(frame: pd.DataFrame, cfg: Settings = settings) -> pd.DataF
     else:
         hour = data["local_time"].dt.hour
         data["is_night"] = (hour >= 20) | (hour < 6)
-    data["astro_score"] = astronomy_score(data)
+    base_score = astronomy_score(data)
+    pro = astronomy_pro_indicators(data)
+    for column in pro:
+        data[column] = pro[column]
+    has_pro = data.get("astro_pro_available", pd.Series(0, index=data.index)).ge(1)
+    data["astro_score"] = base_score
+    data.loc[has_pro, "astro_score"] = (
+        base_score[has_pro] * 0.72 + data.loc[has_pro, "astro_pro_score"] * 0.28
+    ).round(0)
     data["astro_label"] = data["astro_score"].map(score_label)
     return data
 
@@ -170,6 +245,30 @@ def daily_astronomy_summary(
                 "clouds_mean": float(clouds.mean()),
                 "wind_mean": float(wind.mean()),
                 "visibility_km": float(visibility.mean() / 1000.0),
+                "transparency_proxy": float(
+                    pd.to_numeric(
+                        group.get(
+                            "transparency_proxy",
+                            pd.Series(np.nan, index=group.index),
+                        ),
+                        errors="coerce",
+                    ).mean()
+                ),
+                "stability_proxy": float(
+                    pd.to_numeric(
+                        group.get(
+                            "stability_proxy",
+                            pd.Series(np.nan, index=group.index),
+                        ),
+                        errors="coerce",
+                    ).mean()
+                ),
+                "dew_risk": float(
+                    pd.to_numeric(
+                        group.get("dew_risk", pd.Series(np.nan, index=group.index)),
+                        errors="coerce",
+                    ).mean()
+                ),
             }
         )
     summary = pd.DataFrame(rows)

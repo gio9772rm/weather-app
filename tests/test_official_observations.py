@@ -24,8 +24,8 @@ from official_observations import (
 def _settings() -> Settings:
     return replace(
         Settings.from_env(),
-        latitude=41.9067235,
-        longitude=12.3899144,
+        latitude=41.85,
+        longitude=12.45,
         metar_station_ids=("LIRF", "LIRA"),
     )
 

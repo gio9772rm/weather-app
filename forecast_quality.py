@@ -11,6 +11,10 @@ NON_NEGATIVE_COLUMNS = (
     "wind_gust_kmh",
     "visibility_m",
     "temp_uncertainty_c",
+    "cape_j_kg",
+    "freezing_level_m",
+    "wind_300hpa_kmh",
+    "geopotential_500hpa_m",
 )
 PERCENTAGE_COLUMNS = (
     "humidity",
@@ -20,6 +24,7 @@ PERCENTAGE_COLUMNS = (
     "cloud_mid",
     "cloud_high",
     "confidence",
+    "humidity_700hpa",
 )
 
 

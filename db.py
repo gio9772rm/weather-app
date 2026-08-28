@@ -102,6 +102,30 @@ def _additive_migrations(engine: Engine) -> None:
         "forecast_reference_scores": {
             "site_correlation": "REAL",
         },
+        "forecast_runs": {
+            "cape_j_kg": "REAL",
+            "freezing_level_m": "REAL",
+            "wind_300hpa_kmh": "REAL",
+            "humidity_700hpa": "REAL",
+            "geopotential_500hpa_m": "REAL",
+            "temperature_850hpa_c": "REAL",
+        },
+        "forecast_blend": {
+            "cape_j_kg": "REAL",
+            "freezing_level_m": "REAL",
+            "wind_300hpa_kmh": "REAL",
+            "humidity_700hpa": "REAL",
+            "geopotential_500hpa_m": "REAL",
+            "temperature_850hpa_c": "REAL",
+        },
+        "forecast_blend_history": {
+            "cape_j_kg": "REAL",
+            "freezing_level_m": "REAL",
+            "wind_300hpa_kmh": "REAL",
+            "humidity_700hpa": "REAL",
+            "geopotential_500hpa_m": "REAL",
+            "temperature_850hpa_c": "REAL",
+        },
     }
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
@@ -132,7 +156,7 @@ def ensure_schema() -> None:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO meta (k,v) VALUES ('schema_version','6') "
+                "INSERT INTO meta (k,v) VALUES ('schema_version','7') "
                 "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
             )
         )

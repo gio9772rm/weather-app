@@ -23,6 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from climatology import refresh_climatology
 from config import Settings
 from db import ensure_schema, get_engine, get_meta, set_meta
+from dpc_radar import refresh_dpc_radar
 from ensemble_forecast import refresh_ensemble
 from forecast_blend import (
     archive_forecast,
@@ -35,7 +36,9 @@ from measured_pollen import refresh_measured_pollen
 from observed_air import refresh_observed_air
 from official_alerts import refresh_official_alerts
 from official_observations import ingest_official_observations
+from reference_climatology import refresh_reference_climatology
 from source_health import record_source_result
+from station_registry import ensure_primary_station, sync_primary_station_history
 from weather_ingest_ecowitt_cloud import run_station_ingest
 
 load_dotenv()
@@ -198,6 +201,20 @@ def official_observations_are_due(cfg: Settings, force: bool = False) -> bool:
     )
 
 
+def dpc_radar_is_due(cfg: Settings, force: bool = False) -> bool:
+    if not cfg.dpc_radar_enabled:
+        return False
+    if force:
+        return True
+    last = pd.to_datetime(
+        get_meta("last_dpc_radar_success"), utc=True, errors="coerce"
+    )
+    return pd.isna(last) or (
+        pd.Timestamp.now(tz="UTC") - last
+        >= pd.Timedelta(minutes=cfg.dpc_radar_refresh_minutes)
+    )
+
+
 def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     frames, warnings = fetch_all_forecasts(cfg)
     if not frames:
@@ -268,6 +285,16 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         warnings.append(
             f"Climatologia locale rinviata: {_safe_message(climate_warning)}"
         )
+    try:
+        reference_normals, reference_warning = refresh_reference_climatology(cfg)
+    except Exception as exc:  # noqa: BLE001 - long-period context is isolated
+        reference_normals = pd.DataFrame()
+        reference_warning = _safe_message(exc) or "errore interno isolato"
+    if reference_warning:
+        warnings.append(
+            f"Riferimento climatico 1991-2020 rinviato: "
+            f"{_safe_message(reference_warning)}"
+        )
     return {
         "archived": archived,
         "blend_rows": len(blend),
@@ -279,6 +306,7 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         "measured_pollen_rows": len(measured_pollen),
         "official_alert_rows": len(official_alerts),
         "climate_normal_rows": len(climate_normals),
+        "reference_climate_rows": len(reference_normals),
         "warnings": warnings,
     }
 
@@ -308,6 +336,10 @@ def prune_derived_history() -> None:
             {"cutoff": score_cutoff},
         )
         connection.execute(
+            text("DELETE FROM forecast_regime_scores WHERE evaluated_at < :cutoff"),
+            {"cutoff": score_cutoff},
+        )
+        connection.execute(
             text("DELETE FROM forecast_reference_scores WHERE evaluated_at < :cutoff"),
             {"cutoff": score_cutoff},
         )
@@ -322,6 +354,14 @@ def prune_derived_history() -> None:
         connection.execute(
             text("DELETE FROM official_alerts WHERE issued_at < :cutoff"),
             {"cutoff": score_cutoff},
+        )
+        connection.execute(
+            text("DELETE FROM radar_local_snapshots WHERE observed_at < :cutoff"),
+            {
+                "cutoff": (now - pd.Timedelta(days=14)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            },
         )
         connection.execute(
             text("DELETE FROM ingest_log WHERE started_at < :cutoff"),
@@ -409,9 +449,12 @@ def run_all(
 ) -> dict[str, Any]:
     ensure_schema()
     cfg = Settings.from_env()
+    ensure_primary_station(cfg)
+    sync_primary_station_history(cfg)
     result: dict[str, Any] = {
         "station": None,
         "official": None,
+        "radar": None,
         "forecast": None,
         "errors": [],
     }
@@ -423,6 +466,7 @@ def run_all(
         try:
             effective_backfill = adaptive_station_backfill_hours(cfg, backfill_hours)
             station = run_station_ingest(effective_backfill, cfg)
+            station["station_rows_synced"] = sync_primary_station_history(cfg)
             station["backfill_hours"] = effective_backfill
             station["source_age_minutes"] = station_source_age_minutes(
                 station.get("latest_station_time")
@@ -459,6 +503,28 @@ def run_all(
                 latency_ms=(perf_counter() - station_started) * 1000,
                 error=message,
             )
+
+    if dpc_radar_is_due(cfg, force_forecast):
+        identifier, _ = _log_start("dpc_radar_local")
+        try:
+            radar = refresh_dpc_radar(cfg)
+            result["radar"] = {
+                "rows": int(radar is not None),
+                "observed_at": None if radar is None else radar.observed_at,
+                "lightning_50km": 0 if radar is None else radar.lightning_50km,
+            }
+            if radar is not None:
+                set_meta(
+                    "last_dpc_radar_success",
+                    pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
+            _log_finish(identifier, "success", int(radar is not None))
+        except Exception as exc:  # noqa: BLE001 - the optional DPC feed is isolated
+            message = _safe_message(exc)
+            result["radar"] = {"rows": 0, "warning": message}
+            _log_finish(identifier, "warning", 0, message)
+    else:
+        result["radar"] = {"skipped": True, "reason": "aggiornamento non dovuto"}
 
     if official_observations_are_due(cfg, force_forecast):
         identifier, _ = _log_start("official_observations")
@@ -535,7 +601,7 @@ def run_all(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Pipeline Meteo V3")
+    parser = argparse.ArgumentParser(description="Pipeline Meteo V4.3")
     parser.add_argument("--backfill-hours", type=int, default=None)
     parser.add_argument("--skip-station", action="store_true")
     parser.add_argument("--force-forecast", action="store_true")

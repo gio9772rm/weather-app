@@ -29,14 +29,18 @@ def test_rome_official_observation_defaults(monkeypatch):
     assert configured.official_observations_enabled is True
     assert configured.metar_station_ids == ("LIRF", "LIRA")
     assert configured.official_score_max_share == 0.20
-    assert configured.arsial_observations_enabled is True
+    assert configured.arsial_observations_enabled is False
     assert configured.arsial_station_name == "ROMA Lanciani-SEDE ARSIAL"
     assert configured.arsial_timezone == "UTC"
-    assert configured.cfr_observations_enabled is False
+    assert configured.cfr_observations_enabled is True
     assert configured.cfr_observations_url == ""
+    assert configured.cfr_meteohub_base_url == "https://meteohub.agenziaitaliameteo.it"
+    assert configured.dpc_radar_enabled is True
+    assert configured.reference_climatology_enabled is True
+    assert configured.station_id == "roma-primary"
 
 
-def test_cfr_requires_explicit_activation(monkeypatch):
+def test_cfr_custom_endpoint_can_override_public_meteohub(monkeypatch):
     monkeypatch.setenv("CFR_OBSERVATIONS_ENABLED", "true")
     monkeypatch.setenv("CFR_OBSERVATIONS_URL", "https://example.test/cfr")
     monkeypatch.setenv("CFR_STATION_IDS", "37081, 13137")

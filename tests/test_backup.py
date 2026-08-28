@@ -22,7 +22,17 @@ def test_backup_is_portable_checksummed_and_contains_no_connection_string(
     destination = create_backup(tmp_path / "daily.zip", sqlite_engine)
     manifest = verify_backup(destination)
 
+    assert manifest["format"] == "meteo-v4-portable-backup"
+    assert manifest["version"] == 2
+    assert manifest["schema_version"] == 7
     assert manifest["tables"]["station_raw"]["rows"] == 1
+    assert {
+        "station_profiles",
+        "station_observations",
+        "forecast_regime_scores",
+        "climate_reference_normals",
+        "radar_local_snapshots",
+    } <= set(manifest["tables"])
     with zipfile.ZipFile(destination) as archive:
         assert {"manifest.json", "schema.sql", "station_raw.csv"} <= set(
             archive.namelist()
@@ -31,3 +41,14 @@ def test_backup_is_portable_checksummed_and_contains_no_connection_string(
         parsed = json.loads(manifest_text)
         assert "database_url" not in manifest_text.casefold()
         assert parsed["database_dialect"] == "sqlite"
+
+    with sqlite_engine.connect() as connection:
+        backup_health = connection.execute(
+            text(
+                "SELECT status,last_success_at,last_observation_at "
+                "FROM source_health WHERE source='database_backup'"
+            )
+        ).mappings().one()
+    assert backup_health["status"] == "online"
+    assert backup_health["last_success_at"] is not None
+    assert backup_health["last_observation_at"] is not None

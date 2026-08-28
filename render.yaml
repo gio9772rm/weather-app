@@ -16,10 +16,12 @@ services:
         value: Europe/Rome
       - key: LOCATION_NAME
         value: Stazione meteo Roma
+      - key: STATION_ID
+        value: roma-primary
       - key: LAT
-        value: "41.9067235"
+        sync: false
       - key: LON
-        value: "12.3899144"
+        sync: false
       - key: ELEVATION_M
         value: "20"
       - key: STATION_STALE_MINUTES
@@ -27,17 +29,21 @@ services:
       - key: OFFICIAL_OBSERVATIONS_ENABLED
         value: "true"
       - key: ARSIAL_OBSERVATIONS_ENABLED
-        value: "true"
+        value: "false"
       - key: ARSIAL_STATION_NAME
         value: ROMA Lanciani-SEDE ARSIAL
       - key: ARSIAL_TZ
         value: UTC
       - key: ARSIAL_CACHE_HOURS
         value: "72"
-      # Mantiene CFR fuori dall'interfaccia finché non viene attivato anche
-      # sul Cron Job dopo aver ricevuto l'endpoint ufficiale.
       - key: CFR_OBSERVATIONS_ENABLED
-        value: "false"
+        value: "true"
+      - key: CFR_STATION_NAME
+        value: Roma Monte Mario
+      - key: DPC_RADAR_ENABLED
+        value: "true"
+      - key: REFERENCE_CLIMATOLOGY_ENABLED
+        value: "true"
       - key: ENSEMBLE_FORECAST_ENABLED
         value: "true"
       - key: RADAR_NOWCAST_ENABLED
@@ -84,10 +90,12 @@ services:
         value: Europe/Rome
       - key: LOCATION_NAME
         value: Stazione meteo Roma
+      - key: STATION_ID
+        value: roma-primary
       - key: LAT
-        value: "41.9067235"
+        sync: false
       - key: LON
-        value: "12.3899144"
+        sync: false
       - key: ELEVATION_M
         value: "20"
       - key: STATION_BACKFILL_HOURS
@@ -111,7 +119,7 @@ services:
       - key: OFFICIAL_MIN_OVERLAP_SAMPLES
         value: "24"
       - key: ARSIAL_OBSERVATIONS_ENABLED
-        value: "true"
+        value: "false"
       - key: ARSIAL_DASHBOARD_URL
         value: https://siarl.arsial.it/bi/superset/dashboard/7
       - key: ARSIAL_STATION_NAME
@@ -120,10 +128,16 @@ services:
         value: UTC
       - key: ARSIAL_CACHE_HOURS
         value: "72"
-      # Dormiente per impostazione predefinita. Aggiungere URL/token solo dopo
-      # la risposta ufficiale del Centro Funzionale Regionale.
       - key: CFR_OBSERVATIONS_ENABLED
-        value: "false"
+        value: "true"
+      - key: CFR_STATION_NAME
+        value: Roma Monte Mario
+      - key: DPC_RADAR_ENABLED
+        value: "true"
+      - key: DPC_RADAR_REFRESH_MINUTES
+        value: "5"
+      - key: REFERENCE_CLIMATOLOGY_ENABLED
+        value: "true"
       - key: ENSEMBLE_FORECAST_ENABLED
         value: "true"
       - key: ENSEMBLE_MODEL

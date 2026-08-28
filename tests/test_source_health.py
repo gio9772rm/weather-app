@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pandas as pd
 from sqlalchemy import text
 
 from config import Settings
 from data_access import data_completeness_snapshot, load_source_health
-from source_health import record_source_disabled, record_source_result
+from source_health import (
+    configured_sources,
+    record_source_disabled,
+    record_source_result,
+)
 
 
 def test_source_health_preserves_last_success_and_counts_failures(sqlite_engine):
@@ -68,7 +74,7 @@ def test_dashboard_trusts_cron_telemetry_when_web_keys_are_absent(
 def test_dashboard_labels_recent_cached_arsial_data_without_calling_it_live(
     sqlite_engine,
 ):
-    cfg = Settings.from_env()
+    cfg = replace(Settings.from_env(), arsial_observations_enabled=True)
     assert record_source_result(
         "arsial_siarl",
         success=False,
@@ -88,7 +94,7 @@ def test_dashboard_labels_recent_cached_arsial_data_without_calling_it_live(
 def test_dashboard_marks_repeated_arsial_outage_as_optional_external_failure(
     sqlite_engine,
 ):
-    cfg = Settings.from_env()
+    cfg = replace(Settings.from_env(), arsial_observations_enabled=True)
     for message in ("portale in timeout", "export non disponibile"):
         assert record_source_result(
             "arsial_siarl",
@@ -101,6 +107,29 @@ def test_dashboard_marks_repeated_arsial_outage_as_optional_external_failure(
 
     assert health.loc["arsial_siarl", "display_status"] == "external_unavailable"
     assert health.loc["arsial_siarl", "consecutive_failures"] == 2
+
+
+def test_suspended_arsial_does_not_keep_showing_historical_portal_failures(
+    sqlite_engine,
+):
+    for message in ("portale in timeout", "export non disponibile"):
+        assert record_source_result(
+            "arsial_siarl",
+            success=False,
+            error=message,
+            engine=sqlite_engine,
+        )
+
+    cfg = replace(Settings.from_env(), arsial_observations_enabled=False)
+    health = load_source_health(cfg).set_index("source")
+
+    assert health.loc["arsial_siarl", "display_status"] == "disabled"
+
+
+def test_unattempted_portable_backup_is_manual_not_waiting(sqlite_engine):
+    health = load_source_health(Settings.from_env()).set_index("source")
+
+    assert health.loc["database_backup", "display_status"] == "manual"
 
 
 def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine):
@@ -130,3 +159,13 @@ def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine
     assert snapshot["coverage"] == 100.0
     assert snapshot["anomalies"] == 1
     assert "ecowitt" in set(health["source"])
+
+
+def test_v43_source_catalog_labels_official_radar_and_climate_roles():
+    catalog = {item.source: item for item in configured_sources(Settings.from_env())}
+
+    assert catalog["open_meteo_icon2i"].label.startswith("ItaliaMeteo ICON-2I")
+    assert catalog["cfr_lazio"].label == "CFR Lazio via MeteoHub"
+    assert catalog["dpc_radar_local"].category == "misure"
+    assert catalog["dpc_lightning_local"].category == "sicurezza"
+    assert "1991–2020" in catalog["climatology_era5_land"].label

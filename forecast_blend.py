@@ -33,10 +33,20 @@ NUMERIC_COLUMNS = [
     "cloud_mid",
     "cloud_high",
     "visibility_m",
+    "cape_j_kg",
+    "freezing_level_m",
+    "wind_300hpa_kmh",
+    "humidity_700hpa",
+    "geopotential_500hpa_m",
+    "temperature_850hpa_c",
     "is_day",
 ]
 
-PRIOR_WEIGHTS = {"open_meteo": 0.60, "openweather": 0.40}
+PRIOR_WEIGHTS = {
+    "italiameteo_icon2i": 0.65,
+    "open_meteo": 0.55,
+    "openweather": 0.40,
+}
 ERROR_FLOORS = {
     "temp_c": 0.5,
     "dewpoint_c": 0.8,
@@ -215,6 +225,67 @@ def _holdout_pair(pair: pd.DataFrame) -> pd.DataFrame:
     return pair.tail(size)
 
 
+def _observed_regime(pair: pd.DataFrame, observed_col: str, variable: str) -> pd.Series:
+    values = pd.to_numeric(pair[observed_col], errors="coerce")
+    if variable in {"temp_c", "dewpoint_c"}:
+        labels = np.select(
+            [values <= 5, values >= 30], ["cold", "hot"], default="mild"
+        )
+    elif variable == "humidity":
+        labels = np.select(
+            [values <= 40, values >= 80], ["dry", "humid"], default="moderate"
+        )
+    elif variable == "pressure_hpa":
+        labels = np.select(
+            [values < 1005, values > 1020], ["low", "high"], default="normal"
+        )
+    elif variable in {"wind_kmh", "wind_gust_kmh"}:
+        labels = np.where(values >= 20, "windy", "calm")
+    elif variable == "rain_mm":
+        labels = np.where(values >= 0.1, "wet", "dry")
+    else:
+        labels = np.full(len(pair), "all", dtype=object)
+    return pd.Series(labels, index=pair.index, dtype="string")
+
+
+def _forecast_regime(variable: str, row: pd.Series) -> str:
+    value = pd.to_numeric(pd.Series([row.get(variable)]), errors="coerce").iloc[0]
+    if variable in {"temp_c", "dewpoint_c"}:
+        reference = pd.to_numeric(
+            pd.Series([row.get("temp_c", value)]), errors="coerce"
+        ).iloc[0]
+        if pd.notna(reference) and reference <= 5:
+            return "cold"
+        if pd.notna(reference) and reference >= 30:
+            return "hot"
+        return "mild"
+    if variable == "humidity":
+        if pd.notna(value) and value <= 40:
+            return "dry"
+        if pd.notna(value) and value >= 80:
+            return "humid"
+        return "moderate"
+    if variable == "pressure_hpa":
+        if pd.notna(value) and value < 1005:
+            return "low"
+        if pd.notna(value) and value > 1020:
+            return "high"
+        return "normal"
+    if variable in {"wind_kmh", "wind_gust_kmh"}:
+        return "windy" if pd.notna(value) and value >= 20 else "calm"
+    if variable == "rain_mm":
+        probability = pd.to_numeric(
+            pd.Series([row.get("precip_probability")]), errors="coerce"
+        ).iloc[0]
+        return (
+            "wet"
+            if (pd.notna(value) and value >= 0.1)
+            or (pd.notna(probability) and probability >= 40)
+            else "dry"
+        )
+    return "all"
+
+
 def score_forecasts(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> pd.DataFrame:
@@ -313,6 +384,7 @@ def score_forecasts(
     merged["horizon"] = _horizon_bucket(merged["lead_hours"])
     evaluated = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     rows: list[dict[str, Any]] = []
+    regime_rows: list[dict[str, Any]] = []
     reliability_rows: list[dict[str, Any]] = []
     for (provider, model, horizon), group in merged.groupby(
         ["provider", "model", "horizon"], dropna=True
@@ -433,6 +505,41 @@ def score_forecasts(
                                     ),
                                 }
                             )
+            regimes = _observed_regime(pair, observed_col, variable)
+            for regime, regime_pair in pair.groupby(regimes, dropna=True):
+                if len(regime_pair) < 6:
+                    continue
+                regime_record = {
+                    "evaluated_at": evaluated,
+                    "provider": provider,
+                    "model": model,
+                    "variable": variable,
+                    "horizon": str(horizon),
+                    "regime": str(regime),
+                    **_score_record(
+                        regime_pair, forecast_col, observed_col, variable
+                    ),
+                }
+                if variable == "rain_mm" and "precip_probability" in group:
+                    probability = (
+                        pd.to_numeric(
+                            group.loc[regime_pair.index, "precip_probability"],
+                            errors="coerce",
+                        ).clip(0, 100)
+                        / 100.0
+                    )
+                    event = (regime_pair[observed_col] >= 0.1).astype(float)
+                    valid_probability = probability.notna()
+                    if valid_probability.any():
+                        regime_record["brier"] = float(
+                            np.mean(
+                                np.square(
+                                    probability[valid_probability]
+                                    - event[valid_probability]
+                                )
+                            )
+                        )
+                regime_rows.append(regime_record)
             rows.append(record)
     scores = pd.DataFrame(rows)
     if scores.empty:
@@ -465,6 +572,19 @@ def score_forecasts(
                     "observed_frequency=excluded.observed_frequency,brier=excluded.brier"
                 ),
                 reliability_rows,
+            )
+        if regime_rows:
+            connection.execute(
+                text(
+                    "INSERT INTO forecast_regime_scores (evaluated_at,provider,model,"
+                    "variable,horizon,regime,n,bias,mae,rmse,brier) VALUES ("
+                    ":evaluated_at,:provider,:model,:variable,:horizon,:regime,:n,"
+                    ":bias,:mae,:rmse,:brier) ON CONFLICT (evaluated_at,provider,"
+                    "model,variable,horizon,regime) DO UPDATE SET n=excluded.n,"
+                    "bias=excluded.bias,mae=excluded.mae,rmse=excluded.rmse,"
+                    "brier=excluded.brier"
+                ),
+                regime_rows,
             )
     return scores
 
@@ -799,6 +919,22 @@ def _latest_reference_scores(engine: Engine) -> pd.DataFrame:
     return frame
 
 
+def _latest_regime_scores(engine: Engine) -> pd.DataFrame:
+    with engine.connect() as connection:
+        frame = pd.read_sql(
+            text(
+                "SELECT * FROM forecast_regime_scores WHERE evaluated_at = "
+                "(SELECT MAX(evaluated_at) FROM forecast_regime_scores)"
+            ),
+            connection,
+        )
+    if not frame.empty:
+        frame.columns = [column.lower() for column in frame.columns]
+        for column in ("n", "bias", "mae", "rmse", "brier"):
+            frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    return frame
+
+
 def _latest_provider_runs(engine: Engine) -> pd.DataFrame:
     now = pd.Timestamp.now(tz="UTC").floor("h").strftime("%Y-%m-%dT%H:%M:%SZ")
     query = text(
@@ -819,6 +955,54 @@ def _latest_provider_runs(engine: Engine) -> pd.DataFrame:
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame.dropna(subset=["valid_time", "issued_at"])
+
+
+def _deduplicate_model_dependencies(frame: pd.DataFrame) -> pd.DataFrame:
+    """Collapse overlapping best-match rows into ICON-2I without losing gaps.
+
+    Open-Meteo ``best_match`` can itself select ICON-2I.  At timestamps where
+    the explicit run exists it is therefore a fallback for missing fields, not
+    an independent vote.  Non-overlapping best-match hours remain available
+    for the longer seven-day outlook.
+    """
+    if frame.empty or "italiameteo_icon2i" not in set(frame["provider"]):
+        return frame
+    result = frame.copy().reset_index(drop=True)
+    icon_indexes = result.index[result["provider"].eq("italiameteo_icon2i")]
+    best_match = result[result["provider"].eq("open_meteo")].dropna(
+        subset=["valid_time"]
+    )
+    if len(icon_indexes) == 0 or best_match.empty:
+        return frame
+    best_by_time = (
+        best_match.sort_values("issued_at")
+        .drop_duplicates("valid_time", keep="last")
+        .set_index("valid_time")
+    )
+    overlapping_times: set[pd.Timestamp] = set()
+    fallback_columns = [
+        *NUMERIC_COLUMNS,
+        "weather_code",
+        "description",
+    ]
+    for icon_index in icon_indexes:
+        valid_time = result.at[icon_index, "valid_time"]
+        if valid_time not in best_by_time.index:
+            continue
+        overlapping_times.add(valid_time)
+        fallback = best_by_time.loc[valid_time]
+        if isinstance(fallback, pd.DataFrame):
+            fallback = fallback.iloc[-1]
+        for column in fallback_columns:
+            if column not in result or column not in fallback:
+                continue
+            current = result.at[icon_index, column]
+            if pd.isna(current) or (isinstance(current, str) and not current.strip()):
+                result.at[icon_index, column] = fallback[column]
+    duplicate = result["provider"].eq("open_meteo") & result["valid_time"].isin(
+        overlapping_times
+    )
+    return result.loc[~duplicate].copy()
 
 
 def _latest_ensemble(engine: Engine) -> pd.DataFrame:
@@ -858,6 +1042,8 @@ def _score_lookup(
     horizon: str,
     reference_scores: pd.DataFrame | None = None,
     official_max_share: float = 0.20,
+    regime_scores: pd.DataFrame | None = None,
+    regime: str | None = None,
 ) -> tuple[float, float | None]:
     local_bias = 0.0
     local_mae: float | None = None
@@ -877,6 +1063,26 @@ def _score_lookup(
             )
             error_value = row["holdout_mae"] if validated else row["mae"]
             local_mae = float(error_value) if pd.notna(error_value) else None
+
+    if regime and regime_scores is not None and not regime_scores.empty:
+        situational = regime_scores[
+            (regime_scores["provider"] == provider)
+            & (regime_scores["variable"] == variable)
+            & (regime_scores["horizon"] == horizon)
+            & (regime_scores["regime"] == regime)
+            & (regime_scores["n"] >= 6)
+        ]
+        if not situational.empty:
+            row = situational.sort_values("n", ascending=False).iloc[0]
+            regime_bias = float(row["bias"]) if pd.notna(row["bias"]) else 0.0
+            regime_mae = float(row["mae"]) if pd.notna(row["mae"]) else None
+            if regime_mae is not None:
+                if local_mae is None and float(row["n"]) >= 12:
+                    local_bias, local_mae = regime_bias, regime_mae
+                elif local_mae is not None:
+                    share = min(0.45, float(row["n"]) / 60.0 * 0.45)
+                    local_bias = local_bias * (1.0 - share) + regime_bias * share
+                    local_mae = local_mae * (1.0 - share) + regime_mae * share
 
     if reference_scores is None or reference_scores.empty:
         return local_bias, local_mae
@@ -1000,10 +1206,11 @@ def build_blend(
     """Create an hourly bias-corrected ensemble and replace the derived cache."""
     engine = engine or get_engine()
     cfg = cfg or Settings.from_env()
-    forecasts = _latest_provider_runs(engine)
+    forecasts = _deduplicate_model_dependencies(_latest_provider_runs(engine))
     if forecasts.empty:
         return pd.DataFrame()
     scores = _latest_scores(engine)
+    regime_scores = _latest_regime_scores(engine)
     ensemble = _latest_ensemble(engine) if cfg.ensemble_forecast_enabled else pd.DataFrame()
     reference_scores = _enabled_reference_frame(_latest_reference_scores(engine), cfg)
     interval_coverage = pd.to_timedelta(
@@ -1042,6 +1249,12 @@ def build_blend(
         "cloud_high",
         "visibility_m",
         "wind_dir",
+        "cape_j_kg",
+        "freezing_level_m",
+        "wind_300hpa_kmh",
+        "humidity_700hpa",
+        "geopotential_500hpa_m",
+        "temperature_850hpa_c",
     ]
     weights_by_time: list[dict[str, float]] = []
     provider_counts: list[int] = []
@@ -1059,6 +1272,10 @@ def build_blend(
                     str(horizon),
                     reference_scores,
                     cfg.official_score_max_share,
+                    regime_scores,
+                    _forecast_regime(
+                        "temp_c", hourly[provider].iloc[position]
+                    ),
                 )
                 prior = PRIOR_WEIGHTS.get(provider, 0.35)
                 time_weights[provider] = prior / max(mae or 1.5, ERROR_FLOORS["temp_c"])
@@ -1089,6 +1306,12 @@ def build_blend(
                     "cloud_low": "clouds",
                     "cloud_mid": "clouds",
                     "cloud_high": "clouds",
+                    "cape_j_kg": "temp_c",
+                    "freezing_level_m": "temp_c",
+                    "wind_300hpa_kmh": "wind_kmh",
+                    "humidity_700hpa": "humidity",
+                    "geopotential_500hpa_m": "pressure_hpa",
+                    "temperature_850hpa_c": "temp_c",
                 }.get(variable, "temp_c")
                 bias, mae = _score_lookup(
                     scores,
@@ -1097,6 +1320,10 @@ def build_blend(
                     str(horizon),
                     reference_scores,
                     cfg.official_score_max_share,
+                    regime_scores,
+                    _forecast_regime(
+                        score_variable, hourly[provider].iloc[position]
+                    ),
                 )
                 corrected = _bias_correct_forecast_value(
                     variable,
@@ -1165,7 +1392,19 @@ def build_blend(
     descriptions: list[str] = []
     codes: list[str] = []
     for position in range(len(timeline)):
-        source = "open_meteo" if "open_meteo" in providers else providers[0]
+        preferred_sources = [
+            provider
+            for provider in ("italiameteo_icon2i", "open_meteo", *providers)
+            if provider in providers
+        ]
+        source = next(
+            (
+                provider
+                for provider in dict.fromkeys(preferred_sources)
+                if pd.notna(hourly[provider].iloc[position].get("temp_c"))
+            ),
+            providers[0],
+        )
         source_rows = (
             forecasts[forecasts["provider"] == source]
             .set_index("valid_time")
@@ -1200,7 +1439,7 @@ def build_blend(
         json.dumps(item, sort_keys=True) for item in weights_by_time
     ]
     result["method"] = (
-        "inverse_mae+bias+ecowitt_primary+official_reference_v2"
+        "inverse_mae+bias+regime_calibration_v2+ecowitt_primary+official_reference_v2"
         + ("+ensemble_guidance_v1" if ensemble_used else "")
     )
     result["issued_at"] = issued_at
@@ -1226,6 +1465,12 @@ def build_blend(
         "cloud_mid",
         "cloud_high",
         "visibility_m",
+        "cape_j_kg",
+        "freezing_level_m",
+        "wind_300hpa_kmh",
+        "humidity_700hpa",
+        "geopotential_500hpa_m",
+        "temperature_850hpa_c",
         "weather_code",
         "description",
         "is_day",

@@ -87,7 +87,10 @@ class Settings:
     official_observation_lookback_hours: int = 48
     official_score_max_share: float = 0.20
     official_min_overlap_samples: int = 24
-    arsial_observations_enabled: bool = True
+    # SIARL remains available as an explicit opt-in connector. Its public
+    # Superset export is currently not reliable enough to poll by default;
+    # CFR Lazio via MeteoHub is the operational regional reference instead.
+    arsial_observations_enabled: bool = False
     arsial_dashboard_url: str = "https://siarl.arsial.it/bi/superset/dashboard/7"
     arsial_station_name: str = "ROMA Lanciani-SEDE ARSIAL"
     arsial_timezone: str = "UTC"
@@ -99,7 +102,7 @@ class Settings:
     arsial_csv_url: str = ""
     arsial_chart_ids: tuple[int, ...] = ()
     arsial_cache_hours: int = 72
-    cfr_observations_enabled: bool = False
+    cfr_observations_enabled: bool = True
     cfr_observations_url: str = ""
     cfr_api_token: str = ""
     cfr_station_ids: tuple[str, ...] = ()
@@ -113,6 +116,16 @@ class Settings:
     feature_measured_pollen_enabled: bool = True
     feature_official_alerts_enabled: bool = True
     feature_experience_mode_enabled: bool = True
+    station_id: str = "roma-primary"
+    dpc_radar_enabled: bool = True
+    dpc_radar_refresh_minutes: int = 5
+    dpc_radar_crop_radius: int = 10
+    reference_climatology_enabled: bool = True
+    reference_climatology_refresh_days: int = 30
+    cfr_meteohub_base_url: str = "https://meteohub.agenziaitaliameteo.it"
+    cfr_station_name: str = "Roma Monte Mario"
+    cfr_station_latitude: float = 41.94889
+    cfr_station_longitude: float = 12.44056
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -182,7 +195,7 @@ class Settings:
                 _as_int(_first_env("OFFICIAL_MIN_OVERLAP_SAMPLES"), 24),
             ),
             arsial_observations_enabled=_as_bool(
-                _first_env("ARSIAL_OBSERVATIONS_ENABLED", default="true"), True
+                _first_env("ARSIAL_OBSERVATIONS_ENABLED", default="false"), False
             ),
             arsial_dashboard_url=_first_env(
                 "ARSIAL_DASHBOARD_URL",
@@ -212,7 +225,7 @@ class Settings:
                 ),
             ),
             cfr_observations_enabled=_as_bool(
-                _first_env("CFR_OBSERVATIONS_ENABLED", default="false"), False
+                _first_env("CFR_OBSERVATIONS_ENABLED", default="true"), True
             ),
             cfr_observations_url=_first_env("CFR_OBSERVATIONS_URL"),
             cfr_api_token=_first_env("CFR_API_TOKEN"),
@@ -243,6 +256,37 @@ class Settings:
             feature_experience_mode_enabled=_as_bool(
                 _first_env("FEATURE_EXPERIENCE_MODE_ENABLED", default="true"),
                 True,
+            ),
+            station_id=_first_env("STATION_ID", default="roma-primary"),
+            dpc_radar_enabled=_as_bool(
+                _first_env("DPC_RADAR_ENABLED", default="true"), True
+            ),
+            dpc_radar_refresh_minutes=max(
+                5, _as_int(_first_env("DPC_RADAR_REFRESH_MINUTES"), 5)
+            ),
+            dpc_radar_crop_radius=max(
+                3,
+                min(32, _as_int(_first_env("DPC_RADAR_CROP_RADIUS"), 10)),
+            ),
+            reference_climatology_enabled=_as_bool(
+                _first_env("REFERENCE_CLIMATOLOGY_ENABLED", default="true"), True
+            ),
+            reference_climatology_refresh_days=max(
+                7,
+                _as_int(_first_env("REFERENCE_CLIMATOLOGY_REFRESH_DAYS"), 30),
+            ),
+            cfr_meteohub_base_url=_first_env(
+                "CFR_METEOHUB_BASE_URL",
+                default="https://meteohub.agenziaitaliameteo.it",
+            ),
+            cfr_station_name=_first_env(
+                "CFR_STATION_NAME", default="Roma Monte Mario"
+            ),
+            cfr_station_latitude=_as_float(
+                _first_env("CFR_STATION_LAT"), 41.94889
+            ),
+            cfr_station_longitude=_as_float(
+                _first_env("CFR_STATION_LON"), 12.44056
             ),
         )
 

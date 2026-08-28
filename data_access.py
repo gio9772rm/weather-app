@@ -27,14 +27,26 @@ def _read(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
     return frame
 
 
-def load_station(hours: int = 240) -> pd.DataFrame:
+def load_station(hours: int = 240, station_id: str | None = None) -> pd.DataFrame:
     cutoff = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
-    frame = _read(
-        "SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time",
-        {"cutoff": cutoff},
-    )
+    if station_id:
+        frame = _read(
+            "SELECT * FROM station_observations WHERE station_id=:station_id "
+            "AND time >= :cutoff ORDER BY time",
+            {"station_id": station_id, "cutoff": cutoff},
+        )
+        if frame.empty and station_id == settings.station_id:
+            frame = _read(
+                "SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time",
+                {"cutoff": cutoff},
+            )
+    else:
+        frame = _read(
+            "SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time",
+            {"cutoff": cutoff},
+        )
     if frame.empty:
         return frame
     frame["time"] = pd.to_datetime(frame["time"], utc=True, errors="coerce")
@@ -66,6 +78,77 @@ def load_station(hours: int = 240) -> pd.DataFrame:
         if "data_quality" in frame:
             frame.loc[legacy, "data_quality"] = "legacy_unknown_rain"
     return frame.dropna(subset=["time"]).sort_values("time")
+
+
+def load_station_profiles() -> pd.DataFrame:
+    """Return public profile labels only; exact coordinates remain private."""
+    frame = _read(
+        "SELECT station_id,display_name,timezone,source,role,enabled,updated_at "
+        "FROM station_profiles WHERE enabled=1 ORDER BY role,display_name"
+    )
+    if frame.empty:
+        return frame
+    frame["updated_at"] = pd.to_datetime(
+        frame.get("updated_at"), utc=True, errors="coerce"
+    )
+    return frame
+
+
+def load_station_month(
+    station_id: str, year: int, month: int, timezone: str
+) -> pd.DataFrame:
+    start = pd.Timestamp(year=int(year), month=int(month), day=1, tz=timezone)
+    end = start + pd.offsets.MonthBegin(1)
+    params = {
+        "station_id": station_id,
+        "start": start.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end": end.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    frame = _read(
+        "SELECT * FROM station_observations WHERE station_id=:station_id "
+        "AND time>=:start AND time<:end ORDER BY time",
+        params,
+    )
+    if frame.empty and station_id == settings.station_id:
+        frame = _read(
+            "SELECT * FROM station_raw WHERE time>=:start AND time<:end ORDER BY time",
+            params,
+        )
+    if frame.empty:
+        return frame
+    frame["time"] = pd.to_datetime(frame["time"], utc=True, errors="coerce")
+    for column in (
+        "temp_c",
+        "humidity",
+        "pressure_hpa",
+        "wind_kmh",
+        "windgust_kmh",
+        "winddir",
+        "rain_mm",
+        "rain_rate_mm_h",
+        "rain_total_mm",
+        "solar_w_m2",
+        "uv_index",
+    ):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame.dropna(subset=["time"]).sort_values("time")
+
+
+def available_station_months(station_id: str, timezone: str) -> list[tuple[int, int]]:
+    frame = _read(
+        "SELECT time FROM station_observations WHERE station_id=:station_id ORDER BY time",
+        {"station_id": station_id},
+    )
+    if frame.empty and station_id == settings.station_id:
+        frame = _read("SELECT time FROM station_raw ORDER BY time")
+    if frame.empty:
+        return []
+    times = pd.to_datetime(frame["time"], utc=True, errors="coerce").dropna()
+    local = times.dt.tz_convert(timezone)
+    return sorted(
+        set(zip(local.dt.year.astype(int), local.dt.month.astype(int))), reverse=True
+    )
 
 
 def _legacy_forecast() -> pd.DataFrame:
@@ -122,6 +205,12 @@ def load_forecast(hours: int = 192) -> pd.DataFrame:
         "cloud_mid",
         "cloud_high",
         "visibility_m",
+        "cape_j_kg",
+        "freezing_level_m",
+        "wind_300hpa_kmh",
+        "humidity_700hpa",
+        "geopotential_500hpa_m",
+        "temperature_850hpa_c",
         "is_day",
         "temp_uncertainty_c",
         "confidence",
@@ -162,6 +251,12 @@ def load_forecast_history(hours: int = 48, emissions: int = 2) -> pd.DataFrame:
         "rain_mm",
         "precip_probability",
         "confidence",
+        "cape_j_kg",
+        "freezing_level_m",
+        "wind_300hpa_kmh",
+        "humidity_700hpa",
+        "geopotential_500hpa_m",
+        "temperature_850hpa_c",
     ):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
@@ -253,6 +348,58 @@ def load_climate_normals(source: str = "ecowitt_local") -> pd.DataFrame:
     return frame.dropna(subset=["month", "hour", "metric", "p50"])
 
 
+def load_reference_climate_normals(
+    station_id: str | None = None,
+    source: str = "copernicus_era5_land",
+) -> pd.DataFrame:
+    frame = _read(
+        "SELECT * FROM climate_reference_normals WHERE station_id=:station_id "
+        "AND source=:source ORDER BY month,metric",
+        {"station_id": station_id or settings.station_id, "source": source},
+    )
+    if frame.empty:
+        return frame
+    frame["updated_at"] = pd.to_datetime(
+        frame.get("updated_at"), utc=True, errors="coerce"
+    )
+    for column in ("period_start", "period_end", "month", "value", "sample_years"):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    return frame.dropna(subset=["month", "metric", "value"])
+
+
+def load_latest_dpc_radar(station_id: str | None = None) -> pd.DataFrame:
+    frame = _read(
+        "SELECT * FROM radar_local_snapshots WHERE station_id=:station_id "
+        "ORDER BY observed_at DESC LIMIT 1",
+        {"station_id": station_id or settings.station_id},
+    )
+    if frame.empty:
+        return frame
+    for column in (
+        "observed_at",
+        "sri_observed_at",
+        "vmi_observed_at",
+        "lightning_observed_at",
+        "fetched_at",
+    ):
+        frame[column] = pd.to_datetime(frame.get(column), utc=True, errors="coerce")
+    for column in (
+        "sri_point_mm_h",
+        "sri_mean_mm_h",
+        "sri_max_mm_h",
+        "sri_echo_fraction",
+        "vmi_point_dbz",
+        "vmi_max_dbz",
+        "lightning_10km",
+        "lightning_25km",
+        "lightning_50km",
+        "nearest_lightning_km",
+    ):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    return frame
+
+
 def load_official_alerts(days: int = 45) -> pd.DataFrame:
     """Load recent institutional bulletins, newest first."""
     days = max(2, min(int(days), 180))
@@ -288,6 +435,18 @@ def load_provider_scores() -> pd.DataFrame:
         "skill_vs_persistence",
         "reliability_gap",
     ):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def load_regime_scores() -> pd.DataFrame:
+    frame = _read(
+        "SELECT * FROM forecast_regime_scores WHERE evaluated_at = "
+        "(SELECT MAX(evaluated_at) FROM forecast_regime_scores) "
+        "ORDER BY variable,horizon,regime,mae"
+    )
+    for column in ("n", "bias", "mae", "rmse", "brier"):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
@@ -377,6 +536,16 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
         raw_status = row.get("status")
         stored_status = "" if pd.isna(raw_status) else str(raw_status).strip().lower()
         has_telemetry = bool(stored_status) or pd.notna(row["last_attempt_at"])
+        source = str(row.get("source"))
+        # A portable database export is intentionally manual: before the first
+        # verified archive it must not look like a stuck scheduled job.
+        if source == "database_backup" and not has_telemetry:
+            return "manual"
+        # SIARL is an optional connector. When explicitly suspended, do not
+        # keep showing historical portal failures while the operational CFR
+        # Lazio reference continues to run.
+        if source == "arsial_siarl" and not bool(row["enabled"]):
+            return "disabled"
         # The dashboard and the Render Cron Job can intentionally have
         # different environment variables. Once the ingest process has
         # reported telemetry, trust that shared database state instead of
@@ -392,14 +561,14 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
             # but the UI must never present an old archive as a live source.
             cache_hours = (
                 cfg.arsial_cache_hours
-                if str(row.get("source")) == "arsial_siarl"
+                if source == "arsial_siarl"
                 else 24
             )
             if observed_age <= cache_hours * 60:
                 return "cached"
             return (
                 "external_unavailable"
-                if str(row.get("source")) == "arsial_siarl"
+                if source == "arsial_siarl"
                 else "offline"
             )
         failures = int(row["consecutive_failures"])
@@ -407,7 +576,7 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
             # ARSIAL is an optional institutional cross-check. A portal outage
             # must remain visible without looking like a failure of Ecowitt or
             # of the forecast pipeline itself.
-            if str(row.get("source")) == "arsial_siarl":
+            if source == "arsial_siarl":
                 return "external_unavailable"
             return "offline"
         if failures == 1:

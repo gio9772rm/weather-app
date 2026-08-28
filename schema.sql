@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
   cloud_mid REAL,
   cloud_high REAL,
   visibility_m REAL,
+  cape_j_kg REAL,
+  freezing_level_m REAL,
+  wind_300hpa_kmh REAL,
+  humidity_700hpa REAL,
+  geopotential_500hpa_m REAL,
+  temperature_850hpa_c REAL,
   weather_code TEXT,
   description TEXT,
   is_day INTEGER,
@@ -80,6 +86,47 @@ CREATE INDEX IF NOT EXISTS idx_forecast_runs_valid_time
 
 CREATE INDEX IF NOT EXISTS idx_forecast_runs_issued_at
   ON forecast_runs (issued_at);
+
+-- Station-aware mirrors are additive: the legacy tables stay untouched while
+-- future stations can coexist without colliding on timestamp-only keys.
+CREATE TABLE IF NOT EXISTS station_profiles (
+  station_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  latitude REAL,
+  longitude REAL,
+  elevation_m REAL,
+  timezone TEXT NOT NULL,
+  source TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'primary',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  privacy_level TEXT NOT NULL DEFAULT 'private_location',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS station_observations (
+  station_id TEXT NOT NULL,
+  time TEXT NOT NULL,
+  temp_c REAL,
+  humidity REAL,
+  pressure_hpa REAL,
+  wind_kmh REAL,
+  windgust_kmh REAL,
+  winddir REAL,
+  rain_mm REAL,
+  wind_ms REAL,
+  rain_rate_mm_h REAL,
+  rain_total_mm REAL,
+  solar_w_m2 REAL,
+  uv_index REAL,
+  source TEXT,
+  data_quality TEXT,
+  PRIMARY KEY (station_id, time),
+  FOREIGN KEY (station_id) REFERENCES station_profiles(station_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_station_observations_time
+  ON station_observations (station_id, time);
 
 CREATE TABLE IF NOT EXISTS forecast_scores (
   evaluated_at TEXT NOT NULL,
@@ -99,6 +146,24 @@ CREATE TABLE IF NOT EXISTS forecast_scores (
   reliability_gap REAL,
   PRIMARY KEY (evaluated_at, provider, model, variable, horizon)
 );
+
+CREATE TABLE IF NOT EXISTS forecast_regime_scores (
+  evaluated_at TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  variable TEXT NOT NULL,
+  horizon TEXT NOT NULL,
+  regime TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  bias REAL,
+  mae REAL,
+  rmse REAL,
+  brier REAL,
+  PRIMARY KEY (evaluated_at, provider, model, variable, horizon, regime)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_regime_scores_evaluated
+  ON forecast_regime_scores (evaluated_at);
 
 -- Official observations are deliberately isolated from station_raw: they can
 -- validate and regularise forecast statistics but never impersonate Ecowitt.
@@ -191,6 +256,12 @@ CREATE TABLE IF NOT EXISTS forecast_blend (
   cloud_mid REAL,
   cloud_high REAL,
   visibility_m REAL,
+  cape_j_kg REAL,
+  freezing_level_m REAL,
+  wind_300hpa_kmh REAL,
+  humidity_700hpa REAL,
+  geopotential_500hpa_m REAL,
+  temperature_850hpa_c REAL,
   weather_code TEXT,
   description TEXT,
   is_day INTEGER,
@@ -223,6 +294,12 @@ CREATE TABLE IF NOT EXISTS forecast_blend_history (
   cloud_mid REAL,
   cloud_high REAL,
   visibility_m REAL,
+  cape_j_kg REAL,
+  freezing_level_m REAL,
+  wind_300hpa_kmh REAL,
+  humidity_700hpa REAL,
+  geopotential_500hpa_m REAL,
+  temperature_850hpa_c REAL,
   weather_code TEXT,
   description TEXT,
   is_day INTEGER,
@@ -297,6 +374,45 @@ CREATE TABLE IF NOT EXISTS climate_normals (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (source, month, day, hour, metric)
 );
+
+CREATE TABLE IF NOT EXISTS climate_reference_normals (
+  station_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  period_start INTEGER NOT NULL,
+  period_end INTEGER NOT NULL,
+  month INTEGER NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL,
+  unit TEXT,
+  sample_years INTEGER,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (station_id, source, period_start, period_end, month, metric)
+);
+
+-- Only point values and local summary statistics are persisted. Raster tiles
+-- and lightning coordinates are never archived in the application database.
+CREATE TABLE IF NOT EXISTS radar_local_snapshots (
+  station_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  sri_observed_at TEXT,
+  vmi_observed_at TEXT,
+  lightning_observed_at TEXT,
+  sri_point_mm_h REAL,
+  sri_mean_mm_h REAL,
+  sri_max_mm_h REAL,
+  sri_echo_fraction REAL,
+  vmi_point_dbz REAL,
+  vmi_max_dbz REAL,
+  lightning_10km INTEGER,
+  lightning_25km INTEGER,
+  lightning_50km INTEGER,
+  nearest_lightning_km REAL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (station_id, observed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_radar_local_snapshots_latest
+  ON radar_local_snapshots (station_id, observed_at);
 
 CREATE TABLE IF NOT EXISTS official_alerts (
   source TEXT NOT NULL,

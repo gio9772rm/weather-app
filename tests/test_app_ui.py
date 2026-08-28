@@ -28,10 +28,20 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         "--weather-icon-bg",
         ".insight-grid",
         ".activity-grid",
+        ".expandable-card",
+        ".card-expanded",
         ".air-grid",
         "_use_local_subplot_keys",
     ):
         assert selector in source
+    assert '<details class="current-card expandable-card">' in source
+    assert '<details class="activity-card expandable-card' in source
+    assert '<details class="air-card expandable-card' in source
+    today = source[
+        source.index("def render_today_dashboard") : source.index("def _city_future_hours")
+    ]
+    assert today.index("render_v4_activities") < today.index("render_official_alerts")
+    assert "lat={CFG.latitude:.4f}" not in source
 
 
 def test_app_opens_local_dashboard_and_city_search(
