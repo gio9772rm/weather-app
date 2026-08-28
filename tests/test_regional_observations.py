@@ -14,14 +14,15 @@ from regional_observations import (
     fetch_cfr_observations,
     parse_arsial_tables,
     parse_cfr_frames,
+    parse_meteohub_cfr_payload,
 )
 
 
 def _settings() -> Settings:
     return replace(
         Settings.from_env(),
-        latitude=41.9067235,
-        longitude=12.3899144,
+        latitude=41.85,
+        longitude=12.45,
         arsial_observations_enabled=True,
         arsial_station_name="ROMA Lanciani-SEDE ARSIAL",
         cfr_observations_enabled=False,
@@ -311,3 +312,93 @@ def test_cfr_future_json_or_csv_contract_is_already_supported():
     assert row["pressure_hpa"] == 1013.2
     assert row["wind_kmh"] == 7.4
     assert row["rain_mm"] == 0
+
+
+def _meteohub_payload() -> dict[str, Any]:
+    values = {
+        "B12101": 299.15,
+        "B11001": 225.0,
+        "B11002": 2.5,
+        "B13011": 0.6,
+    }
+    return {
+        "data": [
+            {
+                "stat": {
+                    "lat": 41.94889,
+                    "lon": 12.44056,
+                    "details": [
+                        {"var": "B01019", "val": "Roma Monte Mario"},
+                        {"var": "B07030", "val": 98},
+                    ],
+                },
+                "prod": [
+                    {
+                        "var": product,
+                        "lev": "103,2000",
+                        "trange": "254,0,0",
+                        "val": [
+                            {
+                                "ref": "2026-08-27T12:00:00Z",
+                                "val": value,
+                                "rel": 1,
+                            }
+                        ],
+                    }
+                    for product, value in values.items()
+                ],
+            }
+        ]
+    }
+
+
+def test_public_meteohub_cfr_contract_converts_units_and_keeps_source_separate():
+    cfg = replace(_settings(), cfr_observations_enabled=True)
+
+    frame = parse_meteohub_cfr_payload(
+        _meteohub_payload(),
+        cfg,
+        fetched_at=pd.Timestamp("2026-08-27T12:05:00Z"),
+    )
+
+    assert len(frame) == 1
+    row = frame.iloc[0]
+    assert row["source"] == SOURCE_CFR
+    assert row["station_name"] == "Roma Monte Mario"
+    assert row["temp_c"] == 26.0
+    assert row["wind_kmh"] == 9.0
+    assert row["wind_dir"] == 225.0
+    assert row["rain_mm"] == 0.6
+    assert row["quality_flag"] == "official_ccby4"
+
+
+class MeteoHubSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append((url, kwargs))
+        return FakeResponse(
+            "{}",
+            url=url,
+            content_type="application/json",
+            payload=_meteohub_payload(),
+        )
+
+
+def test_cfr_uses_anonymous_public_meteohub_when_no_custom_url_is_set():
+    cfg = replace(
+        _settings(),
+        cfr_observations_enabled=True,
+        cfr_observations_url="",
+    )
+    session = MeteoHubSession()
+
+    frame = fetch_cfr_observations(cfg, session)
+
+    assert len(frame) == 1
+    url, request = session.calls[0]
+    assert url.endswith("/api/observations")
+    assert request["params"]["networks"] == "dpcn-lazio"
+    assert "license:CCBY_COMPLIANT" in request["params"]["q"]
+    assert "Authorization" not in request["headers"]

@@ -55,8 +55,8 @@ def test_eea_normaliser_selects_nearest_station_for_each_pollutant(sqlite_engine
     frame = normalise_eea_observations(
         measurements,
         metadata,
-        latitude=41.9067,
-        longitude=12.3899,
+        latitude=41.85,
+        longitude=12.45,
         fetched_at=pd.Timestamp("2026-08-26T09:10:00Z"),
     )
     assert set(frame["metric"]) == {"pm10", "nitrogen_dioxide"}

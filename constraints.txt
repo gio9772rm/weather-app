@@ -108,6 +108,8 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
+reportlab==4.5.1
+    # via -r requirements.txt
 requests==2.34.2
     # via
     #   -r requirements.txt

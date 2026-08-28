@@ -1,6 +1,6 @@
-# Meteo V4
+# Meteo V4.3
 
-Dashboard Streamlit per una stazione Ecowitt con previsioni multi‑modello, verifica automatica degli errori e una nuova esperienza quotidiana più immediata.
+Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
 La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la V4 viene pubblicata su `main` soltanto dopo test e CI verdi.
 
@@ -8,13 +8,13 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 
 - osservazioni Ecowitt Cloud con controlli di qualità e pioggia espressa correttamente in **mm per intervallo**;
 - controlli avanzati su intervalli fisici, salti anomali, sensori fermi e coerenza tra vento medio e raffica;
-- previsioni orarie Open‑Meteo fino a 7 giorni;
+- previsione esplicita **ItaliaMeteo/ARPAE ICON-2I a 2,2 km** per le prime 72 ore e Open‑Meteo best-match per completare l'orizzonte fino a 7 giorni, senza contare due volte le ore dipendenti dallo stesso modello;
 - secondo modello OpenWeather a 3 ore, quando è presente la relativa chiave;
-- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e rete ARSIAL/SIARL Roma-Lanciani, archiviate separatamente e usate come controlli statistici secondari;
+- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e **CFR Lazio via MeteoHub**, archiviate separatamente e usate come controlli statistici secondari; il connettore ARSIAL/SIARL resta disponibile ma è sospeso di default finché l'export pubblico non torna stabile;
 - archivio di ogni emissione, confronto con la stazione, validazione temporale recente, baseline di persistenza e affidabilità della probabilità di pioggia;
-- combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
+- **Calibrazione 2.0** per variabile, orizzonte e regime meteorologico, combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
-- interfaccia responsive con panoramica continua passato→futuro, schede giornaliere, dettaglio orario, radar e condizioni astronomiche;
+- interfaccia responsive con panoramica continua passato→futuro e riquadri meteo/pianificazione espandibili con clic o tastiera;
 - nuova home **Oggi** con meteo dinamico, riepilogo in linguaggio naturale, timeline scorrevole, pioggia/vento/fiducia e tendenza settimanale;
 - indici orientativi per passeggiata, pollini, ricambio d'aria e astronomia, con il momento migliore e criteri espliciti;
 - qualità dell'aria europea, PM2.5, PM10, NO₂, ozono e pollini CAMS/Open‑Meteo, caricati soltanto quando si apre la scheda dedicata e senza nuove chiavi;
@@ -24,11 +24,15 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - città preferite riapribili dall'URL e confronto giornaliero fra Roma e la località scelta;
 - confronto automatico fra le ultime due emissioni con stato **stabile**, **in evoluzione** o **cambiata**;
 - guida probabilistica ICON-EPS con percentili P10–P90 e probabilità di pioggia calcolata sui membri, mantenuta separata dal peso dei provider;
-- nowcast puntuale RainViewer, quando sono pubblicati fotogrammi futuri, oltre alle mappe osservate Windy;
+- osservazione **DPC SRI/VMI** sul punto e su un piccolo ritaglio locale, conteggio fulmini entro 10/25/50 km e nowcast RainViewer separato come tendenza secondaria;
 - misure orarie ufficiali preliminari EEA/Italia per l'aria, confrontate con CAMS senza entrare nei dati Ecowitt;
 - pollini giornalieri realmente misurati dalla rete ufficiale POLLnet/ISPRA, con stazione, distanza, data ed età distinti dalla previsione CAMS;
 - baseline climatica locale Ecowitt per mese e ora, con mediana, fascia P10–P90 e anomalie correnti dichiarate come confronto con lo storico disponibile;
-- bollettini ufficiali DPC e Regione Lazio nella home, separati dagli avvisi contestuali calcolati dall'app;
+- riferimento climatico mensile **1991–2020 ERA5-Land**, esplicitamente dichiarato come rianalisi e distinto dalle normali ufficiali ISPRA/SCIA;
+- bollettini ufficiali DPC e Regione Lazio subito sotto **Pianifica la giornata**, separati dagli avvisi contestuali calcolati dall'app;
+- registro e archivio con chiave stazione, pronti ad accogliere una seconda Ecowitt del Nord senza collisioni e senza cambiare lo storico esistente;
+- rapporti climatici mensili scaricabili in **PDF e CSV**, privi delle coordinate esatte;
+- **Astronomia Pro** con trasparenza, stabilità atmosferica, jet a 300 hPa, umidità a 700 hPa, zero termico e rischio condensa presentati come proxy previsionali, mai come seeing misurato;
 - modalità di lettura **Semplice/Esperta**, salvata nell'URL, per aggiungere confronti grezzi e metadati solo quando servono;
 - origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
@@ -43,11 +47,15 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 ```mermaid
 flowchart TD
   E["Ecowitt Cloud"] --> P["Cron Job Render · ogni 5 min"]
+  ICON["ItaliaMeteo ICON-2I"] --> P
   OM["Open-Meteo"] --> P
   OW["OpenWeather"] --> P
   ENS["ICON-EPS · ensemble"] --> P
   METAR["METAR ufficiali · LIRF/LIRA"] --> P
-  ARSIAL["ARSIAL/SIARL · Roma-Lanciani"] --> P
+  ARSIAL["ARSIAL/SIARL · opt-in sospesa"] -.-> P
+  CFR["CFR Lazio · MeteoHub"] --> P
+  RAD["DPC · radar e fulmini locali"] --> P
+  ERA["ERA5-Land · 1991–2020"] --> P
   EEA["EEA UTD · aria osservata"] --> P
   POLL["POLLnet · pollini misurati"] --> P
   DPC["DPC + Regione Lazio · bollettini"] --> P
@@ -63,7 +71,7 @@ flowchart TD
 
 Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, perché i suoi eventi pianificati possono subire ritardi.
 
-Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle ARSIAL dall'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7). Sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione esterna può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
+Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle CFR dal dataset pubblico `dpcn-lazio` di [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio), con attribuzione e licenza CC BY 4.0 riportate dal catalogo. L'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7) resta integrato come opzione, ma non viene interrogato di default mentre il portale restituisce risposte non affidabili. Tutte le osservazioni esterne sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione remota può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 
 Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti. La scheda **Aria** usa invece la previsione ambientale CAMS/Open‑Meteo per le coordinate visualizzate e resta separata dai sensori della stazione.
 
@@ -76,15 +84,18 @@ La home **Oggi** privilegia ciò che serve nella vita quotidiana, lasciando inva
 - presenta dodici ore in una striscia orizzontale leggibile anche da telefono;
 - individua la prima fase piovosa, la raffica massima, l'escursione termica e la fiducia media;
 - calcola indici attività compresi tra 0 e 100 usando solo pioggia, vento, temperatura, umidità, nuvole e giorno/notte;
+- permette di aprire ogni riquadro meteo e di pianificazione nello stesso punto per leggere fonte, orario, fiducia e motivazione, anche da tastiera;
 - mantiene **Panoramica**, **7 giorni**, **Stazione**, **Astronomia**, **Radar** e **Sistema** come viste di approfondimento.
 
 La qualità dell'aria è un dato modellistico a scala territoriale, non una misura Ecowitt. L'indice segue le fasce AQI europee; i pollini sono disponibili in Europa durante la stagione. Un errore della fonte ambientale mostra un messaggio circoscritto e non interferisce con stazione, previsioni o Cron Job.
 
 La scheda Aria affianca a CAMS le misure **EEA UTD** trasmesse dall'Italia. Sono osservazioni orarie reali ma preliminari, possono arrivare in ritardo e restano nella tabella `environment_observations`: non vengono mai presentate come misure della stazione. Il nowcast RainViewer è ugualmente facoltativo; se il provider non pubblica fotogrammi futuri, la dashboard lo dichiara e continua a mostrare il radar osservato.
 
-La V4.2 aggiunge nella stessa tabella le misure giornaliere **POLLnet/ISPRA**, selezionando la stazione aerobiologica più vicina e contando soltanto le famiglie botaniche per evitare duplicazioni con generi e specie. La data del campione e la distanza restano sempre visibili. I bollettini DPC e Regione Lazio sono archiviati separatamente in `official_alerts` e mostrati con collegamento al documento istituzionale: l'app non attribuisce autonomamente un livello di allerta ai PDF regionali.
+La V4.2 aggiunge nella stessa tabella le misure giornaliere **POLLnet/ISPRA**, selezionando la stazione aerobiologica più vicina e contando soltanto le famiglie botaniche per evitare duplicazioni con generi e specie. La data del campione e la distanza restano sempre visibili. I bollettini DPC e Regione Lazio sono archiviati separatamente in `official_alerts`, collocati sotto **Pianifica la giornata** e mostrati con collegamento al documento istituzionale: l'app non attribuisce autonomamente un livello di allerta ai PDF regionali.
 
-La sezione Stazione costruisce una baseline Ecowitt per mese e ora. È un confronto personale con lo storico disponibile, non una normale climatica ufficiale 1991–2020. Dal menu laterale la modalità **Semplice** privilegia le sintesi; **Esperta** aggiunge tabelle statistiche, confronti misura-modello e metadati delle fonti.
+La sezione Stazione conserva due confronti distinti: la baseline personale Ecowitt per mese/ora e il riferimento mensile 1991–2020 calcolato dalla rianalisi Copernicus ERA5-Land tramite l'[Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api). Il secondo non viene presentato come normale ufficiale ISPRA/SCIA. Nella stessa sezione si possono creare PDF e CSV mensili; il PDF non contiene coordinate precise. Dal menu laterale la modalità **Semplice** privilegia le sintesi; **Esperta** aggiunge tabelle statistiche, confronti misura-modello e metadati delle fonti.
+
+La scheda Radar distingue i ruoli: SRI/VMI e fulmini DPC sono osservazioni ufficiali locali, mentre RainViewer descrive soltanto la tendenza di movimento delle eco e Windy resta una mappa di consultazione. La pipeline segue la [piattaforma Radar-DPC](https://mappe.protezionecivile.gov.it/it/mappe-e-dashboard-rischi/piattaforma-radar/), scarica unicamente i tasselli che intersecano il piccolo ritaglio attorno alla stazione e archivia soltanto valori puntuali e statistiche aggregate, mai raster nazionali o coordinate dei singoli fulmini.
 
 ## Avvio rapido su Windows 11
 
@@ -131,6 +142,7 @@ Backfill Ecowitt di 7 giorni:
 | `OPENWEATHER_API_KEY` | consigliata | abilita il secondo provider; sono accettati anche i nomi precedenti `OWM_API_KEY` e `OW_API_KEY` |
 | `LAT`, `LON`, `ELEVATION_M` | sì | posizione usata dai modelli e dall'astronomia |
 | `LOCATION_NAME`, `LOCAL_TZ` | sì | intestazione e orari locali |
+| `STATION_ID` | no | identificatore stabile e non geografico della stazione primaria, default `roma-primary` |
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
 | `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 168 ore (7 giorni) |
@@ -143,17 +155,24 @@ Backfill Ecowitt di 7 giorni:
 | `OFFICIAL_OBSERVATION_LOOKBACK_HOURS` | no | finestra riletta in modo idempotente, default 48 ore |
 | `OFFICIAL_SCORE_MAX_SHARE` | no | contributo massimo ufficiale quando esiste il punteggio Ecowitt, default 0,20 |
 | `OFFICIAL_MIN_OVERLAP_SAMPLES` | no | campioni simultanei per imparare la differenza tra sito remoto ed Ecowitt, default 24 |
-| `ARSIAL_OBSERVATIONS_ENABLED` | no | abilita Roma-Lanciani come riferimento secondario, default `true` |
+| `ARSIAL_OBSERVATIONS_ENABLED` | no | riattiva esplicitamente Roma-Lanciani come riferimento secondario, default `false` finché l'export pubblico non torna stabile |
 | `ARSIAL_DASHBOARD_URL` | no | dashboard pubblica oraria SIARL; già configurata |
 | `ARSIAL_STATION_NAME` | no | stazione ARSIAL da selezionare, default `ROMA Lanciani-SEDE ARSIAL` |
 | `ARSIAL_TZ` | no | fuso dichiarato dalla dashboard oraria SIARL, default `UTC`; la UI converte poi in `Europe/Rome` |
 | `ARSIAL_CSV_URL` | no | eventuale export CSV ufficiale stabile; se vuoto viene scoperto dalla dashboard |
 | `ARSIAL_CHART_IDS` | no | ID Superset noti, separati da virgola: consentono di provare direttamente gli export senza dipendere dalla pagina dashboard |
 | `ARSIAL_CACHE_HOURS` | no | durata massima dell'archivio ARSIAL usabile durante un timeout, default 72 ore; resta marcato come storico e mai come dato live |
-| `CFR_OBSERVATIONS_ENABLED` | no | connettore CFR dormiente, default `false` |
-| `CFR_OBSERVATIONS_URL` | futura | endpoint HTTPS ufficiale CSV/JSON fornito dal CFR |
-| `CFR_API_TOKEN` | futura | token opzionale, da salvare soltanto come secret |
-| `CFR_STATION_IDS` | futura | codici stazione ammessi, separati da virgola |
+| `CFR_OBSERVATIONS_ENABLED` | no | riferimento CFR Lazio pubblico via MeteoHub, default `true` |
+| `CFR_METEOHUB_BASE_URL` | no | base del catalogo MeteoHub, già configurata |
+| `CFR_STATION_NAME` | no | stazione ufficiale di riferimento da richiedere a MeteoHub |
+| `CFR_OBSERVATIONS_URL` | no | override HTTPS CSV/JSON opzionale; normalmente vuoto |
+| `CFR_API_TOKEN` | no | token soltanto per un eventuale override privato |
+| `CFR_STATION_IDS` | no | codici ammessi soltanto per l'override generico |
+| `DPC_RADAR_ENABLED` | no | osservazione locale SRI/VMI e fulmini DPC, default `true` |
+| `DPC_RADAR_REFRESH_MINUTES` | no | frequenza radar ufficiale, minimo e default 5 minuti |
+| `DPC_RADAR_CROP_RADIUS` | no | raggio in pixel del piccolo ritaglio locale, default 10 |
+| `REFERENCE_CLIMATOLOGY_ENABLED` | no | riferimento ERA5-Land 1991–2020, default `true` |
+| `REFERENCE_CLIMATOLOGY_REFRESH_DAYS` | no | rinnovo del riferimento, default 30 giorni |
 | `ENSEMBLE_FORECAST_ENABLED` | no | abilita la guida ICON-EPS, default `true` |
 | `ENSEMBLE_MODEL` | no | famiglia ensemble Open-Meteo, default `icon_seamless` |
 | `RADAR_NOWCAST_ENABLED` | no | abilita la stima puntuale RainViewer in pagina, default `true` |
@@ -168,23 +187,24 @@ Backfill Ecowitt di 7 giorni:
 
 Per ogni provider la pipeline conserva il momento di emissione e quello di validità. Quando l'orario previsto entra nel passato, la previsione viene confrontata con la misura più vicina della stazione.
 
-Il risultato combina sei livelli:
+Il risultato combina otto livelli:
 
 1. correzione del bias storico per variabile e orizzonte (`0–24 h`, `24–72 h`, `72 h+`);
-2. peso inversamente proporzionale al MAE, con prior iniziale 60% Open‑Meteo e 40% OpenWeather;
-3. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
-4. controllo secondario LIRF/LIRA e ARSIAL Roma-Lanciani: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi i dati ufficiali possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
-5. validazione sulla coda temporale più recente, non confusa con il riepilogo storico, e confronto con la previsione banale “resta come l'ultima misura”;
-6. guida ICON-EPS: la fascia P10–P90 amplia l'incertezza e il 20% della probabilità di pioggia può provenire dalla quota di membri piovosi, senza contare i membri come provider;
-7. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
+2. correzione specifica per regime — caldo/freddo, secco/umido, alta/bassa pressione, calma/vento e asciutto/piovoso — soltanto dopo un numero minimo di casi reali;
+3. peso inversamente proporzionale al MAE, con prior iniziali 0,65 ICON-2I, 0,55 Open‑Meteo e 0,40 OpenWeather;
+4. eliminazione della doppia ponderazione fra ICON-2I esplicito e le ore Open‑Meteo best-match dipendenti dallo stesso modello, conservando best-match come riempimento e per l'orizzonte più lungo;
+5. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
+6. controllo secondario LIRF/LIRA e CFR Lazio, con ARSIAL Roma-Lanciani disponibile come opt-in: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi i dati ufficiali possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
+7. validazione sulla coda temporale più recente, confronto con la persistenza e guida ICON-EPS separata dai provider deterministici;
+8. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
 
 La tabella di accuratezza distingue MAE storico e MAE di validazione e mostra lo **skill rispetto alla persistenza**: un valore positivo indica che il modello migliora il semplice mantenimento dell'ultima osservazione. Per la pioggia, il grafico di affidabilità confronta probabilità dichiarata e frequenza realmente osservata per fasce del 10%.
 
 Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugiada, umidità derivata, pressione, vento, raffiche e direzione entrano nella statistica ufficiale solo dopo almeno 24 osservazioni sovrapposte. Il peso considera anche la correlazione realmente misurata fra il riferimento e il sito Ecowitt: una stazione lontana con andamento poco coerente viene automaticamente attenuata. Nubi, visibilità e presenza di precipitazioni hanno un peso ancora più prudente, perché gli aeroporti rappresentano un'area diversa. La quantità di pioggia locale continua a dipendere soprattutto dalla Ecowitt; un METAR contribuisce solo quando pubblica realmente l'accumulo.
 
-ARSIAL usa esclusivamente gli export pubblici SIARL e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Il connettore prova prima le API e gli export dei grafici salvati, quindi la pagina dashboard: un rallentamento dell'HTML non blocca più percorsi ancora disponibili. Se ogni percorso ufficiale fallisce, l'ultimo archivio valido resta consultabile per `ARSIAL_CACHE_HOURS`, viene mostrato in giallo come **Archivio disponibile** e non viene mai dichiarato live. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali. Il connettore CFR è già predisposto per normali risposte CSV/JSON ma rimane completamente disabilitato: non effettua richieste, non compare nell'interfaccia e non partecipa alle statistiche finché non vengono configurati un endpoint ufficiale e `CFR_OBSERVATIONS_ENABLED=true`.
+ARSIAL usa esclusivamente gli export pubblici SIARL e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Poiché l'export Superset è attualmente instabile, `ARSIAL_OBSERVATIONS_ENABLED` è `false` per impostazione predefinita e la pagina Sistema la mostra come **Disattivata**, non come guasto della pipeline; CFR Lazio resta il riferimento regionale operativo. Se il connettore viene riattivato, prova prima le API e gli export dei grafici salvati, quindi la pagina dashboard. Se ogni percorso ufficiale fallisce, l'ultimo archivio valido resta consultabile per `ARSIAL_CACHE_HOURS`, viene mostrato come **Archivio disponibile** e non viene mai dichiarato live. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali.
 
-Per attivare CFR in futuro: impostare sul Cron Job `CFR_OBSERVATIONS_URL`, salvare l'eventuale `CFR_API_TOKEN` come secret, indicare facoltativamente `CFR_STATION_IDS` e solo alla fine attivare `CFR_OBSERVATIONS_ENABLED` sia sul Cron Job sia sul servizio web. Una risposta non valida resta comunque non bloccante.
+CFR Lazio è attivo tramite l'endpoint anonimo MeteoHub e il network `dpcn-lazio`: temperatura Kelvin, vento m/s, pressione Pa e precipitazione kg/m² vengono convertiti esplicitamente nelle unità interne. La fonte conserva il flag `official_ccby4` e resta una stazione remota di confronto. L'URL/token generico rimane disponibile soltanto come override; una risposta MeteoHub non valida è isolata e non blocca Ecowitt o il blend.
 
 All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali. La calibrazione inizia automaticamente appena previsioni archiviate e osservazioni si sovrappongono.
 
@@ -203,7 +223,7 @@ Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. U
 
 ### Backup verificato
 
-Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. L'esportazione resta sul computer dal quale esegui il comando: il progetto non trasferisce automaticamente una copia completa del database verso GitHub o altri servizi.
+Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.3 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. L'esportazione resta sul computer dal quale esegui il comando: il progetto non trasferisce automaticamente una copia completa del database verso GitHub o altri servizi. Prima della prima esportazione la pagina Sistema mostra **Manuale · mai eseguito** invece del fuorviante **In attesa**; dopo una copia verificata registra orario, righe e successo effettivi. La verifica continua ad accettare anche gli archivi V3 già creati.
 
 Per la protezione online usa in parallelo i backup gestiti dal provider PostgreSQL. Render documenta il point-in-time recovery nella pagina [PostgreSQL Backups](https://render.com/docs/postgresql-backups); disponibilità e profondità dipendono dal piano del database, quindi verifica la sezione **Recovery** del tuo PostgreSQL Render.
 
@@ -251,6 +271,8 @@ La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario
 - classe Bortle indicativa;
 - riepilogo giornaliero con qualità meteo notturna, nuvole, vento e illuminazione lunare.
 
+**Astronomia Pro** aggiunge proxy previsionali di trasparenza e stabilità usando nuvolosità media/alta, visibilità, CAPE, umidità a 700 hPa, vento del jet a 300 hPa e rischio condensa. Quando questi campi non sono disponibili il punteggio base continua a funzionare; quando sono presenti incidono in modo limitato e tracciabile. Non viene stimato né dichiarato un seeing in arcosecondi.
+
 Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale serve un fotometro SQM calibrato. Anche la Bortle è una valutazione visuale dell'intero cielo e la conversione dalla sola luminosità zenitale è necessariamente approssimativa.
 
 ## Test
@@ -261,7 +283,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I test coprono avvio dell'interfaccia, modalità semplice/esperta, home e indici V4, qualità dell'aria, pollini CAMS e misure POLLnet, climatologia locale, bollettini ufficiali, ensemble, confronto emissioni, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/METAR/ARSIAL, contratto futuro CFR, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, affidabilità pioggia, backup verificato e punteggio astronomico.
+I 123 test coprono avvio dell'interfaccia, riquadri espandibili, modalità semplice/esperta, home e indici V4, qualità dell'aria, pollini CAMS e misure POLLnet, climatologia locale e riferimento 1991–2020, PDF/CSV mensili, bollettini ufficiali, ensemble, confronto emissioni, radar/fulmini DPC locali, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, registro multi-stazione, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/ICON-2I/METAR/ARSIAL/MeteoHub, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, calibrazione per regime, affidabilità pioggia, backup verificato e Astronomia Pro.
 
 ## Dipendenze riproducibili
 

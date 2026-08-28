@@ -1,4 +1,4 @@
-name: Meteo V3 - Pipeline
+name: Meteo V4.3 - Pipeline
 
 on:
   workflow_dispatch:
@@ -81,12 +81,15 @@ jobs:
           OFFICIAL_OBSERVATION_LOOKBACK_HOURS: "48"
           OFFICIAL_SCORE_MAX_SHARE: "0.20"
           OFFICIAL_MIN_OVERLAP_SAMPLES: "24"
-          ARSIAL_OBSERVATIONS_ENABLED: "true"
+          ARSIAL_OBSERVATIONS_ENABLED: "false"
           ARSIAL_DASHBOARD_URL: https://siarl.arsial.it/bi/superset/dashboard/7
           ARSIAL_STATION_NAME: ROMA Lanciani-SEDE ARSIAL
           ARSIAL_TZ: UTC
           ARSIAL_CACHE_HOURS: "72"
-          CFR_OBSERVATIONS_ENABLED: "false"
+          CFR_OBSERVATIONS_ENABLED: "true"
+          DPC_RADAR_ENABLED: "true"
+          REFERENCE_CLIMATOLOGY_ENABLED: "true"
+          STATION_ID: roma-primary
           RECONCILIATION_HOURS: "168"
           SCHEDULE_EXPRESSION: ${{ github.event.schedule }}
         shell: bash

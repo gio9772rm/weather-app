@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import inspect, text
 
 
-def test_schema_contains_v3_tables_and_columns(sqlite_engine):
+def test_schema_contains_v43_tables_and_columns(sqlite_engine):
     inspector = inspect(sqlite_engine)
     tables = set(inspector.get_table_names())
     assert {
@@ -22,6 +22,11 @@ def test_schema_contains_v3_tables_and_columns(sqlite_engine):
         "official_alerts",
         "ingest_log",
         "source_health",
+        "station_profiles",
+        "station_observations",
+        "forecast_regime_scores",
+        "climate_reference_normals",
+        "radar_local_snapshots",
         "meta",
     } <= tables
     raw_columns = {
@@ -45,6 +50,22 @@ def test_schema_contains_v3_tables_and_columns(sqlite_engine):
         "skill_vs_persistence",
         "reliability_gap",
     } <= score_columns
+    forecast_columns = {
+        column["name"].lower()
+        for column in inspector.get_columns("forecast_blend")
+    }
+    assert {
+        "cape_j_kg",
+        "freezing_level_m",
+        "wind_300hpa_kmh",
+        "humidity_700hpa",
+        "geopotential_500hpa_m",
+        "temperature_850hpa_c",
+    } <= forecast_columns
+    with sqlite_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT v FROM meta WHERE k='schema_version'")
+        ).scalar_one() == "7"
 
 
 def test_legacy_station_raw_is_extended_without_losing_rows(tmp_path, monkeypatch):

@@ -25,6 +25,7 @@ BACKUP_TABLES = (
     "forecast_ow",
     "forecast_runs",
     "forecast_scores",
+    "forecast_regime_scores",
     "official_observations",
     "forecast_reference_scores",
     "forecast_reliability",
@@ -33,12 +34,19 @@ BACKUP_TABLES = (
     "forecast_ensemble_runs",
     "environment_observations",
     "climate_normals",
+    "climate_reference_normals",
+    "station_profiles",
+    "station_observations",
+    "radar_local_snapshots",
     "official_alerts",
     "ingest_log",
     "source_health",
     "meta",
     "user_prefs",
 )
+
+BACKUP_FORMAT = "meteo-v4-portable-backup"
+LEGACY_BACKUP_FORMATS = {"meteo-v3-portable-backup"}
 
 
 def _sha256(path: Path) -> str:
@@ -67,8 +75,10 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
     destination = _destination(output)
     existing = set(inspect(engine).get_table_names())
     manifest: dict[str, Any] = {
-        "format": "meteo-v3-portable-backup",
-        "version": 1,
+        "format": BACKUP_FORMAT,
+        "version": 2,
+        "application": "Meteo V4.3",
+        "schema_version": 7,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database_dialect": engine.dialect.name,
         "tables": {},
@@ -138,6 +148,7 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
         "database_backup",
         success=True,
         rows_received=sum(item["rows"] for item in manifest["tables"].values()),
+        last_observation_at=manifest["created_at"],
         engine=engine,
     )
     return destination
@@ -153,7 +164,7 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
         if not {"manifest.json", "schema.sql"} <= names:
             raise ValueError("Archivio non valido: manifest o schema mancanti")
         manifest = json.loads(archive.read("manifest.json"))
-        if manifest.get("format") != "meteo-v3-portable-backup":
+        if manifest.get("format") not in {BACKUP_FORMAT, *LEGACY_BACKUP_FORMATS}:
             raise ValueError("Formato backup non riconosciuto")
         for table, details in manifest.get("tables", {}).items():
             if table not in BACKUP_TABLES:
@@ -173,7 +184,7 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Backup portatile del database Meteo V3"
+        description="Backup portatile e verificato del database Meteo V4.3"
     )
     parser.add_argument("--output", default="backups", help="Cartella o file ZIP")
     parser.add_argument("--verify", help="Verifica un archivio esistente")

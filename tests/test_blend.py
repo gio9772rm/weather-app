@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from forecast_blend import (
     _bias_correct_forecast_value,
+    _deduplicate_model_dependencies,
     _to_hourly,
     archive_forecast,
     build_blend,
@@ -161,4 +162,35 @@ def test_recent_holdout_reports_skill_and_rain_reliability(sqlite_engine):
         reliability_count = connection.execute(
             text("SELECT SUM(n) FROM forecast_reliability")
         ).scalar_one()
+        regime_count = connection.execute(
+            text("SELECT COUNT(*) FROM forecast_regime_scores")
+        ).scalar_one()
     assert reliability_count == 6
+    assert regime_count > 0
+
+
+def test_explicit_icon_collapses_overlapping_best_match_but_keeps_fallbacks():
+    issued = pd.Timestamp("2026-08-27T12:00:00Z")
+    first = issued + pd.Timedelta(hours=1)
+    second = issued + pd.Timedelta(hours=2)
+    icon = provider_frame("italiameteo_icon2i", [20.0]).iloc[0].copy()
+    icon["issued_at"] = issued
+    icon["valid_time"] = first
+    icon["visibility_m"] = np.nan
+    best_overlap = provider_frame("open_meteo", [21.0]).iloc[0].copy()
+    best_overlap["issued_at"] = issued
+    best_overlap["valid_time"] = first
+    best_overlap["visibility_m"] = 25_000
+    best_later = best_overlap.copy()
+    best_later["valid_time"] = second
+
+    collapsed = _deduplicate_model_dependencies(
+        pd.DataFrame([icon, best_overlap, best_later])
+    )
+
+    assert len(collapsed) == 2
+    first_row = collapsed[collapsed["valid_time"].eq(first)].iloc[0]
+    assert first_row["provider"] == "italiameteo_icon2i"
+    assert first_row["temp_c"] == 20.0
+    assert first_row["visibility_m"] == 25_000
+    assert set(collapsed["valid_time"]) == {first, second}

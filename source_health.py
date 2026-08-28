@@ -35,6 +35,13 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             "open_meteo", "Open-Meteo", True, cfg.forecast_refresh_minutes, "previsioni"
         ),
         SourceDefinition(
+            "open_meteo_icon2i",
+            "ItaliaMeteo ICON-2I · 2,2 km",
+            True,
+            cfg.forecast_refresh_minutes,
+            "previsioni",
+        ),
+        SourceDefinition(
             "openweather",
             "OpenWeather",
             bool(cfg.openweather_api_key),
@@ -64,10 +71,24 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
         ),
         SourceDefinition(
             "cfr_lazio",
-            "CFR Lazio",
+            "CFR Lazio via MeteoHub",
             official and cfg.cfr_observations_enabled,
             15,
             "riferimenti",
+        ),
+        SourceDefinition(
+            "dpc_radar_local",
+            "DPC · radar locale SRI/VMI",
+            cfg.dpc_radar_enabled,
+            cfg.dpc_radar_refresh_minutes,
+            "misure",
+        ),
+        SourceDefinition(
+            "dpc_lightning_local",
+            "DPC · fulmini entro 50 km",
+            cfg.dpc_radar_enabled,
+            cfg.dpc_radar_refresh_minutes,
+            "sicurezza",
         ),
         SourceDefinition(
             "forecast_blend",
@@ -102,6 +123,13 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             "Baseline climatologica locale",
             cfg.feature_climatology_enabled,
             max(60, cfg.forecast_refresh_minutes),
+            "elaborazione",
+        ),
+        SourceDefinition(
+            "climatology_era5_land",
+            "Copernicus ERA5-Land · riferimento 1991–2020",
+            cfg.reference_climatology_enabled,
+            cfg.reference_climatology_refresh_days * 24 * 60,
             "elaborazione",
         ),
         SourceDefinition(

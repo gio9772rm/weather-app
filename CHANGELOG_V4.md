@@ -1,5 +1,16 @@
 # Changelog Meteo V4
 
+## V4.3 · radar ufficiale, calibrazione e UX espandibile
+
+- osservazione DPC SRI/VMI distinta dal nowcast RainViewer e dalla previsione Windy, con fulmini indicati come non disponibili quando manca il frame ufficiale;
+- ICON-2I esplicito nelle prime 72 ore, calibrazione per regime e riferimento climatico ERA5-Land 1991–2020;
+- CFR Lazio via MeteoHub come riferimento regionale operativo; ARSIAL/SIARL resta integrata ma è sospesa di default finché l'export pubblico non torna stabile;
+- registro multi-stazione, rapporti mensili PDF/CSV e predisposizione additiva per una futura seconda Ecowitt;
+- riquadri meteo e di pianificazione espandibili nello stesso punto con clic o tastiera;
+- bollettini ufficiali spostati subito sotto **Pianifica la giornata**;
+- stato backup corretto: manuale prima della prima esecuzione, operativo solo dopo ZIP e checksum verificati, con compatibilità per gli archivi V3;
+- schema V7 additivo, coordinate private escluse da UI, rapporti e configurazione pubblica.
+
 ## V4.2 · contesto climatico, misure e fonti ufficiali
 
 - climatologia locale Ecowitt per mese e ora con mediana, fascia P10–P90 e scarto del valore corrente;

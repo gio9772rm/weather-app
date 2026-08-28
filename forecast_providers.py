@@ -37,6 +37,12 @@ FORECAST_COLUMNS = [
     "cloud_mid",
     "cloud_high",
     "visibility_m",
+    "cape_j_kg",
+    "freezing_level_m",
+    "wind_300hpa_kmh",
+    "humidity_700hpa",
+    "geopotential_500hpa_m",
+    "temperature_850hpa_c",
     "weather_code",
     "description",
     "is_day",
@@ -130,7 +136,11 @@ WMO_DESCRIPTIONS_IT = {
 
 
 def parse_open_meteo(
-    payload: dict[str, Any], fetched_at: pd.Timestamp | None = None
+    payload: dict[str, Any],
+    fetched_at: pd.Timestamp | None = None,
+    *,
+    provider: str = "open_meteo",
+    model: str | None = None,
 ) -> pd.DataFrame:
     hourly = payload.get("hourly") or {}
     times = hourly.get("time") or []
@@ -161,6 +171,12 @@ def parse_open_meteo(
         "cloud_cover_mid": "cloud_mid",
         "cloud_cover_high": "cloud_high",
         "visibility": "visibility_m",
+        "cape": "cape_j_kg",
+        "freezing_level_height": "freezing_level_m",
+        "wind_speed_300hPa": "wind_300hpa_kmh",
+        "relative_humidity_700hPa": "humidity_700hpa",
+        "geopotential_height_500hPa": "geopotential_500hpa_m",
+        "temperature_850hPa": "temperature_850hpa_c",
         "weather_code": "weather_code",
         "is_day": "is_day",
     }
@@ -177,8 +193,8 @@ def parse_open_meteo(
     codes = pd.to_numeric(frame["weather_code"], errors="coerce")
     frame["weather_code"] = codes.astype("Int64").astype("string")
     frame["description"] = codes.map(WMO_DESCRIPTIONS_IT).fillna("Variabile")
-    frame["provider"] = "open_meteo"
-    frame["model"] = str(payload.get("model") or "best_match")
+    frame["provider"] = provider
+    frame["model"] = str(model or payload.get("model") or "best_match")
     frame["issued_at"] = issued
     frame["interval_hours"] = 1.0
     frame["lead_hours"] = (frame["valid_time"] - issued).dt.total_seconds() / 3600.0
@@ -188,12 +204,36 @@ def parse_open_meteo(
     return frame.reindex(columns=FORECAST_COLUMNS).dropna(subset=["valid_time"])
 
 
-def fetch_open_meteo(
-    cfg: Settings = settings, session: requests.Session | None = None
-) -> pd.DataFrame:
-    own_session = session is None
-    session = session or build_session()
-    params = {
+OPEN_METEO_HOURLY = (
+    "temperature_2m",
+    "apparent_temperature",
+    "relative_humidity_2m",
+    "dew_point_2m",
+    "precipitation_probability",
+    "rain",
+    "snowfall",
+    "weather_code",
+    "cloud_cover",
+    "cloud_cover_low",
+    "cloud_cover_mid",
+    "cloud_cover_high",
+    "pressure_msl",
+    "visibility",
+    "wind_speed_10m",
+    "wind_direction_10m",
+    "wind_gusts_10m",
+    "is_day",
+    "cape",
+    "freezing_level_height",
+    "wind_speed_300hPa",
+    "relative_humidity_700hPa",
+    "geopotential_height_500hPa",
+    "temperature_850hPa",
+)
+
+
+def _open_meteo_params(cfg: Settings, model: str) -> dict[str, Any]:
+    return {
         "latitude": cfg.latitude,
         "longitude": cfg.longitude,
         "elevation": cfg.elevation_m,
@@ -202,30 +242,17 @@ def fetch_open_meteo(
         "temperature_unit": "celsius",
         "wind_speed_unit": "kmh",
         "precipitation_unit": "mm",
-        "models": "best_match",
-        "hourly": ",".join(  # noqa: FLY002 - provider API requires a CSV list
-            [
-                "temperature_2m",
-                "apparent_temperature",
-                "relative_humidity_2m",
-                "dew_point_2m",
-                "precipitation_probability",
-                "rain",
-                "snowfall",
-                "weather_code",
-                "cloud_cover",
-                "cloud_cover_low",
-                "cloud_cover_mid",
-                "cloud_cover_high",
-                "pressure_msl",
-                "visibility",
-                "wind_speed_10m",
-                "wind_direction_10m",
-                "wind_gusts_10m",
-                "is_day",
-            ]
-        ),
+        "models": model,
+        "hourly": ",".join(OPEN_METEO_HOURLY),
     }
+
+
+def fetch_open_meteo(
+    cfg: Settings = settings, session: requests.Session | None = None
+) -> pd.DataFrame:
+    own_session = session is None
+    session = session or build_session()
+    params = _open_meteo_params(cfg, "best_match")
     try:
         payload = _get_json(
             session,
@@ -233,7 +260,33 @@ def fetch_open_meteo(
             params,
             "Open-Meteo",
         )
-        return parse_open_meteo(payload)
+        return parse_open_meteo(payload, provider="open_meteo", model="best_match")
+    finally:
+        if own_session:
+            session.close()
+
+
+def fetch_icon_2i(
+    cfg: Settings = settings, session: requests.Session | None = None
+) -> pd.DataFrame:
+    """Fetch the explicit 2.2 km ItaliaMeteo/ARPAE ICON-2I run."""
+    own_session = session is None
+    session = session or build_session()
+    params = _open_meteo_params(cfg, "italia_meteo_arpae_icon_2i")
+    params.pop("forecast_days", None)
+    params["forecast_hours"] = 72
+    try:
+        payload = _get_json(
+            session,
+            "https://api.open-meteo.com/v1/forecast",
+            params,
+            "ItaliaMeteo ICON-2I",
+        )
+        return parse_open_meteo(
+            payload,
+            provider="italiameteo_icon2i",
+            model="icon_2i_2p2km",
+        )
     finally:
         if own_session:
             session.close()
@@ -341,6 +394,12 @@ def fetch_all_forecasts(
     session = build_session()
     try:
         for name, source, enabled, fetcher in (
+            (
+                "ItaliaMeteo ICON-2I",
+                "open_meteo_icon2i",
+                True,
+                fetch_icon_2i,
+            ),
             ("Open-Meteo", "open_meteo", True, fetch_open_meteo),
             (
                 "OpenWeather",

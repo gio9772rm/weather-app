@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from astro_weather import (
+    astronomy_pro_indicators,
     astronomy_score,
     best_observing_windows,
     daily_astronomy_summary,
@@ -106,3 +107,47 @@ def test_daily_astronomy_summary_combines_weather_and_moon():
     assert daily.iloc[0]["wind_mean"] == 10
     assert daily.iloc[0]["visibility_km"] == 20
     assert daily.iloc[0]["moon_illumination"] == 42
+
+
+def test_astronomy_pro_rewards_transparency_and_stability():
+    frame = pd.DataFrame(
+        {
+            "clouds": [5, 90],
+            "cloud_mid": [5, 90],
+            "cloud_high": [5, 90],
+            "visibility_m": [30_000, 5_000],
+            "humidity_700hpa": [30, 95],
+            "cape_j_kg": [20, 1_800],
+            "wind_300hpa_kmh": [55, 220],
+            "temp_c": [15, 15],
+            "dewpoint_c": [5, 14],
+            "humidity": [45, 95],
+            "wind_kmh": [5, 2],
+        }
+    )
+
+    indicators = astronomy_pro_indicators(frame)
+
+    assert indicators.iloc[0]["astro_pro_score"] > indicators.iloc[1]["astro_pro_score"]
+    assert indicators.iloc[0]["transparency_proxy"] > 80
+    assert indicators.iloc[1]["dew_risk"] > 50
+
+
+def test_daily_summary_is_backward_compatible_without_pro_columns():
+    frame = pd.DataFrame(
+        {
+            "local_time": pd.date_range(
+                "2026-08-27T21:00:00+02:00", periods=2, freq="h"
+            ),
+            "is_night": True,
+            "astro_score": [70, 80],
+            "clouds": [20, 10],
+            "wind_kmh": [5, 7],
+            "visibility_m": [20_000, 25_000],
+        }
+    )
+
+    daily = daily_astronomy_summary(frame)
+
+    assert len(daily) == 1
+    assert pd.isna(daily.iloc[0]["transparency_proxy"])

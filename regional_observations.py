@@ -2,9 +2,9 @@
 
 ARSIAL publishes anonymous CSV exports through its SIARL/Superset portal.  The
 connector discovers the saved charts instead of relying on one short-lived
-download URL.  CFR support deliberately stays dormant until Regione Lazio
-provides a documented endpoint; once configured it accepts ordinary CSV or
-JSON without changing the forecast pipeline.
+download URL. CFR data are read anonymously from the public MeteoHub DPCN-Lazio
+collection; the older configurable CSV/JSON contract remains available as a
+fallback for deployments with a dedicated regional endpoint.
 """
 
 from __future__ import annotations
@@ -32,6 +32,17 @@ from official_observations import (
 
 SOURCE_ARSIAL = "arsial_siarl"
 SOURCE_CFR = "cfr_lazio"
+METEOHUB_LICENSE_GROUP = "CCBY_COMPLIANT"
+METEOHUB_NETWORK = "dpcn-lazio"
+METEOHUB_PRODUCTS = {
+    "B12101": ("temp_c", "kelvin"),
+    "B13003": ("humidity", "percent"),
+    "B10004": ("pressure_hpa", "pascal"),
+    "B11001": ("wind_dir", "degree"),
+    "B11002": ("wind_kmh", "metre_per_second"),
+    "B11041": ("wind_gust_kmh", "metre_per_second"),
+    "B13011": ("rain_mm", "kg_per_m2"),
+}
 
 ARSIAL_HEADERS = {
     "Accept": "text/html,application/json,text/csv;q=0.9,*/*;q=0.5",
@@ -949,17 +960,167 @@ def parse_cfr_frames(
     return _combine_rows(rows)
 
 
+def _meteohub_value(product: str, value: Any) -> float | None:
+    number = _number(value)
+    if number is None or product not in METEOHUB_PRODUCTS:
+        return None
+    _, unit = METEOHUB_PRODUCTS[product]
+    if unit == "kelvin":
+        number -= 273.15
+    elif unit == "pascal":
+        number /= 100.0
+    elif unit == "metre_per_second":
+        number *= 3.6
+    if product in {"B13003"}:
+        number = float(np.clip(number, 0.0, 100.0))
+    elif product == "B11001":
+        number %= 360.0
+    elif product in {"B11002", "B11041", "B13011"}:
+        number = max(0.0, number)
+    return number
+
+
+def parse_meteohub_cfr_payload(
+    payload: dict[str, Any],
+    cfg: Settings = settings,
+    fetched_at: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Normalise the public MeteoHub station time-series response."""
+    fetched = pd.to_datetime(fetched_at or pd.Timestamp.now(tz="UTC"), utc=True)
+    rows: list[dict[str, Any]] = []
+    for station in payload.get("data") or []:
+        if not isinstance(station, dict):
+            continue
+        metadata = station.get("stat") or {}
+        latitude = _number(metadata.get("lat"))
+        longitude = _number(metadata.get("lon"))
+        if latitude is None or longitude is None:
+            continue
+        details = {
+            str(item.get("var")): item.get("val")
+            for item in metadata.get("details") or []
+            if isinstance(item, dict)
+        }
+        station_name = str(details.get("B01019") or cfg.cfr_station_name).strip()
+        station_id = f"CFR-{_slug(station_name)}"
+        elevation = _number(details.get("B07030"))
+        combined: dict[pd.Timestamp, dict[str, Any]] = {}
+        for product in station.get("prod") or []:
+            if not isinstance(product, dict):
+                continue
+            code = str(product.get("var") or "")
+            if code not in METEOHUB_PRODUCTS:
+                continue
+            metric, _ = METEOHUB_PRODUCTS[code]
+            level = str(product.get("lev") or "")
+            timerange = str(product.get("trange") or "")
+            for item in product.get("val") or []:
+                if not isinstance(item, dict):
+                    continue
+                observed = pd.to_datetime(item.get("ref"), utc=True, errors="coerce")
+                converted = _meteohub_value(code, item.get("val"))
+                if pd.isna(observed) or converted is None:
+                    continue
+                timestamp = pd.Timestamp(observed)
+                target = combined.setdefault(
+                    timestamp,
+                    _base_observation(
+                        source=SOURCE_CFR,
+                        station_id=station_id,
+                        station_name=station_name,
+                        observed=timestamp,
+                        fetched=fetched,
+                        latitude=latitude,
+                        longitude=longitude,
+                        elevation_m=elevation,
+                        cfg=cfg,
+                        quality="official_ccby4",
+                        raw="",
+                    ),
+                )
+                target[metric] = converted
+                reliability = _number(item.get("rel"))
+                if reliability not in (None, 1.0):
+                    target["quality_flag"] = f"official_qc:{reliability:g}"
+                target["raw_observation"] = json.dumps(
+                    {
+                        "product": code,
+                        "level": level,
+                        "timerange": timerange,
+                        "reliability": reliability,
+                    },
+                    separators=(",", ":"),
+                )
+        rows.extend(combined.values())
+    return _combine_rows(rows)
+
+
+def fetch_meteohub_cfr_observations(
+    cfg: Settings = settings,
+    session: requests.Session | None = None,
+) -> pd.DataFrame:
+    own_session = session is None
+    if session is None:
+        from forecast_providers import build_session
+
+        session = build_session(retries=2)
+    now = pd.Timestamp.now(tz="UTC")
+    start = now - pd.Timedelta(hours=cfg.official_observation_lookback_hours)
+    query = (
+        f"reftime: >={start:%Y-%m-%d %H:%M},<={now:%Y-%m-%d %H:%M};"
+        f"product:{' or '.join(METEOHUB_PRODUCTS)};"
+        f"license:{METEOHUB_LICENSE_GROUP}"
+    )
+    url = cfg.cfr_meteohub_base_url.rstrip("/") + "/api/observations"
+    try:
+        response = _get(
+            session,
+            url,
+            params={
+                "q": query,
+                "lat": cfg.cfr_station_latitude,
+                "lon": cfg.cfr_station_longitude,
+                "networks": METEOHUB_NETWORK,
+                "stationDetails": "true",
+                "allStationProducts": "false",
+            },
+            headers={"Accept": "application/json"},
+            timeout=(8, 45),
+        )
+        if not response.ok:
+            raise OfficialObservationError(
+                f"CFR Lazio/MeteoHub: risposta HTTP {response.status_code}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise OfficialObservationError(
+                "CFR Lazio/MeteoHub: risposta non valida"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise OfficialObservationError(
+                "CFR Lazio/MeteoHub: risposta non valida"
+            )
+        observations = parse_meteohub_cfr_payload(payload, cfg)
+        if observations.empty:
+            raise OfficialObservationError(
+                "CFR Lazio/MeteoHub: nessuna osservazione valida"
+            )
+        return observations
+    finally:
+        if own_session:
+            session.close()
+
+
 def fetch_cfr_observations(
     cfg: Settings = settings,
     session: requests.Session | None = None,
 ) -> pd.DataFrame:
-    """Read the future official CFR endpoint only after explicit activation."""
+    """Read public MeteoHub, retaining the optional generic endpoint fallback."""
     if not cfg.cfr_observations_enabled:
         return pd.DataFrame(columns=OBSERVATION_COLUMNS)
     if not cfg.cfr_observations_url:
-        raise OfficialObservationError(
-            "CFR Lazio: connettore in attesa dell'endpoint ufficiale"
-        )
+        return fetch_meteohub_cfr_observations(cfg, session)
     if not cfg.cfr_observations_url.lower().startswith("https://"):
         raise OfficialObservationError("CFR Lazio: l'endpoint deve usare HTTPS")
     own_session = session is None
