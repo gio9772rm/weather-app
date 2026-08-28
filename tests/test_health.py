@@ -14,9 +14,7 @@ def test_health_snapshot_reads_v3_sources_independently(monkeypatch):
     def fake_read(query: str, params=None):
         queries.append(query)
         if "station_raw" in query:
-            return pd.DataFrame(
-                [{"station_time": current - pd.Timedelta(minutes=5)}]
-            )
+            return pd.DataFrame([{"station_time": current - pd.Timedelta(minutes=5)}])
         if "forecast_blend" in query:
             return pd.DataFrame(
                 [
@@ -44,6 +42,8 @@ def test_health_snapshot_reads_v3_sources_independently(monkeypatch):
         "humidity",
         "pressure",
         "wind",
+        "rain",
+        "solar",
     }
 
 
@@ -53,13 +53,9 @@ def test_health_snapshot_falls_back_to_legacy_forecast(monkeypatch):
 
     def fake_read(query: str, params=None):
         if "station_raw" in query:
-            return pd.DataFrame(
-                [{"station_time": current - pd.Timedelta(minutes=5)}]
-            )
+            return pd.DataFrame([{"station_time": current - pd.Timedelta(minutes=5)}])
         if "forecast_blend" in query:
-            return pd.DataFrame(
-                [{"forecast_issued": None, "forecast_until": pd.NaT}]
-            )
+            return pd.DataFrame([{"forecast_issued": None, "forecast_until": pd.NaT}])
         if "forecast_ow" in query:
             return pd.DataFrame([{"legacy_time": legacy_time}])
         raise AssertionError(f"Unexpected query: {query}")

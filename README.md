@@ -37,8 +37,8 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
-- scheda **Sistema** con salute di ogni fonte, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
-- strumento di backup portatile locale con manifest, conteggi e verifica SHA-256, affiancabile ai backup/PITR nativi di Render;
+- scheda **Sistema** con salute di ogni fonte, fallback disponibile, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
+- backup automatico cifrato su GitHub alle 22:00 `Europe/Rome`, indipendente dal PC locale, con 30 copie e verifica SHA-256;
 - dipendenze riproducibili tramite `constraints.txt` e aggiornamenti settimanali minori/patch con Dependabot;
 - migrazione additiva: lo schema esistente viene esteso senza cancellare le osservazioni.
 
@@ -61,15 +61,17 @@ flowchart TD
   DPC["DPC + Regione Lazio · bollettini"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
-  DB --> BK["Backup locale verificato / PITR Render"]
+  DB --> BK["Backup GitHub cifrato · 30 copie"]
+  DB --> PITR["PITR Render · se incluso nel piano"]
   DB --> UI["Dashboard Streamlit su Render"]
+  HC["GitHub · salute ogni 30 min"] --> DB
   AIR["Open-Meteo Air Quality · CAMS"] --> UI
   RV["RainViewer · nowcast"] --> UI
   DB --> Q["Verifica e calibrazione locale"]
   Q --> DB
 ```
 
-Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, perché i suoi eventi pianificati possono subire ritardi.
+Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
 
 Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle CFR dal dataset pubblico `dpcn-lazio` di [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio), con attribuzione e licenza CC BY 4.0 riportate dal catalogo. L'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7) resta integrato come opzione, ma non viene interrogato di default mentre il portale restituisce risposte non affidabili. Tutte le osservazioni esterne sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione remota può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 
@@ -223,9 +225,11 @@ Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. U
 
 ### Backup verificato
 
-Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.3 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. L'esportazione resta sul computer dal quale esegui il comando: il progetto non trasferisce automaticamente una copia completa del database verso GitHub o altri servizi. Prima della prima esportazione la pagina Sistema mostra **Manuale · mai eseguito** invece del fuorviante **In attesa**; dopo una copia verificata registra orario, righe e successo effettivi. La verifica continua ad accettare anche gli archivi V3 già creati.
+Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.3 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:00 Europe/Rome**, anche se il PC locale è spento.
 
-Per la protezione online usa in parallelo i backup gestiti dal provider PostgreSQL. Render documenta il point-in-time recovery nella pagina [PostgreSQL Backups](https://render.com/docs/postgresql-backups); disponibilità e profondità dipendono dal piano del database, quindi verifica la sezione **Recovery** del tuo PostgreSQL Render.
+Poiché il repository è pubblico, lo ZIP non lascia mai il runner in chiaro: viene cifrato con AES-256-CBC/PBKDF2 usando una chiave derivata dal `DATABASE_URL` segreto in vigore al momento della copia. GitHub conserva ogni artefatto cifrato per 30 giorni e lo fa scadere automaticamente: con una copia giornaliera restano disponibili le circa 30 copie più recenti, senza concedere al workflow permessi di cancellazione. La pagina Sistema distingue la creazione/verifica dello ZIP dal caricamento cloud, così un upload fallito non viene mostrato come backup remoto riuscito. Se `DATABASE_URL` viene ruotato, conserva in modo sicuro il vecchio valore finché i relativi backup non sono scaduti.
+
+I backup gestiti dal provider PostgreSQL restano una protezione indipendente. Render documenta il point-in-time recovery nella pagina [PostgreSQL Backups](https://render.com/docs/postgresql-backups); disponibilità e profondità dipendono dal piano del database.
 
 Per creare e verificare una copia locale:
 
@@ -243,10 +247,12 @@ Il formato è intenzionalmente portatile e di sola esportazione. Sposta lo ZIP i
 La scheda **Sistema** rende visibili, senza mostrare chiavi o URL sensibili:
 
 - ultimo successo e ultimo dato di Ecowitt, provider, riferimenti ufficiali e combinazione;
+- continuità prevista per ogni componente: archivio valido, provider alternativo o fonte secondaria;
 - latenza, righe ricevute ed errori consecutivi;
 - percentuale di intervalli a 5 minuti presenti nelle ultime 24 ore e buco massimo;
 - campioni marcati `range_filtered`, `spike_*`, `stuck_*`, `gust_below_mean_wind` o `estimated_rain`;
-- ultime esecuzioni della pipeline e stato del backup.
+- ultime esecuzioni della pipeline, controllo salute e stato separato del backup cloud;
+- badge **LIVE** verde animato sulle misure recenti e **NON LIVE** rosso sui valori fuori soglia, senza usare il solo colore.
 
 I valori fisicamente impossibili vengono esclusi solo per il parametro interessato. Salti, sensori apparentemente fermi e incoerenze fra vento e raffica restano archiviati ma sono esplicitamente marcati, così non vengono scambiati per dati pienamente validati.
 
@@ -283,7 +289,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I 123 test coprono avvio dell'interfaccia, riquadri espandibili, modalità semplice/esperta, home e indici V4, qualità dell'aria, pollini CAMS e misure POLLnet, climatologia locale e riferimento 1991–2020, PDF/CSV mensili, bollettini ufficiali, ensemble, confronto emissioni, radar/fulmini DPC locali, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, registro multi-stazione, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/ICON-2I/METAR/ARSIAL/MeteoHub, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, calibrazione per regime, affidabilità pioggia, backup verificato e Astronomia Pro.
+I 135 test coprono avvio dell'interfaccia, riquadri espandibili, modalità semplice/esperta, home e indici V4, qualità dell'aria, pollini CAMS e misure POLLnet, climatologia locale e riferimento 1991–2020, PDF/CSV mensili, bollettini ufficiali, ensemble, confronto emissioni, radar/fulmini DPC locali, nowcast, misure EEA isolate, riepilogo PNG, ricerca e confronto città, registro multi-stazione, pagina Sistema, schema/migrazioni, parser Ecowitt/Open‑Meteo/OpenWeather/ICON-2I/METAR/ARSIAL/MeteoHub, sorgenti esterne non raggiungibili, cambio CET/CEST, qualità sensori, priorità Ecowitt, calibrazione per regime, affidabilità pioggia, backup verificato e Astronomia Pro.
 
 ## Dipendenze riproducibili
 

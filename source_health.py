@@ -22,6 +22,8 @@ class SourceDefinition:
     enabled: bool
     expected_minutes: int
     category: str
+    cache_minutes: int = 0
+    continuity: str = "Nessun fallback configurato"
 
 
 def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]:
@@ -29,10 +31,21 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
     official = cfg.official_observations_enabled
     return (
         SourceDefinition(
-            "ecowitt", "Ecowitt", cfg.has_station_credentials, 5, "misure"
+            "ecowitt",
+            "Ecowitt",
+            cfg.has_station_credentials,
+            5,
+            "misure",
+            continuity="Recupero automatico Ecowitt fino a 7 giorni",
         ),
         SourceDefinition(
-            "open_meteo", "Open-Meteo", True, cfg.forecast_refresh_minutes, "previsioni"
+            "open_meteo",
+            "Open-Meteo",
+            True,
+            cfg.forecast_refresh_minutes,
+            "previsioni",
+            cache_minutes=12 * 60,
+            continuity="Ultima emissione valida nel blend multi-provider",
         ),
         SourceDefinition(
             "open_meteo_icon2i",
@@ -40,6 +53,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             True,
             cfg.forecast_refresh_minutes,
             "previsioni",
+            cache_minutes=12 * 60,
+            continuity="Open-Meteo e OpenWeather restano alternativi",
         ),
         SourceDefinition(
             "openweather",
@@ -47,6 +62,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             bool(cfg.openweather_api_key),
             cfg.forecast_refresh_minutes,
             "previsioni",
+            cache_minutes=12 * 60,
+            continuity="Open-Meteo e ICON-2I restano alternativi",
         ),
         SourceDefinition(
             "open_meteo_ensemble",
@@ -54,6 +71,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.ensemble_forecast_enabled,
             cfg.forecast_refresh_minutes,
             "probabilistica",
+            cache_minutes=12 * 60,
+            continuity="Blend deterministico disponibile senza ensemble",
         ),
         SourceDefinition(
             "awc_metar",
@@ -61,6 +80,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             official,
             cfg.official_observation_refresh_minutes,
             "riferimenti",
+            cache_minutes=6 * 60,
+            continuity="Ecowitt primaria + CFR Lazio indipendente",
         ),
         SourceDefinition(
             "arsial_siarl",
@@ -68,6 +89,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             official and cfg.arsial_observations_enabled,
             cfg.official_observation_refresh_minutes,
             "riferimenti",
+            cache_minutes=cfg.arsial_cache_hours * 60,
+            continuity="CFR Lazio operativo; archivio SIARL se valido",
         ),
         SourceDefinition(
             "cfr_lazio",
@@ -75,6 +98,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             official and cfg.cfr_observations_enabled,
             15,
             "riferimenti",
+            cache_minutes=6 * 60,
+            continuity="METAR + ultimo dato CFR archiviato",
         ),
         SourceDefinition(
             "dpc_radar_local",
@@ -82,6 +107,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.dpc_radar_enabled,
             cfg.dpc_radar_refresh_minutes,
             "misure",
+            cache_minutes=30,
+            continuity="Ultimo riassunto locale + RainViewer",
         ),
         SourceDefinition(
             "dpc_lightning_local",
@@ -89,6 +116,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.dpc_radar_enabled,
             cfg.dpc_radar_refresh_minutes,
             "sicurezza",
+            cache_minutes=30,
+            continuity="Mostra n/d se il frame ufficiale non esiste",
         ),
         SourceDefinition(
             "forecast_blend",
@@ -96,6 +125,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             True,
             cfg.forecast_refresh_minutes,
             "elaborazione",
+            cache_minutes=12 * 60,
+            continuity="Conserva l'ultima previsione combinata valida",
         ),
         SourceDefinition(
             "eea_utd_air",
@@ -103,6 +134,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.eea_air_observations_enabled,
             max(60, cfg.forecast_refresh_minutes),
             "ambiente",
+            cache_minutes=24 * 60,
+            continuity="Previsione CAMS sempre distinta dalla misura",
         ),
         SourceDefinition(
             "pollnet",
@@ -110,6 +143,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.feature_measured_pollen_enabled,
             14 * 24 * 60,
             "ambiente",
+            cache_minutes=30 * 24 * 60,
+            continuity="CAMS orientativo se POLLnet è in validazione",
         ),
         SourceDefinition(
             "official_alerts",
@@ -117,6 +152,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.feature_official_alerts_enabled,
             24 * 60,
             "sicurezza",
+            cache_minutes=7 * 24 * 60,
+            continuity="Ultimi documenti DPC/Lazio archiviati con data",
         ),
         SourceDefinition(
             "climatology_local",
@@ -124,6 +161,8 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.feature_climatology_enabled,
             max(60, cfg.forecast_refresh_minutes),
             "elaborazione",
+            cache_minutes=90 * 24 * 60,
+            continuity="Ricalcolo dalla serie Ecowitt conservata",
         ),
         SourceDefinition(
             "climatology_era5_land",
@@ -131,13 +170,32 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             cfg.reference_climatology_enabled,
             cfg.reference_climatology_refresh_days * 24 * 60,
             "elaborazione",
+            cache_minutes=365 * 24 * 60,
+            continuity="Baseline locale disponibile senza Copernicus",
+        ),
+        SourceDefinition(
+            "system_health",
+            "Controllo salute automatico",
+            True,
+            30,
+            "protezione",
+            continuity="Render riavvia l'app; GitHub verifica dati e DB",
         ),
         SourceDefinition(
             "database_backup",
-            "Ultimo backup verificato",
+            "Backup generato e verificato",
             True,
-            7 * 24 * 60,
+            24 * 60,
             "protezione",
+            continuity="ZIP portatile con manifest e checksum",
+        ),
+        SourceDefinition(
+            "github_backup",
+            "Backup cloud GitHub cifrato",
+            True,
+            24 * 60,
+            "protezione",
+            continuity="30 copie; la più vecchia viene eliminata",
         ),
     )
 

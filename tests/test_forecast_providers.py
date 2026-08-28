@@ -2,9 +2,26 @@ from __future__ import annotations
 
 import pandas as pd
 
-from forecast_providers import fetch_icon_2i, parse_open_meteo, parse_openweather
+from forecast_providers import (
+    build_session,
+    fetch_icon_2i,
+    parse_open_meteo,
+    parse_openweather,
+)
 
 NOW = pd.Timestamp("2026-08-19T10:25:00Z")
+
+
+def test_resilient_session_retries_read_only_get_and_post_queries():
+    session = build_session(retries=2)
+    retry = session.get_adapter("https://").max_retries
+    try:
+        assert retry.total == 2
+        assert {"GET", "HEAD", "POST"} <= set(retry.allowed_methods)
+        assert retry.respect_retry_after_header
+        assert session.get_adapter("http://").max_retries is retry
+    finally:
+        session.close()
 
 
 def test_parse_open_meteo_hourly_payload():

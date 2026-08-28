@@ -5,7 +5,12 @@ import zipfile
 
 from sqlalchemy import text
 
-from backup_database import create_backup, verify_backup
+from backup_database import (
+    _append_github_outputs,
+    create_backup,
+    record_cloud_backup_result,
+    verify_backup,
+)
 
 
 def test_backup_is_portable_checksummed_and_contains_no_connection_string(
@@ -43,12 +48,53 @@ def test_backup_is_portable_checksummed_and_contains_no_connection_string(
         assert parsed["database_dialect"] == "sqlite"
 
     with sqlite_engine.connect() as connection:
-        backup_health = connection.execute(
-            text(
-                "SELECT status,last_success_at,last_observation_at "
-                "FROM source_health WHERE source='database_backup'"
+        backup_health = (
+            connection.execute(
+                text(
+                    "SELECT status,last_success_at,last_observation_at "
+                    "FROM source_health WHERE source='database_backup'"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert backup_health["status"] == "online"
     assert backup_health["last_success_at"] is not None
     assert backup_health["last_observation_at"] is not None
+
+
+def test_github_outputs_and_cloud_upload_have_independent_health(
+    sqlite_engine, tmp_path
+):
+    destination = create_backup(tmp_path / "daily.zip", sqlite_engine)
+    manifest = verify_backup(destination)
+    output_file = tmp_path / "github-output.txt"
+
+    _append_github_outputs(output_file, destination, manifest)
+    outputs = dict(
+        line.split("=", 1)
+        for line in output_file.read_text(encoding="utf-8").splitlines()
+    )
+    assert outputs["path"] == str(destination.resolve())
+    assert outputs["encrypted_path"].endswith("daily.zip.enc")
+    assert int(outputs["rows"]) >= 0
+
+    assert record_cloud_backup_result(
+        success=True,
+        rows=int(outputs["rows"]),
+        observed_at=outputs["created_at"],
+        engine=sqlite_engine,
+    )
+    with sqlite_engine.connect() as connection:
+        cloud = (
+            connection.execute(
+                text(
+                    "SELECT status,last_success_at FROM source_health "
+                    "WHERE source='github_backup'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert cloud["status"] == "online"
+    assert cloud["last_success_at"] is not None

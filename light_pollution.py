@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 import requests
 
+from forecast_providers import build_session
+
 ATLAS_YEAR = 2025
 ATLAS_URL = "https://djlorenz.github.io/astronomy/lp/overlay/dark.html"
 TILE_URL = (
@@ -43,8 +45,7 @@ def _grid_position(latitude: float, longitude: float) -> tuple[int, int, int, in
     tile_x = math.floor(lon_from_date_line / 5.0) + 1
     tile_y = math.floor(lat_from_start / 5.0) + 1
     grid_x = math.floor(
-        120.0 * (lon_from_date_line - 5.0 * (tile_x - 1) + 1.0 / 240.0)
-        + 0.5
+        120.0 * (lon_from_date_line - 5.0 * (tile_x - 1) + 1.0 / 240.0) + 0.5
     )
     grid_y = math.floor(
         120.0 * (lat_from_start - 5.0 * (tile_y - 1) + 1.0 / 240.0) + 0.5
@@ -97,14 +98,9 @@ def decode_light_pollution_tile(
     signed = [value - 256 if value > 127 else value for value in raw]
     first_value = 128 * signed[0] + signed[1]
     change = sum(signed[600 * index + 1] for index in range(1, grid_y))
-    change += sum(
-        signed[600 * (grid_y - 1) + 1 + index]
-        for index in range(1, grid_x)
-    )
+    change += sum(signed[600 * (grid_y - 1) + 1 + index] for index in range(1, grid_x))
     compressed = first_value + change
-    lp_index = max(
-        0.0, (5.0 / 195.0) * (math.exp(0.0195 * compressed) - 1.0)
-    )
+    lp_index = max(0.0, (5.0 / 195.0) * (math.exp(0.0195 * compressed) - 1.0))
     sqm = 22.0 - 2.5 * math.log10(1.0 + lp_index)
     zone, bortle = classify_light_pollution(lp_index)
     normalized_longitude = ((longitude + 180.0) % 360.0) - 180.0
@@ -129,7 +125,8 @@ def fetch_light_pollution(
     """Fetch the single small atlas tile containing the requested coordinates."""
     tile_x, tile_y, _, _ = _grid_position(latitude, longitude)
     url = TILE_URL.format(year=year, tile_x=tile_x, tile_y=tile_y)
-    client = session or requests
+    own_session = session is None
+    client = session or build_session(retries=2)
     try:
         response = client.get(
             url,
@@ -138,10 +135,10 @@ def fetch_light_pollution(
         )
         response.raise_for_status()
     except requests.RequestException as exc:
-        raise LightPollutionError("Atlante luminoso temporaneamente non raggiungibile") from exc
-    return decode_light_pollution_tile(
-        response.content,
-        latitude,
-        longitude,
-        year=year,
-    )
+        raise LightPollutionError(
+            "Atlante luminoso temporaneamente non raggiungibile"
+        ) from exc
+    finally:
+        if own_session:
+            client.close()
+    return decode_light_pollution_tile(response.content, latitude, longitude, year=year)

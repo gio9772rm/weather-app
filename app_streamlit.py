@@ -300,11 +300,21 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
 .current-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:.65rem; margin:.8rem 0 1rem; }
 .current-card { min-width:0; min-height:118px; border:1px solid var(--line); border-radius:18px; padding:.82rem .88rem;
   background:var(--surface); box-shadow:var(--shadow); }
-.current-label { color:var(--muted); font-size:.7rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.current-head,.air-title-row { display:flex; align-items:center; justify-content:space-between; gap:.45rem; min-width:0; }
+.current-label { min-width:0; color:var(--muted); font-size:.7rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .current-value { color:var(--ink); font-size:clamp(1.28rem,2.2vw,1.85rem); line-height:1.1; font-weight:650;
   letter-spacing:-.045em; margin:.46rem 0 .35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .current-detail { display:inline-block; max-width:100%; color:var(--subtle); background:var(--surface-soft); border-radius:999px;
   padding:.23rem .46rem; font-size:.66rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.live-badge { flex:0 0 auto; display:inline-flex; align-items:center; gap:.28rem; padding:.2rem .4rem;
+  border-radius:999px; font-size:.58rem; font-weight:800; letter-spacing:.055em; line-height:1;
+  border:1px solid currentColor; }
+.live-badge .live-dot { width:.4rem; height:.4rem; border-radius:50%; background:currentColor; }
+.live-badge.is-live { color:#007a5a !important; background:rgba(0,158,115,.12); }
+.live-badge.is-stale { color:#b42318 !important; background:rgba(213,94,0,.12); }
+.live-badge.is-live .live-dot { animation:live-pulse 1.7s ease-out infinite; }
+@keyframes live-pulse { 0%{box-shadow:0 0 0 0 rgba(0,158,115,.55)} 70%{box-shadow:0 0 0 6px rgba(0,158,115,0)} 100%{box-shadow:0 0 0 0 rgba(0,158,115,0)} }
+@media(prefers-reduced-motion:reduce){.live-badge.is-live .live-dot{animation:none}.expandable-card{transition:none!important}}
 .hourly-strip { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(116px,1fr); gap:.65rem;
   overflow-x:auto; overscroll-behavior-inline:contain; padding:.15rem .05rem .9rem;
   scrollbar-width:auto; scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-gutter:stable; }
@@ -333,7 +343,7 @@ div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background:var(--s
   background:var(--surface); box-shadow:var(--shadow); position:relative; overflow:hidden; }
 .insight-card::before,.activity-card::before,.air-card::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:#94a3b8; }
 .tone-good::before { background:#009e73; }.tone-warning::before { background:#e69f00; }.tone-danger::before { background:#d55e00; }
-.insight-title,.activity-title,.air-title { color:var(--muted); font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.045em; }
+.insight-title,.activity-title,.air-title { min-width:0; color:var(--muted); font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.045em; overflow-wrap:anywhere; }
 .insight-value,.air-value { color:var(--ink); font-size:1.05rem; font-weight:700; margin:.42rem 0 .22rem; }
 .insight-detail,.activity-detail,.air-detail { color:var(--subtle); font-size:.72rem; line-height:1.45; }
 .activity-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:.7rem; margin:.35rem 0 1rem; }
@@ -354,7 +364,7 @@ div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background:var(--s
 .expandable-card > summary:focus-visible { outline:2px solid var(--blue); outline-offset:5px; border-radius:10px; }
 .expand-hint { display:flex; align-items:center; gap:.3rem; margin-top:.58rem; color:var(--blue);
   font-size:.65rem; font-weight:750; letter-spacing:.02em; }
-.expand-hint::after { content:"\2193"; font-size:.78rem; transition:transform .18s ease; }
+.expand-hint::after { content:"↓"; font-size:.78rem; transition:transform .18s ease; }
 .expandable-card[open] .expand-hint::after { transform:rotate(180deg); }
 .expandable-card[open] .expand-hint .closed-label { display:none; }
 .expand-hint .open-label { display:none; }
@@ -904,6 +914,17 @@ def _style_status_table(
             ),
             subset=[status_column],
         )
+    for text_column in ("Continuità / fallback", "Ultimo errore"):
+        if text_column in table:
+            styler = styler.set_properties(
+                subset=[text_column],
+                **{
+                    "white-space": "normal",
+                    "min-width": "220px",
+                    "max-width": "380px",
+                    "overflow-wrap": "anywhere",
+                },
+            )
     return styler
 
 
@@ -1155,12 +1176,42 @@ def _health_pill(label: str, status: str, detail: str) -> str:
     )
 
 
+def _live_badge_html(status: str, age_minutes: Any = None) -> str:
+    is_live = str(status).lower() == "online"
+    css_class = "is-live" if is_live else "is-stale"
+    label = "LIVE" if is_live else "NON LIVE"
+    age = _age_text(age_minutes)
+    title = (
+        f"Dato aggiornato: {age}"
+        if is_live
+        else f"Dato non aggiornato nei tempi attesi: {age}"
+    )
+    return (
+        f'<span class="live-badge {css_class}" title="{html.escape(title)}" '
+        f'aria-label="{html.escape(label + ": " + title)}">'
+        f'<span class="live-dot"></span>{label}</span>'
+    )
+
+
+def _timestamp_live_state(value: Any, *, max_age_minutes: int) -> tuple[str, float]:
+    timestamp = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(timestamp):
+        return "offline", float("inf")
+    age = max(
+        0.0,
+        (pd.Timestamp.now(tz="UTC") - timestamp).total_seconds() / 60.0,
+    )
+    return ("online" if age <= max_age_minutes else "offline"), age
+
+
 def _measurement_freshness_row(health: dict[str, Any]) -> str:
     labels = {
         "temperature": "Temperatura",
         "humidity": "Umidità",
         "pressure": "Pressione",
         "wind": "Vento",
+        "rain": "Pioggia",
+        "solar": "Solare/UV",
     }
     freshness = health.get("measurement_freshness") or {}
     chips = []
@@ -1185,6 +1236,8 @@ def _stale_measurement_labels(health: dict[str, Any], minutes: int = 30) -> list
         "humidity": "umidità",
         "pressure": "pressione",
         "wind": "vento",
+        "rain": "pioggia",
+        "solar": "solare/UV",
     }
     freshness = health.get("measurement_freshness") or {}
     stale = []
@@ -1218,7 +1271,7 @@ def render_daily_cards(daily: pd.DataFrame) -> None:
             f'<div class="day-desc">{html.escape(description)}</div>'
             '<div class="expand-hint"><span class="closed-label">Altri dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
-            f'☔ Pioggia {_number(row.get("rain_mm"), 1, " mm")} · rischio {_number(row.get("pop_max"), 0, "%")}'
+            f"☔ Pioggia {_number(row.get('rain_mm'), 1, ' mm')} · rischio {_number(row.get('pop_max'), 0, '%')}"
             f"<br>💧 umidità media {_number(row.get('humidity_mean'), 0, '%')}"
             f"<br>💨 vento {_number(row.get('wind_mean'), 0, ' km/h')} · raffiche {_number(row.get('wind_max'), 0, ' km/h')}"
             f"<br>◎ fiducia del blend {_number(row.get('confidence'), 0, '%')}"
@@ -1254,7 +1307,7 @@ def render_three_hour_forecast(forecast: pd.DataFrame) -> None:
             f'<div class="hour-meta">🌡️ {_number(row.get("temp_c"), 1, " °C")} · percepita {_number(row.get("feels_like_c"), 1, " °C")}</div>'
             '<div class="expand-hint"><span class="closed-label">Altri dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
-            f'☁️ Nuvole {_number(row.get("clouds"), 0, "%")}'
+            f"☁️ Nuvole {_number(row.get('clouds'), 0, '%')}"
             f"<br>☔ {_number(reportable_rain_amount(row.get('rain_mm'), row.get('precip_probability')), 1, ' mm')} · rischio {_number(row.get('precip_probability'), 0, '%')}"
             f"<br>💨 {_number(row.get('wind_kmh'), 0, ' km/h')} · {html.escape(compass_direction(row.get('wind_dir')))}"
             f"<br>◎ Fiducia {_number(row.get('confidence'), 0, '%')} · fonte {html.escape(str(row.get('model') or 'blend calibrato'))}"
@@ -1285,15 +1338,29 @@ def render_current_grid(
     rendered = []
     for card in cards:
         icon, label, value, detail = card[:4]
-        expanded = card[4] if len(card) > 4 else "Misura locale con contesto e provenienza."
+        expanded = (
+            card[4] if len(card) > 4 else "Misura locale con contesto e provenienza."
+        )
+        value_text = str(value or "—")
+        detail_text = str(detail or "Nessun confronto recente")
+        expanded_text = str(expanded or "Dettagli non disponibili")
+        live_status = card[5] if len(card) > 5 else None
+        live_age = card[6] if len(card) > 6 else None
+        live_badge = (
+            _live_badge_html(str(live_status), live_age)
+            if live_status is not None
+            else ""
+        )
         rendered.append(
             '<details class="current-card expandable-card">'
             f'<summary aria-label="Apri dettagli {html.escape(label)}">'
+            '<div class="current-head">'
             f'<div class="current-label">{icon} {html.escape(label)}</div>'
-            f'<div class="current-value" title="{html.escape(value)}">{html.escape(value)}</div>'
-            f'<div class="current-detail" title="{html.escape(detail)}">{html.escape(detail)}</div>'
+            f"{live_badge}</div>"
+            f'<div class="current-value" title="{html.escape(value_text)}">{html.escape(value_text)}</div>'
+            f'<div class="current-detail" title="{html.escape(detail_text)}">{html.escape(detail_text)}</div>'
             '<div class="expand-hint"><span class="closed-label">Altri dettagli</span><span class="open-label">Riduci</span></div>'
-            f'</summary><div class="card-expanded">{html.escape(expanded)}</div></details>'
+            f'</summary><div class="card-expanded">{html.escape(expanded_text)}</div></details>'
         )
     st.markdown(
         '<div class="current-grid">' + "".join(rendered) + "</div>",
@@ -1397,11 +1464,11 @@ def render_v4_hourly_strip(
             f'<div class="hourly-rain">☔ {_number(row.get("precip_probability"), 0, "%")} · {_number(reportable_rain_amount(row.get("rain_mm"), row.get("precip_probability")), 1, " mm")}</div>'
             '<div class="expand-hint"><span class="closed-label">Dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
-            f'Condizione: {html.escape(description)}'
-            f'<br>🌡️ Percepita {_number(row.get("feels_like_c"), 1, " °C")} · umidità {_number(row.get("humidity"), 0, "%")}'
-            f'<br>☁️ Nuvole {_number(row.get("clouds"), 0, "%")}'
-            f'<br>💨 Vento {_number(row.get("wind_kmh"), 0, " km/h")} · {html.escape(compass_direction(row.get("wind_dir")))}'
-            f'<br>◎ Fiducia {_number(row.get("confidence"), 0, "%")} · {html.escape(str(row.get("model") or "blend calibrato"))}'
+            f"Condizione: {html.escape(description)}"
+            f"<br>🌡️ Percepita {_number(row.get('feels_like_c'), 1, ' °C')} · umidità {_number(row.get('humidity'), 0, '%')}"
+            f"<br>☁️ Nuvole {_number(row.get('clouds'), 0, '%')}"
+            f"<br>💨 Vento {_number(row.get('wind_kmh'), 0, ' km/h')} · {html.escape(compass_direction(row.get('wind_dir')))}"
+            f"<br>◎ Fiducia {_number(row.get('confidence'), 0, '%')} · {html.escape(str(row.get('model') or 'blend calibrato'))}"
             "</div></details>"
         )
     st.markdown(
@@ -1423,7 +1490,7 @@ def render_v4_insights(forecast: pd.DataFrame, *, timezone: str | None = None) -
             f'<div class="insight-value">{html.escape(item.value)}</div>'
             '<div class="expand-hint"><span class="closed-label">Perché</span><span class="open-label">Riduci</span></div>'
             f'</summary><div class="card-expanded">{html.escape(item.detail)}'
-            '<br>Indicazione calcolata dalle prossime ore del blend calibrato.</div></details>'
+            "<br>Indicazione calcolata dalle prossime ore del blend calibrato.</div></details>"
         )
     st.markdown(
         '<div class="insight-grid">' + "".join(cards) + "</div>",
@@ -1940,11 +2007,19 @@ def _expandable_air_card(
     *,
     expanded: str,
     tone: str = "neutral",
+    live_status: str | None = None,
+    live_age_minutes: Any = None,
 ) -> str:
+    live_badge = (
+        _live_badge_html(live_status, live_age_minutes)
+        if live_status is not None
+        else ""
+    )
     return (
         f'<details class="air-card expandable-card tone-{html.escape(tone)}">'
         f'<summary aria-label="Apri dettagli {html.escape(title)}">'
-        f'<div class="air-title">{html.escape(title)}</div>'
+        '<div class="air-title-row">'
+        f'<div class="air-title">{html.escape(title)}</div>{live_badge}</div>'
         f'<div class="air-value">{html.escape(value)}</div>'
         f'<div class="air-detail">{html.escape(detail)}</div>'
         '<div class="expand-hint"><span class="closed-label">Altri dettagli</span>'
@@ -2116,6 +2191,9 @@ def render_observed_air_comparison(
             item.get("station_name") or item.get("station_id") or "stazione EEA"
         )
         distance = _number(item.get("distance_km"), 1, " km")
+        observed_live, observed_age = _timestamp_live_state(
+            item.get("time"), max_age_minutes=180
+        )
         cards.append(
             _expandable_air_card(
                 f"◉ {label} osservato",
@@ -2126,6 +2204,8 @@ def render_observed_air_comparison(
                     f"CAMS nello stesso momento: {_number(model_value, 1, ' µg/m³')}. "
                     f"Qualità: {(item.get('quality_flag') or 'UTD_preliminare')!s}."
                 ),
+                live_status=observed_live,
+                live_age_minutes=observed_age,
             )
         )
         rows.append(
@@ -2284,8 +2364,8 @@ def render_climate_context(
         cards.append(
             _expandable_air_card(
                 str(item["label"]),
-                f'{float(item["value"]):.{decimals}f} {unit}',
-                f'{delta:+.{decimals}f} {unit} dalla mediana · {item["state"]!s}',
+                f"{float(item['value']):.{decimals}f} {unit}",
+                f"{delta:+.{decimals}f} {unit} dalla mediana · {item['state']!s}",
                 tone=tone,
                 expanded=(
                     f"Fascia locale P10–P90: {float(item['p10']):.{decimals}f}–"
@@ -2408,9 +2488,9 @@ def render_reference_climate_context(
     table["Parametro"] = table["Parametro"].map(labels).fillna(table["Parametro"])
     render_styled_table(
         _base_table_style(
-            table[["Parametro", "Valore", "Unità", "sample_years"]].rename(
-                columns={"sample_years": "Anni"}
-            ).round(1),
+            table[["Parametro", "Valore", "Unità", "sample_years"]]
+            .rename(columns={"sample_years": "Anni"})
+            .round(1),
             dark_mode,
         ),
         height=260,
@@ -2631,7 +2711,7 @@ def _render_city_daily_cards(city: CityForecast) -> None:
             f'<div class="day-desc">{html.escape(description)}</div>'
             '<div class="expand-hint"><span class="closed-label">Altri dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
-            f'☔ {_number(row.get("precipitation_mm"), 1, " mm")} · rischio {_number(row.get("precip_probability"), 0, "%")}'
+            f"☔ {_number(row.get('precipitation_mm'), 1, ' mm')} · rischio {_number(row.get('precip_probability'), 0, '%')}"
             f"<br>💨 max {_number(row.get('wind_max_kmh'), 0, ' km/h')} · raffiche {_number(row.get('wind_gust_max_kmh'), 0, ' km/h')}"
             f"<br>🧭 {html.escape(compass_direction(row.get('wind_dir')))} · UV {_number(row.get('uv_index_max'), 1)}"
             f"<br>☀️ {'—' if pd.isna(sunrise) else sunrise.strftime('%H:%M')}–{'—' if pd.isna(sunset) else sunset.strftime('%H:%M')}"
@@ -2659,7 +2739,7 @@ def _render_city_next_hours(city: CityForecast) -> None:
             f'<div class="hour-meta">🌡️ {_number(row.get("temp_c"), 1, " °C")}</div>'
             '<div class="expand-hint"><span class="closed-label">Altri dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
-            f'Percepita {_number(row.get("feels_like_c"), 1, " °C")}'
+            f"Percepita {_number(row.get('feels_like_c'), 1, ' °C')}"
             f"<br>☔ {_number(row.get('precipitation_mm'), 1, ' mm')} · rischio {_number(row.get('precip_probability'), 0, '%')}"
             f"<br>💨 {_number(row.get('wind_kmh'), 0, ' km/h')} · {html.escape(compass_direction(row.get('wind_dir')))}"
             f"<br>☁️ Nuvole {_number(row.get('cloud_cover'), 0, '%')} · UV {_number(row.get('uv_index'), 1)}"
@@ -3725,6 +3805,18 @@ if not station.empty:
         .sum()
     )
     current_time_label = _local_time(current.get("time"))
+    current_freshness = health.get("measurement_freshness") or {}
+
+    def live_state(metric: str) -> tuple[str, Any]:
+        details = current_freshness.get(metric) or {}
+        return str(details.get("status") or "offline"), details.get("age_minutes")
+
+    temperature_live = live_state("temperature")
+    humidity_live = live_state("humidity")
+    pressure_live = live_state("pressure")
+    wind_live = live_state("wind")
+    rain_live = live_state("rain")
+    solar_live = live_state("solar")
     render_current_grid(
         [
             (
@@ -3733,6 +3825,7 @@ if not station.empty:
                 _number(current.get("temp_c"), 1, " °C"),
                 _delta(current, previous, "temp_c"),
                 f"Misura Ecowitt delle {current_time_label}. Il badge confronta il valore con circa tre ore prima.",
+                *temperature_live,
             ),
             (
                 "💧",
@@ -3740,6 +3833,7 @@ if not station.empty:
                 _number(current.get("humidity"), 0, " %"),
                 _delta(current, previous, "humidity", 0),
                 f"Umidità relativa misurata alle {current_time_label}; temperatura contestuale {_number(current.get('temp_c'), 1, ' °C')}.",
+                *humidity_live,
             ),
             (
                 "⏱️",
@@ -3747,6 +3841,7 @@ if not station.empty:
                 _number(current.get("pressure_hpa"), 1, " hPa"),
                 _delta(current, previous, "pressure_hpa"),
                 f"Pressione atmosferica della stazione alle {current_time_label}; variazione riferita a circa tre ore.",
+                *pressure_live,
             ),
             (
                 "💨",
@@ -3754,6 +3849,7 @@ if not station.empty:
                 _number(current.get("wind_kmh"), 1, " km/h"),
                 f"{compass_direction(current.get('winddir'))} · raffica {_number(current.get('windgust_kmh'), 1, ' km/h')}",
                 f"Direzione {compass_direction(current.get('winddir'))}; raffica massima istantanea {_number(current.get('windgust_kmh'), 1, ' km/h')} alle {current_time_label}.",
+                *wind_live,
             ),
             (
                 "☔",
@@ -3761,6 +3857,7 @@ if not station.empty:
                 _number(rain_24, 1, " mm"),
                 f"ora {_number(current.get('rain_rate_mm_h'), 1, ' mm/h')}",
                 f"Accumulo calcolato sui campioni reali delle ultime 24 ore; intensità corrente {_number(current.get('rain_rate_mm_h'), 1, ' mm/h')}.",
+                *rain_live,
             ),
             (
                 "☀️",
@@ -3768,6 +3865,7 @@ if not station.empty:
                 _number(current.get("solar_w_m2"), 0, " W/m²"),
                 f"UV {_number(current.get('uv_index'), 1)}",
                 f"Radiazione solare globale e indice UV misurati dalla stazione alle {current_time_label}.",
+                *solar_live,
             ),
         ]
     )
@@ -4074,9 +4172,9 @@ with tab_forecast:
                         ]
                     ]
                     regime_display["Regime"] = (
-                        regime_display["Regime"].map(regime_labels).fillna(
-                            regime_display["Regime"]
-                        )
+                        regime_display["Regime"]
+                        .map(regime_labels)
+                        .fillna(regime_display["Regime"])
                     )
                     st.markdown("#### Errore per situazione meteo")
                     render_styled_table(
@@ -4483,9 +4581,7 @@ with tab_astro:
                         "Stabilità proxy": _numeric_series(
                             daily_astro, "stability_proxy"
                         ),
-                        "Rischio condensa %": _numeric_series(
-                            daily_astro, "dew_risk"
-                        ),
+                        "Rischio condensa %": _numeric_series(daily_astro, "dew_risk"),
                         "Luna illuminata %": _numeric_series(
                             daily_astro, "moon_illumination"
                         ),
@@ -4575,21 +4671,13 @@ with tab_astro:
                 {
                     "Ora": night["local_time"].map(_hour_label),
                     "Score": _numeric_series(night, "astro_score"),
-                    "Trasparenza": _numeric_series(
-                        night, "transparency_proxy"
-                    ),
+                    "Trasparenza": _numeric_series(night, "transparency_proxy"),
                     "Stabilità": _numeric_series(night, "stability_proxy"),
                     "Condensa %": _numeric_series(night, "dew_risk"),
                     "CAPE J/kg": _numeric_series(night, "cape_j_kg"),
-                    "Jet 300 hPa km/h": _numeric_series(
-                        night, "wind_300hpa_kmh"
-                    ),
-                    "UR 700 hPa %": _numeric_series(
-                        night, "humidity_700hpa"
-                    ),
-                    "Zero termico m": _numeric_series(
-                        night, "freezing_level_m"
-                    ),
+                    "Jet 300 hPa km/h": _numeric_series(night, "wind_300hpa_kmh"),
+                    "UR 700 hPa %": _numeric_series(night, "humidity_700hpa"),
+                    "Zero termico m": _numeric_series(night, "freezing_level_m"),
                 }
             ).head(36)
             st.markdown("#### Diagnostica atmosferica · prossime ore notturne")
@@ -4635,7 +4723,10 @@ with tab_radar:
     dpc_archive = dpc_radar_archive_data(active_station_id)
     if not CFG.dpc_radar_enabled:
         st.caption("Il radar puntuale DPC è disattivato; le mappe restano disponibili.")
-    elif st.session_state.get("main_tab") == "Radar" and active_station_id == CFG.station_id:
+    elif (
+        st.session_state.get("main_tab") == "Radar"
+        and active_station_id == CFG.station_id
+    ):
         try:
             dpc_live = dpc_radar_live_data(CFG)
         except DpcRadarError as exc:
@@ -4654,6 +4745,7 @@ with tab_radar:
             else dpc_archive.iloc[0]
         )
         if snapshot is not None:
+
             def snapshot_value(name: str, default: Any = None) -> Any:
                 return (
                     getattr(snapshot, name, default)
@@ -4661,6 +4753,16 @@ with tab_radar:
                     else snapshot.get(name, default)
                 )
 
+            radar_live, radar_age = _timestamp_live_state(
+                snapshot_value("observed_at"),
+                max_age_minutes=max(15, CFG.dpc_radar_refresh_minutes * 3),
+            )
+            st.markdown(
+                '<div class="freshness-row"><span class="freshness-label">Radar DPC</span>'
+                + _live_badge_html(radar_live, radar_age)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
             metrics = st.columns(4)
             metrics[0].metric(
                 "Pioggia sul punto",
@@ -4834,6 +4936,17 @@ with tab_system:
     )
     st.subheader("Stato del sistema")
     completeness = completeness_data()
+    sources = source_status_data()
+    if not CFG.cfr_observations_enabled and "source" in sources:
+        sources = sources[sources["source"] != "cfr_lazio"].copy()
+    core_statuses = {health.get("station_status"), health.get("forecast_status")}
+    overall_label = (
+        "Operativo"
+        if core_statuses == {"online"}
+        else "Da controllare"
+        if "offline" not in core_statuses
+        else "Problema rilevato"
+    )
     system_columns = st.columns(4)
     system_columns[0].metric(
         "Copertura stazione · 24 h",
@@ -4854,15 +4967,15 @@ with tab_system:
         delta_color="inverse",
     )
     system_columns[3].metric(
-        "Schema dati",
-        "v7",
-        "migrazione additiva",
+        "Salute essenziale",
+        overall_label,
+        "Ecowitt + previsione combinata",
         delta_color="off",
     )
-
-    sources = source_status_data()
-    if not CFG.cfr_observations_enabled and "source" in sources:
-        sources = sources[sources["source"] != "cfr_lazio"].copy()
+    st.caption(
+        "Schema dati v7 · migrazioni additive · controllo Render continuo + verifica "
+        "indipendente GitHub ogni 30 minuti."
+    )
     st.markdown("#### Fonti e processi indipendenti")
     st.caption(
         "Un errore di una fonte non interrompe le altre. Lo stato considera sia "
@@ -4879,6 +4992,7 @@ with tab_system:
             "offline": "Non disponibile",
             "waiting": "In attesa",
             "manual": "Manuale · mai eseguito",
+            "scheduled": "Pianificata",
             "disabled": "Disattivata",
         }
         category_labels = {
@@ -4891,34 +5005,63 @@ with tab_system:
             "protezione": "Protezione",
             "sicurezza": "Sicurezza",
         }
+        readable_status = sources["display_status"].map(status_labels)
+        scheduled_backup = sources["source"].isin(
+            {"database_backup", "github_backup"}
+        ) & sources["display_status"].eq("scheduled")
+        readable_status.loc[scheduled_backup] = "Pianificata · ore 22:00"
         source_table = pd.DataFrame(
             {
                 "Componente": sources["label"],
                 "Categoria": sources["category"].map(category_labels),
-                "Stato": sources["display_status"].map(status_labels),
+                "Stato": readable_status,
                 "Ultimo tentativo": sources["last_attempt_at"].map(_local_time),
                 "Ultimo successo": sources["last_success_at"].map(_local_time),
                 "Ultimo dato/copertura": sources["last_observation_at"].map(
                     _local_time
                 ),
                 "Età successo": sources["age_minutes"].map(_age_text),
-                "Latenza ms": pd.to_numeric(
-                    sources["latency_ms"], errors="coerce"
-                ).round(0),
-                "Righe": pd.to_numeric(sources["rows_received"], errors="coerce").round(
-                    0
+                "Latenza": pd.to_numeric(sources["latency_ms"], errors="coerce").map(
+                    lambda value: (
+                        "—"
+                        if pd.isna(value) or value <= 0
+                        else f"{value / 1000:.1f} s"
+                        if value >= 1000
+                        else f"{value:.0f} ms"
+                    )
                 ),
+                "Righe": pd.to_numeric(sources["rows_received"], errors="coerce")
+                .fillna(0)
+                .astype("Int64"),
                 "Errori consecutivi": pd.to_numeric(
                     sources["consecutive_failures"], errors="coerce"
-                ).round(0),
+                )
+                .fillna(0)
+                .astype("Int64"),
                 "Ultimo errore": sources["last_error"].replace("", "—"),
+                "Continuità / fallback": sources["continuity"],
             }
         )
+        if not expert_mode:
+            source_table = source_table[
+                [
+                    "Componente",
+                    "Categoria",
+                    "Stato",
+                    "Ultimo successo",
+                    "Ultimo dato/copertura",
+                    "Continuità / fallback",
+                ]
+            ]
         render_color_legend("status")
         render_styled_table(
             _style_status_table(source_table, dark_mode, "Stato"),
             height=470,
         )
+        if not expert_mode:
+            st.caption(
+                "Passa alla modalità Esperta per latenza, righe, tentativi ed errori tecnici."
+            )
         arsial_state = sources.loc[
             sources["source"].eq("arsial_siarl"), "display_status"
         ]
@@ -4990,12 +5133,12 @@ with tab_system:
 
     st.markdown("#### Backup e ultime esecuzioni")
     st.caption(
-        "backup_database.py crea sul computer un archivio ZIP portatile e lo "
-        "verifica con conteggi e checksum. Prima della prima esecuzione lo stato è "
-        "correttamente indicato come manuale, non come processo in attesa; dopo una "
-        "copia riuscita compaiono data, righe e stato reali. Per il recupero online "
-        "usa inoltre backup e PITR gestiti direttamente dal piano PostgreSQL Render, "
-        "senza trasferire il database verso GitHub."
+        "Ogni giorno alle 22:00 Europe/Rome GitHub Actions crea lo ZIP portatile, "
+        "verifica conteggi e checksum, lo cifra prima dell'upload e conserva soltanto "
+        "le 30 copie più recenti. Il database non viene mai pubblicato nel repository "
+        "né caricato in chiaro; la procedura funziona anche con il PC locale spento. "
+        "I backup/PITR eventualmente inclusi nel piano PostgreSQL Render restano una "
+        "protezione indipendente aggiuntiva."
     )
     logs = log_data()
     if not logs.empty:

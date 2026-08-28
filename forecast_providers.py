@@ -63,9 +63,14 @@ def build_session(*, retries: int = 3) -> requests.Session:
         read=retries,
         backoff_factor=0.6,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET"}),
+        # Every endpoint used by this application is read-only.  EEA exposes
+        # some data queries as POST, so those requests can be retried safely too.
+        allowed_methods=frozenset({"GET", "HEAD", "POST"}),
+        respect_retry_after_header=True,
     )
-    session.mount("https://", HTTPAdapter(max_retries=retry))
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     session.headers.update({"User-Agent": "weather-app-v4/1.0"})
     return session
 
