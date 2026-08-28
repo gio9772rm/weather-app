@@ -86,10 +86,22 @@ def ensure_primary_station(
 def sync_primary_station_history(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> int:
-    """Copy missing legacy Ecowitt rows into the station-aware store."""
+    """Incrementally mirror legacy Ecowitt rows into the station-aware store.
+
+    ``station_raw`` remains the authoritative primary-station store.  The mirror is
+    additive and must never make the live Ecowitt ingest depend on a full historical
+    scan every five minutes.
+    """
     engine = engine or get_engine()
     identifier = ensure_primary_station(cfg, engine)
     with engine.begin() as connection:
+        latest_mirrored = connection.execute(
+            text(
+                "SELECT MAX(time) FROM station_observations "
+                "WHERE station_id=:station_id"
+            ),
+            {"station_id": identifier},
+        ).scalar()
         result = connection.execute(
             text(
                 "INSERT INTO station_observations (station_id,time,temp_c,humidity,"
@@ -98,10 +110,11 @@ def sync_primary_station_history(
                 "SELECT :station_id,r.time,r.temp_c,r.humidity,r.pressure_hpa,"
                 "r.wind_kmh,r.windgust_kmh,r.winddir,r.rain_mm,r.wind_ms,"
                 "r.rain_rate_mm_h,r.rain_total_mm,r.solar_w_m2,r.uv_index,"
-                "r.source,r.data_quality FROM station_raw r WHERE NOT EXISTS ("
-                "SELECT 1 FROM station_observations s WHERE s.station_id=:station_id "
-                "AND s.time=r.time)"
+                "r.source,r.data_quality FROM station_raw r "
+                "WHERE (:latest_mirrored IS NULL OR r.time > :latest_mirrored) "
+                "AND NOT EXISTS (SELECT 1 FROM station_observations s "
+                "WHERE s.station_id=:station_id AND s.time=r.time)"
             ),
-            {"station_id": identifier},
+            {"station_id": identifier, "latest_mirrored": latest_mirrored},
         )
     return max(0, int(result.rowcount or 0))
