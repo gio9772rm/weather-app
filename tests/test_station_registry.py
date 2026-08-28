@@ -23,8 +23,8 @@ def test_primary_history_is_mirrored_without_changing_legacy_rows(sqlite_engine)
             )
         )
 
-    assert sync_primary_station_history(cfg, sqlite_engine) == 1
-    assert sync_primary_station_history(cfg, sqlite_engine) == 0
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 1
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
 
     with sqlite_engine.begin() as connection:
         connection.execute(
@@ -34,22 +34,67 @@ def test_primary_history_is_mirrored_without_changing_legacy_rows(sqlite_engine)
             )
         )
 
-    # Subsequent five-minute cycles copy only observations newer than the latest
-    # mirrored timestamp instead of rechecking the entire legacy history.
-    assert sync_primary_station_history(cfg, sqlite_engine) == 1
-    assert sync_primary_station_history(cfg, sqlite_engine) == 0
+    # Normal five-minute cycles inspect only a bounded rolling window.
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 1
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
+
+    # A delayed/backfilled row that is older than the latest mirrored timestamp
+    # is still recovered as long as it falls inside the seven-day lookback.
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,temp_c,source,data_quality) "
+                "VALUES ('2026-08-27T11:55:00Z',24.8,'ecowitt','ok')"
+            )
+        )
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 1
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
 
     with sqlite_engine.connect() as connection:
         assert connection.execute(
             text("SELECT COUNT(*) FROM station_raw")
-        ).scalar_one() == 2
+        ).scalar_one() == 3
         mirrored = connection.execute(
             text(
                 "SELECT station_id,temp_c FROM station_observations "
                 "WHERE station_id='home-primary' ORDER BY time"
             )
         ).mappings().all()
-    assert [row["temp_c"] for row in mirrored] == [25.0, 25.2]
+    assert [row["temp_c"] for row in mirrored] == [24.8, 25.0, 25.2]
+
+
+def test_primary_history_lookback_avoids_rescanning_very_old_backfills(sqlite_engine):
+    cfg = replace(
+        Settings.from_env(),
+        station_id="home-primary",
+        location_name="Stazione primaria",
+    )
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,temp_c,source,data_quality) VALUES "
+                "('2026-08-27T12:00:00Z',25.0,'ecowitt','ok')"
+            )
+        )
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 1
+
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,temp_c,source,data_quality) VALUES "
+                "('2026-08-19T11:55:00Z',22.0,'ecowitt','ok')"
+            )
+        )
+
+    assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
+    with sqlite_engine.connect() as connection:
+        mirrored_times = connection.execute(
+            text(
+                "SELECT time FROM station_observations "
+                "WHERE station_id='home-primary' ORDER BY time"
+            )
+        ).scalars().all()
+    assert mirrored_times == ["2026-08-27T12:00:00Z"]
 
 
 def test_second_station_can_share_timestamps_and_profiles_hide_coordinates(
