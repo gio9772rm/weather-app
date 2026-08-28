@@ -77,7 +77,7 @@ def ensure_primary_station(
 ) -> str:
     """Ensure the primary profile exists without blocking live Ecowitt ingestion.
 
-    The registry is an additive convenience layer.  Unless ``strict`` is requested,
+    The registry is an additive convenience layer. Unless ``strict`` is requested,
     a registry/database migration problem is logged and the stable station id is
     returned so the authoritative ``station_raw`` ingestion can continue.
     """
@@ -107,13 +107,15 @@ def sync_primary_station_history(
     engine: Engine | None = None,
     *,
     strict: bool = False,
+    lookback_hours: int = 168,
 ) -> int:
-    """Incrementally mirror legacy Ecowitt rows into the station-aware store.
+    """Mirror primary Ecowitt rows without scanning all history every cycle.
 
-    ``station_raw`` remains the authoritative primary-station store. The mirror is
-    additive and must never make the live Ecowitt ingest depend on a full historical
-    scan every five minutes. In normal pipeline operation mirror failures are logged
-    and isolated; tests or maintenance commands can request ``strict=True``.
+    ``station_raw`` remains the authoritative primary-station store. On the first
+    synchronization all available history is copied; later runs only inspect a
+    rolling lookback window ending at the newest mirrored observation. This keeps
+    five-minute ingestion light while still recovering late/backfilled samples.
+    Mirror failures are isolated from live Ecowitt ingestion unless ``strict=True``.
     """
     engine = engine or get_engine()
     identifier = ensure_primary_station(cfg, engine, strict=strict)
@@ -126,6 +128,15 @@ def sync_primary_station_history(
                 ),
                 {"station_id": identifier},
             ).scalar()
+
+            cutoff = None
+            if latest_mirrored:
+                latest_ts = pd.to_datetime(latest_mirrored, utc=True, errors="coerce")
+                if not pd.isna(latest_ts):
+                    cutoff = (
+                        latest_ts - pd.Timedelta(hours=max(1, int(lookback_hours)))
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
             result = connection.execute(
                 text(
                     "INSERT INTO station_observations (station_id,time,temp_c,humidity,"
@@ -135,11 +146,11 @@ def sync_primary_station_history(
                     "r.wind_kmh,r.windgust_kmh,r.winddir,r.rain_mm,r.wind_ms,"
                     "r.rain_rate_mm_h,r.rain_total_mm,r.solar_w_m2,r.uv_index,"
                     "r.source,r.data_quality FROM station_raw r "
-                    "WHERE (:latest_mirrored IS NULL OR r.time > :latest_mirrored) "
+                    "WHERE (:cutoff IS NULL OR r.time >= :cutoff) "
                     "AND NOT EXISTS (SELECT 1 FROM station_observations s "
                     "WHERE s.station_id=:station_id AND s.time=r.time)"
                 ),
-                {"station_id": identifier, "latest_mirrored": latest_mirrored},
+                {"station_id": identifier, "cutoff": cutoff},
             )
         return max(0, int(result.rowcount or 0))
     except Exception as exc:  # noqa: BLE001 - mirror is secondary to station_raw
