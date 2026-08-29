@@ -40,7 +40,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - scheda **Sistema** con salute di ogni fonte, fallback disponibile, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
 - pianificatore astronomico personale con altezza, azimut, distanza dalla Luna e migliore ora prevista per una selezione di oggetti deep-sky;
-- backup automatico cifrato su GitHub alle 22:00 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
+- backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
 - issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
 - controllo visuale Playwright su desktop/mobile e tema chiaro/scuro, audit privacy e riferimenti GitHub Actions bloccati a commit immutabili;
 - dipendenze riproducibili tramite `constraints.txt` e aggiornamenti settimanali minori/patch con Dependabot;
@@ -231,7 +231,7 @@ Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. U
 
 ### Backup verificato
 
-Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.4 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:00 Europe/Rome**, anche se il PC locale è spento.
+Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.4 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:07 Europe/Rome**, anche se il PC locale è spento; i sette minuti evitano il picco dei runner GitHub al cambio dell'ora.
 
 Poiché il repository è pubblico, lo ZIP non lascia mai il runner in chiaro: viene cifrato con AES-256-CBC/PBKDF2 usando una chiave derivata dal `DATABASE_URL` segreto in vigore al momento della copia. GitHub conserva ogni artefatto cifrato per 30 giorni e lo fa scadere automaticamente: con una copia giornaliera restano disponibili le circa 30 copie più recenti, senza concedere al workflow permessi di cancellazione. La pagina Sistema distingue la creazione/verifica dello ZIP dal caricamento cloud, così un upload fallito non viene mostrato come backup remoto riuscito. Se `DATABASE_URL` viene ruotato, conserva in modo sicuro il vecchio valore finché i relativi backup non sono scaduti.
 

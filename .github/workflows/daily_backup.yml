@@ -3,7 +3,8 @@ name: Meteo V4.4 - Backup giornaliero
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 22 * * *"
+    # Avoid minute 00, when GitHub documents higher schedule delay/drop risk.
+    - cron: "7 22 * * *"
       timezone: "Europe/Rome"
 
 permissions:
@@ -11,7 +12,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: meteo-v43-daily-backup
+  group: meteo-v44-daily-backup
   cancel-in-progress: false
 
 jobs:

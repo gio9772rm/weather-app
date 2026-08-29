@@ -8,7 +8,7 @@ ROOT = Path(__file__).parents[1]
 def test_daily_backup_is_off_device_encrypted_and_keeps_thirty_copies():
     workflow = (ROOT / ".github/workflows/daily_backup.yml").read_text(encoding="utf-8")
 
-    assert 'cron: "0 22 * * *"' in workflow
+    assert 'cron: "7 22 * * *"' in workflow
     assert 'timezone: "Europe/Rome"' in workflow
     assert "aes-256-cbc" in workflow
     assert "steps.backup.outputs.encrypted_path" in workflow
