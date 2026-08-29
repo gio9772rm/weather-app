@@ -128,6 +128,23 @@ CREATE TABLE IF NOT EXISTS station_observations (
 CREATE INDEX IF NOT EXISTS idx_station_observations_time
   ON station_observations (station_id, time);
 
+-- Sanitised Ecowitt device telemetry. Only battery/signal values are kept:
+-- device identifiers, MAC addresses and raw API payloads are never persisted.
+CREATE TABLE IF NOT EXISTS ecowitt_telemetry (
+  station_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  sensor TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL,
+  unit TEXT,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (station_id, observed_at, sensor, metric)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ecowitt_telemetry_latest
+  ON ecowitt_telemetry (station_id, observed_at);
+
 CREATE TABLE IF NOT EXISTS forecast_scores (
   evaluated_at TEXT NOT NULL,
   provider TEXT NOT NULL,

@@ -1,5 +1,15 @@
 # Changelog Meteo V4
 
+## V4.4 · affidabilità, diagnostica e pianificazione
+
+- controllo salute con endpoint Render effettivo e issue GitHub operative deduplicate per salute, ingestione, backup e prova di ripristino;
+- ripristino portatile in un nuovo SQLite, verifica d'integrità e prova mensile automatica sull'ultimo backup cifrato non scaduto;
+- diagnostica Ecowitt per sensore con freschezza, copertura, buco massimo, qualità e telemetria batteria/segnale sanitizzata;
+- pianificatore astronomico personale con catalogo deep-sky, altezza/azimut, condizioni meteo e distanza dalla Luna;
+- contratti visuali Playwright desktop/mobile e chiaro/scuro con screenshot CI;
+- audit privacy del tree corrente e GitHub Actions bloccate a SHA immutabili;
+- schema V8 additivo con `ecowitt_telemetry`; nessuna riscrittura distruttiva dello storico Git.
+
 ## V4.3.1 · salute, continuità e backup automatico
 
 - health check GitHub ogni 30 minuti per database, freschezza Ecowitt e previsione combinata, affiancato al riavvio automatico Render;

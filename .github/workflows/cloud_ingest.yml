@@ -1,4 +1,4 @@
-name: Meteo V4.3 - Pipeline
+name: Meteo V4.4 - Pipeline
 
 on:
   workflow_dispatch:
@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: meteo-v3-reconciliation
@@ -27,10 +28,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -105,3 +106,19 @@ jobs:
             extra="--force-forecast"
           fi
           python ingest_all.py --backfill-hours "$backfill_hours" $extra
+
+  notify:
+    needs: ingest
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout notification helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Sync deduplicated operational issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python operations_alert.py --key cloud-ingest
+          --status "${{ needs.ingest.result }}"
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

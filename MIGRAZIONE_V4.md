@@ -1,6 +1,6 @@
-# Meteo V4.3 — prova, pubblicazione e ritorno alla V3
+# Meteo V4.4 — prova, pubblicazione e ritorno alla V3
 
-La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA; la V4.2 attiva climatologia locale, pollini POLLnet, bollettini ufficiali e vista semplice/esperta. La V4.3 aggiunge ICON-2I esplicito, calibrazione per regime, radar/fulmini DPC locali, CFR via MeteoHub, riferimento 1991–2020, registro multi-stazione, rapporti mensili e Astronomia Pro. La migrazione V7 è automatica, soltanto additiva, e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
+La V4 modifica soprattutto l'esperienza grafica. La V4.1 aggiunge archivi separati per storico emissioni, ensemble e aria EEA; la V4.2 attiva climatologia locale, pollini POLLnet, bollettini ufficiali e vista semplice/esperta. La V4.3 aggiunge ICON-2I esplicito, calibrazione per regime, radar/fulmini DPC locali, CFR via MeteoHub, riferimento 1991–2020, registro multi-stazione, rapporti mensili e Astronomia Pro. La V4.4 aggiunge diagnostica Ecowitt, pianificatore oggetti, avvisi operativi, audit privacy e prova mensile del ripristino. La migrazione V8 è automatica, soltanto additiva, e non cancella né trasforma in modo distruttivo i dati PostgreSQL.
 
 ## Sicurezze già predisposte
 
@@ -29,7 +29,7 @@ La pull request V4 deve essere unita a `main` soltanto dopo:
 
 1. CI verde;
 2. prova di tema chiaro e scuro su desktop e telefono;
-3. verifica di riquadri espandibili, posizione dei bollettini, Stazione, rapporti PDF/CSV, Previsioni, Astronomia Pro, Radar DPC e Sistema;
+3. verifica di riquadri espandibili, posizione dei bollettini, diagnostica Ecowitt, pianificatore, rapporti PDF/CSV, Radar DPC e Sistema;
 4. creazione e verifica di un backup PostgreSQL;
 5. conferma esplicita della pubblicazione.
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
+import os
+import re
+import sqlite3
 import tempfile
 import zipfile
 from datetime import datetime, timezone
@@ -37,6 +41,7 @@ BACKUP_TABLES = (
     "climate_reference_normals",
     "station_profiles",
     "station_observations",
+    "ecowitt_telemetry",
     "radar_local_snapshots",
     "official_alerts",
     "ingest_log",
@@ -77,8 +82,8 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
     manifest: dict[str, Any] = {
         "format": BACKUP_FORMAT,
         "version": 2,
-        "application": "Meteo V4.3",
-        "schema_version": 7,
+        "application": "Meteo V4.4",
+        "schema_version": 8,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database_dialect": engine.dialect.name,
         "tables": {},
@@ -182,6 +187,86 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
     return manifest
 
 
+def restore_backup(
+    archive_path: str | Path,
+    destination_sqlite: str | Path,
+) -> dict[str, Any]:
+    """Restore a verified archive into a new disposable SQLite database.
+
+    The destination is intentionally required to be absent: the recovery drill
+    can never overwrite the live database or an existing local copy.
+    """
+    archive_path = Path(archive_path)
+    destination = Path(destination_sqlite)
+    if destination.exists():
+        raise FileExistsError("Il database di destinazione esiste già")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    manifest = verify_backup(archive_path)
+    staged_descriptor, staged_name = tempfile.mkstemp(
+        prefix=".meteo-restore-",
+        suffix=".sqlite",
+        dir=destination.parent,
+    )
+    os.close(staged_descriptor)
+    staged = Path(staged_name)
+    restored_rows = 0
+    try:
+        with zipfile.ZipFile(archive_path) as archive, sqlite3.connect(staged) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.executescript(archive.read("schema.sql").decode("utf-8"))
+            for table, details in manifest.get("tables", {}).items():
+                if table not in BACKUP_TABLES or not re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_]*", table
+                ):
+                    raise ValueError(f"Tabella non ripristinabile: {table}")
+                decoded = archive.read(details["file"]).decode("utf-8")
+                reader = csv.DictReader(io.StringIO(decoded))
+                columns = reader.fieldnames or []
+                if not columns or any(
+                    not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column)
+                    for column in columns
+                ):
+                    raise ValueError(f"Intestazione CSV non valida: {table}")
+                quoted_columns = ",".join(f'"{column}"' for column in columns)
+                placeholders = ",".join("?" for _ in columns)
+                statement = (
+                    f'INSERT INTO "{table}" ({quoted_columns}) VALUES ({placeholders})'
+                )
+                batch: list[tuple[Any, ...]] = []
+                table_rows = 0
+                for row in reader:
+                    batch.append(
+                        tuple(
+                            None if row.get(column, "") == "" else row[column]
+                            for column in columns
+                        )
+                    )
+                    if len(batch) >= 2_000:
+                        db.executemany(statement, batch)
+                        table_rows += len(batch)
+                        batch.clear()
+                if batch:
+                    db.executemany(statement, batch)
+                    table_rows += len(batch)
+                if table_rows != int(details.get("rows", -1)):
+                    raise ValueError(f"Conteggio ripristinato non valido: {table}")
+                restored_rows += table_rows
+            integrity = db.execute("PRAGMA integrity_check").fetchone()
+            if not integrity or str(integrity[0]).lower() != "ok":
+                raise ValueError("Controllo integrità SQLite non superato")
+            db.commit()
+        os.replace(staged, destination)
+    except Exception:
+        staged.unlink(missing_ok=True)
+        raise
+    return {
+        "path": str(destination.resolve()),
+        "tables": len(manifest.get("tables", {})),
+        "rows": restored_rows,
+        "created_at": manifest.get("created_at"),
+    }
+
+
 def record_cloud_backup_result(
     *,
     success: bool,
@@ -223,10 +308,15 @@ def _append_github_outputs(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Backup portatile e verificato del database Meteo V4.3"
+        description="Backup portatile e verificato del database Meteo V4.4"
     )
     parser.add_argument("--output", default="backups", help="Cartella o file ZIP")
     parser.add_argument("--verify", help="Verifica un archivio esistente")
+    parser.add_argument("--restore", help="Ripristina un archivio verificato")
+    parser.add_argument(
+        "--restore-sqlite",
+        help="Nuovo file SQLite di destinazione (non deve esistere)",
+    )
     parser.add_argument(
         "--github-output",
         help="Scrive percorso e metadati nel file output di GitHub Actions",
@@ -248,6 +338,15 @@ def main() -> int:
             error=args.error,
         )
         return 0 if ok else 2
+    if bool(args.restore) != bool(args.restore_sqlite):
+        parser.error("--restore e --restore-sqlite devono essere usati insieme")
+    if args.restore:
+        summary = restore_backup(args.restore, args.restore_sqlite)
+        print(
+            f"Ripristino valido: {summary['tables']} tabelle, "
+            f"{summary['rows']} righe, destinazione {summary['path']}"
+        )
+        return 0
     if args.verify:
         manifest = verify_backup(args.verify)
         print(

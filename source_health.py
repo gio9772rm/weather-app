@@ -195,7 +195,7 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             True,
             24 * 60,
             "protezione",
-            continuity="30 copie; la più vecchia viene eliminata",
+            continuity="Artefatto cifrato con scadenza automatica dopo 30 giorni",
         ),
     )
 

@@ -18,6 +18,7 @@ from sqlalchemy import text
 
 from config import Settings
 from db import ensure_schema, get_engine, set_meta
+from ecowitt_diagnostics import archive_telemetry_safely, extract_telemetry
 from forecast_providers import build_session
 
 load_dotenv()
@@ -375,9 +376,7 @@ def parse_payload(payload: dict[str, Any]) -> pd.DataFrame:
     )
 
 
-def _append_quality_flag(
-    frame: pd.DataFrame, mask: pd.Series, flag: str
-) -> None:
+def _append_quality_flag(frame: pd.DataFrame, mask: pd.Series, flag: str) -> None:
     """Append a stable, de-duplicated quality flag to the selected rows."""
     selected = mask.reindex(frame.index, fill_value=False).fillna(False)
     if not selected.any():
@@ -385,17 +384,15 @@ def _append_quality_flag(
 
     def append(value: Any) -> str:
         current = [
-            item
-            for item in str(value or "ok").split(";")
-            if item and item != "ok"
+            item for item in str(value or "ok").split(";") if item and item != "ok"
         ]
         if flag not in current:
             current.append(flag)
         return ";".join(current) or "ok"
 
-    frame.loc[selected, "data_quality"] = frame.loc[
-        selected, "data_quality"
-    ].map(append)
+    frame.loc[selected, "data_quality"] = frame.loc[selected, "data_quality"].map(
+        append
+    )
 
 
 def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
@@ -747,20 +744,28 @@ def run_station_ingest(
         else max(0, int(backfill_hours))
     )
     frames: list[pd.DataFrame] = []
+    telemetry: list[dict[str, Any]] = []
     warnings: list[str] = []
     session = build_session()
-    callback = "outdoor,wind,pressure,rainfall,rainfall_piezo,solar_and_uvi"
+    weather_callback = "outdoor,wind,pressure,rainfall,rainfall_piezo,solar_and_uvi"
+    realtime_callback = f"{weather_callback},battery"
     try:
         try:
             payload = ecowitt_get(
                 "device/real_time",
                 {
                     "mac": cfg.ecowitt_mac.replace("-", ":").lower(),
-                    "call_back": callback,
+                    "call_back": realtime_callback,
                 },
                 cfg,
                 session,
             )
+            try:
+                telemetry.extend(
+                    extract_telemetry(payload, station_id=cfg.station_id)
+                )
+            except Exception:  # noqa: BLE001 - diagnostics never block measurements
+                warnings.append("Telemetria diagnostica Ecowitt non interpretabile")
             realtime = parse_payload(payload)
             if not realtime.empty:
                 frames.append(realtime.tail(1))
@@ -778,7 +783,7 @@ def run_station_ingest(
                             "mac": cfg.ecowitt_mac.replace("-", ":").lower(),
                             "start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
                             "end_date": end.strftime("%Y-%m-%d %H:%M:%S"),
-                            "call_back": callback,
+                            "call_back": weather_callback,
                         },
                         cfg,
                         session,
@@ -802,6 +807,9 @@ def run_station_ingest(
         .sort_values("time")
     )
     engine = get_engine()
+    telemetry_rows, telemetry_warning = archive_telemetry_safely(telemetry, engine)
+    if telemetry_warning:
+        warnings.append(telemetry_warning)
     combined = add_rain_increments(combined, engine)
     rows = upsert_raw(combined, engine)
     if rows <= 0:
@@ -819,6 +827,7 @@ def run_station_ingest(
         "rows": rows,
         "buckets_3h": buckets,
         "latest_station_time": latest,
+        "telemetry_rows": telemetry_rows,
         "warnings": warnings,
     }
 
