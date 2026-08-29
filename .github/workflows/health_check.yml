@@ -10,7 +10,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: meteo-v43-health-check
+  group: meteo-v44-health-check
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +43,7 @@ jobs:
       - name: Verify database, measurements and forecasts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          APP_HEALTH_URL: ${{ vars.APP_HEALTH_URL || 'https://weather-app-v3.onrender.com' }}
+          APP_HEALTH_URL: ${{ vars.APP_HEALTH_URL || 'https://weather-app-v3-w2jd.onrender.com' }}
           LOCAL_TZ: Europe/Rome
           STATION_STALE_MINUTES: "20"
           FORECAST_REFRESH_MINUTES: "60"
