@@ -15,7 +15,7 @@
 - health check GitHub ogni 30 minuti per database, freschezza Ecowitt e previsione combinata, affiancato al riavvio automatico Render;
 - stato delle fonti con archivio utilizzabile e strategia di fallback, senza trasformare un servizio esterno opzionale in guasto generale;
 - retry HTTP estesi anche alle interrogazioni EEA in POST e rispetto di `Retry-After`;
-- backup giornaliero alle 22:00 `Europe/Rome`, cifrato prima dell'upload, con scadenza automatica dopo 30 giorni e stato cloud separato dalla verifica locale;
+- backup giornaliero alle 22:07 `Europe/Rome`, cifrato prima dell'upload, con scadenza automatica dopo 30 giorni e stato cloud separato dalla verifica locale;
 - badge **LIVE** verde animato e **NON LIVE** rosso per Ecowitt, aria EEA e radar DPC, basati sull'età reale della singola misura;
 - corretta l'escape CSS che mostrava `�93`/simboli illeggibili nei comandi di espansione;
 - tabella Sistema più compatta in modalità Semplice, valori tecnici formattati e dettagli completi conservati in modalità Esperta.
