@@ -20,12 +20,25 @@ from astro_weather import (
     daily_astronomy_summary,
     prepare_astronomy,
 )
-from astronomy_planner import plan_targets, target_labels
+from astronomy_planner import (
+    EquipmentProfile,
+    SkyTarget,
+    custom_target,
+    equipment_profile,
+    field_of_view,
+    observing_calendar_ics,
+    observing_log_csv,
+    parse_planner_configuration,
+    plan_targets,
+    planner_configuration_json,
+    target_labels,
+)
 from chart_data import (
-    clip_forecast,
+    forecast_chart_window,
     merge_intervals,
     missing_forecast_segments,
-    plotly_utc_datetime,
+    plotly_local_datetime,
+    plotly_local_datetimes,
 )
 from city_weather import (
     CityForecast,
@@ -759,6 +772,11 @@ def _age_text(minutes: Any) -> str:
 def _number(value: Any, digits: int = 1, suffix: str = "") -> str:
     number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     return "—" if pd.isna(number) else f"{number:.{digits}f}{suffix}"
+
+
+def _optional_decimal(value: Any) -> float | None:
+    rendered = str(value or "").strip().replace(",", ".")
+    return None if not rendered else float(rendered)
 
 
 def _filename_slug(value: str) -> str:
@@ -1739,8 +1757,9 @@ def render_ensemble_guidance(
         return
     now = pd.Timestamp.now(tz="UTC")
     cutoff = now + pd.Timedelta(hours=72)
-    temperature = temperature[temperature["valid_time"].between(now.floor("h"), cutoff)]
-    rain = rain[rain["valid_time"].between(now.floor("h"), cutoff)]
+    display_start = now - pd.Timedelta(hours=2)
+    temperature = temperature[temperature["valid_time"].between(display_start, cutoff)]
+    rain = rain[rain["valid_time"].between(display_start, cutoff)]
     members = pd.to_numeric(ensemble.get("member_count"), errors="coerce").max()
     spread = (
         pd.to_numeric(temperature["p90"], errors="coerce")
@@ -1777,7 +1796,7 @@ def render_ensemble_guidance(
     )
     figure.add_trace(
         go.Scatter(
-            x=temperature["valid_time"],
+            x=plotly_local_datetimes(temperature["valid_time"], CFG.local_timezone),
             y=temperature["p90"],
             mode="lines",
             line={"width": 0},
@@ -1789,7 +1808,7 @@ def render_ensemble_guidance(
     )
     figure.add_trace(
         go.Scatter(
-            x=temperature["valid_time"],
+            x=plotly_local_datetimes(temperature["valid_time"], CFG.local_timezone),
             y=temperature["p10"],
             mode="lines",
             line={"width": 0},
@@ -1803,7 +1822,7 @@ def render_ensemble_guidance(
     )
     figure.add_trace(
         go.Scatter(
-            x=temperature["valid_time"],
+            x=plotly_local_datetimes(temperature["valid_time"], CFG.local_timezone),
             y=temperature["p50"],
             mode="lines",
             name="━ Mediana P50",
@@ -1815,7 +1834,7 @@ def render_ensemble_guidance(
     if not rain.empty:
         figure.add_trace(
             go.Scatter(
-                x=rain["valid_time"],
+                x=plotly_local_datetimes(rain["valid_time"], CFG.local_timezone),
                 y=rain["event_probability"],
                 mode="lines",
                 name="━ Membri con pioggia",
@@ -1977,7 +1996,7 @@ def _air_quality_figure(air: AirQualityForecast, dark_mode: bool) -> go.Figure:
     )
     figure.add_trace(
         go.Scatter(
-            x=hourly["time"],
+            x=plotly_local_datetimes(hourly["time"], air.timezone),
             y=hourly["european_aqi"],
             name="AQI europeo",
             line={"color": "#22c55e", "width": 3},
@@ -1989,7 +2008,7 @@ def _air_quality_figure(air: AirQualityForecast, dark_mode: bool) -> go.Figure:
     )
     figure.add_trace(
         go.Scatter(
-            x=hourly["time"],
+            x=plotly_local_datetimes(hourly["time"], air.timezone),
             y=hourly["pm2_5"],
             name="PM2.5",
             line={"color": "#f59e0b", "width": 1.8},
@@ -2006,7 +2025,7 @@ def _air_quality_figure(air: AirQualityForecast, dark_mode: bool) -> go.Figure:
         if column in hourly and hourly[column].notna().any():
             figure.add_trace(
                 go.Scatter(
-                    x=hourly["time"],
+                    x=plotly_local_datetimes(hourly["time"], air.timezone),
                     y=hourly[column],
                     name=label,
                     line={"color": color, "width": 2},
@@ -2791,7 +2810,7 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
     )
     figure.add_trace(
         go.Scatter(
-            x=hourly["time"],
+            x=plotly_local_datetimes(hourly["time"], city.timezone),
             y=hourly["temp_c"],
             name="Temperatura",
             line={"color": "#0ea5e9", "width": 3},
@@ -2801,7 +2820,7 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
     )
     figure.add_trace(
         go.Scatter(
-            x=hourly["time"],
+            x=plotly_local_datetimes(hourly["time"], city.timezone),
             y=hourly["feels_like_c"],
             name="Percepita",
             line={"color": "#f59e0b", "width": 2, "dash": "dot"},
@@ -2811,7 +2830,7 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
     )
     figure.add_trace(
         go.Bar(
-            x=hourly["time"],
+            x=plotly_local_datetimes(hourly["time"], city.timezone),
             y=pd.to_numeric(hourly["precipitation_mm"], errors="coerce").clip(lower=0),
             name="Precipitazioni",
             marker_color="#38bdf8",
@@ -2823,7 +2842,7 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
     )
     figure.add_trace(
         go.Scatter(
-            x=hourly["time"],
+            x=plotly_local_datetimes(hourly["time"], city.timezone),
             y=pd.to_numeric(hourly["precip_probability"], errors="coerce").clip(0, 100),
             name="Probabilità",
             line={"color": "#8b5cf6", "width": 2.2},
@@ -3179,7 +3198,7 @@ def combined_chart(
         if not station.empty
         else station
     )
-    future = clip_forecast(forecast, now, now + pd.Timedelta(hours=72))
+    future = forecast_chart_window(forecast, now, future_hours=72, lookback_hours=2)
     figure = make_subplots(
         rows=2,
         cols=1,
@@ -3195,7 +3214,7 @@ def combined_chart(
     if not observations.empty and "temp_c" in observations:
         figure.add_trace(
             go.Scatter(
-                x=observations["time"],
+                x=plotly_local_datetimes(observations["time"], CFG.local_timezone),
                 y=observations["temp_c"],
                 name="Temperatura misurata",
                 mode="lines",
@@ -3217,8 +3236,8 @@ def combined_chart(
     )
     for position, gap in enumerate(missing_temperature):
         figure.add_vrect(
-            x0=gap.start.to_pydatetime(),
-            x1=gap.end.to_pydatetime(),
+            x0=plotly_local_datetime(gap.start, CFG.local_timezone),
+            x1=plotly_local_datetime(gap.end, CFG.local_timezone),
             fillcolor="rgba(244,63,94,.13)",
             line_width=0,
             layer="below",
@@ -3227,7 +3246,7 @@ def combined_chart(
         )
         figure.add_trace(
             go.Scatter(
-                x=gap.points["valid_time"],
+                x=plotly_local_datetimes(gap.points["valid_time"], CFG.local_timezone),
                 y=gap.points["temp_c"],
                 name="Stima per perdita dati · non misurata",
                 legendgroup="missing-data",
@@ -3250,7 +3269,7 @@ def combined_chart(
         ).clip(lower=0)
         figure.add_trace(
             go.Bar(
-                x=observations["time"],
+                x=plotly_local_datetimes(observations["time"], CFG.local_timezone),
                 y=measured_rain,
                 name="Pioggia misurata",
                 marker_color="#0284c7",
@@ -3272,7 +3291,7 @@ def combined_chart(
         lower = future["temp_c"] - uncertainty
         figure.add_trace(
             go.Scatter(
-                x=future["valid_time"],
+                x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
                 y=upper,
                 mode="lines",
                 line={"width": 0},
@@ -3284,7 +3303,7 @@ def combined_chart(
         )
         figure.add_trace(
             go.Scatter(
-                x=future["valid_time"],
+                x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
                 y=lower,
                 mode="lines",
                 line={"width": 0},
@@ -3298,16 +3317,26 @@ def combined_chart(
         )
         figure.add_trace(
             go.Scatter(
-                x=future["valid_time"],
+                x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
                 y=future["temp_c"],
-                name="Previsione futura",
+                name="Previsione · da −2 h archiviata",
                 mode="lines",
                 line={"color": "#2563eb", "width": 3, "dash": "dash"},
-                customdata=np.stack(
-                    [future.get("confidence", pd.Series(np.nan, index=future.index))],
-                    axis=-1,
+                text=future.get("confidence", pd.Series(np.nan, index=future.index)),
+                customdata=future.get(
+                    "chart_origin",
+                    pd.Series("blend_corrente", index=future.index),
+                ).map(
+                    {
+                        "previsione_archiviata": "emissione archiviata",
+                        "blend_corrente": "blend corrente",
+                    }
                 ),
-                hovertemplate="%{x|%d/%m %H:%M}<br>%{y:.1f} °C<br>Fiducia %{customdata[0]:.0f}%<extra>Previsione</extra>",
+                hovertemplate=(
+                    "%{x|%d/%m %H:%M}<br>%{y:.1f} °C"
+                    "<br>Fiducia %{text:.0f}%<br>%{customdata}"
+                    "<extra>Previsione</extra>"
+                ),
             ),
             row=1,
             col=1,
@@ -3315,7 +3344,7 @@ def combined_chart(
         if "rain_mm" in future:
             figure.add_trace(
                 go.Bar(
-                    x=future["valid_time"],
+                    x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
                     y=pd.to_numeric(future["rain_mm"], errors="coerce").clip(lower=0),
                     name="Pioggia prevista",
                     marker_color="#38bdf8",
@@ -3328,7 +3357,7 @@ def combined_chart(
         if "precip_probability" in future:
             figure.add_trace(
                 go.Scatter(
-                    x=future["valid_time"],
+                    x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
                     y=pd.to_numeric(future["precip_probability"], errors="coerce").clip(
                         0, 100
                     ),
@@ -3340,7 +3369,7 @@ def combined_chart(
                 secondary_y=True,
             )
     figure.add_vline(
-        x=plotly_utc_datetime(now),
+        x=plotly_local_datetime(now, CFG.local_timezone),
         line_dash="dot",
         line_color="#f97316",
         opacity=0.9,
@@ -3355,6 +3384,12 @@ def combined_chart(
     )
     figure.update_yaxes(
         title_text="Probabilità %", range=[0, 105], row=2, col=1, secondary_y=True
+    )
+    figure.update_xaxes(
+        title_text=f"Ora locale · {CFG.local_timezone}",
+        tickformat="%d/%m %H:%M",
+        row=2,
+        col=1,
     )
     figure.update_layout(
         height=570,
@@ -3376,7 +3411,7 @@ def weather_details_chart(
         if not station.empty
         else station
     )
-    future = clip_forecast(forecast, now, now + pd.Timedelta(hours=72))
+    future = forecast_chart_window(forecast, now, future_hours=72, lookback_hours=2)
     figure = make_subplots(
         rows=3,
         cols=1,
@@ -3423,7 +3458,7 @@ def weather_details_chart(
         if not observations.empty and station_column in observations:
             figure.add_trace(
                 go.Scatter(
-                    x=observations["time"],
+                    x=plotly_local_datetimes(observations["time"], CFG.local_timezone),
                     y=observations[station_column],
                     name=f"{label} · misurata",
                     mode="lines",
@@ -3441,9 +3476,9 @@ def weather_details_chart(
         if not future.empty and forecast_column in future:
             figure.add_trace(
                 go.Scatter(
-                    x=future["valid_time"],
+                    x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
                     y=future[forecast_column],
-                    name=f"{label} · previsione futura",
+                    name=f"{label} · previsione da −2 h",
                     mode="lines",
                     line={"color": colour, "width": 2.2, "dash": "dash"},
                     opacity=0.86,
@@ -3469,7 +3504,9 @@ def weather_details_chart(
             fallback_intervals[row].append((gap.start, gap.end))
             figure.add_trace(
                 go.Scatter(
-                    x=gap.points["valid_time"],
+                    x=plotly_local_datetimes(
+                        gap.points["valid_time"], CFG.local_timezone
+                    ),
                     y=gap.points[forecast_column],
                     name="Stima per perdita dati · non misurata",
                     legendgroup="missing-data",
@@ -3491,8 +3528,8 @@ def weather_details_chart(
     for row, intervals in fallback_intervals.items():
         for start, end in merge_intervals(intervals):
             figure.add_vrect(
-                x0=start.to_pydatetime(),
-                x1=end.to_pydatetime(),
+                x0=plotly_local_datetime(start, CFG.local_timezone),
+                x1=plotly_local_datetime(end, CFG.local_timezone),
                 fillcolor="rgba(244,63,94,.12)",
                 line_width=0,
                 layer="below",
@@ -3501,7 +3538,7 @@ def weather_details_chart(
             )
 
     figure.add_vline(
-        x=plotly_utc_datetime(now),
+        x=plotly_local_datetime(now, CFG.local_timezone),
         line_dash="dot",
         line_color="#f97316",
         opacity=0.9,
@@ -3519,6 +3556,12 @@ def weather_details_chart(
         row=3,
         col=1,
         secondary_y=True,
+    )
+    figure.update_xaxes(
+        title_text=f"Ora locale · {CFG.local_timezone}",
+        tickformat="%d/%m %H:%M",
+        row=3,
+        col=1,
     )
     figure.update_layout(
         height=760,
@@ -3967,8 +4010,11 @@ with tab_overview:
             theme=None,
         )
         st.caption(
-            "Linea continua: misura reale · linea arancione: adesso · blu tratteggiato: "
-            "previsione futura · fascia rosa e corallo tratteggiato: perdita dati, valore stimato."
+            f"Orari {CFG.local_timezone}: la linea arancione indica l'istante reale adesso. "
+            "La previsione blu tratteggiata recupera dall'archivio anche le due ore "
+            "precedenti per confrontarla con le misure, senza spostare artificialmente "
+            "i timestamp. "
+            "Fascia rosa e corallo tratteggiato: perdita dati, valore stimato."
         )
         st.markdown(
             '<div class="section-kicker">Atmosfera e vento</div>',
@@ -3990,8 +4036,10 @@ with tab_overview:
         with st.expander("Come leggere misure, stime, fiducia e fascia azzurra"):
             st.write(
                 "A sinistra della linea arancione la linea continua proviene dalla stazione. "
-                "A destra, la linea blu tratteggiata combina i provider e corregge gradualmente "
-                "l'errore misurato localmente. Se una misura reale manca per oltre 30 minuti, "
+                "La linea blu tratteggiata parte due ore prima di adesso usando le emissioni "
+                "archiviate, rende confrontabile lo scorrimento della previsione e prosegue "
+                "nel futuro combinando i provider. "
+                "Se una misura reale manca per oltre 30 minuti, "
                 "solo quel buco può essere coperto dalla linea corallo tratteggiata e dalla fascia "
                 "rosa: è una stima di emergenza, non una misura. La fascia azzurra rappresenta "
                 "l'incertezza e cresce quando i modelli divergono; la fiducia considera anche "
@@ -4400,7 +4448,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=recent["time"],
+                x=plotly_local_datetimes(recent["time"], active_station_timezone),
                 y=recent.get("temp_c"),
                 name="Temperatura",
                 line={"color": "#ef4444", "width": 2.5},
@@ -4410,7 +4458,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=recent["time"],
+                x=plotly_local_datetimes(recent["time"], active_station_timezone),
                 y=recent.get("humidity"),
                 name="Umidità",
                 line={"color": "#0ea5e9", "width": 2},
@@ -4420,7 +4468,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=recent["time"],
+                x=plotly_local_datetimes(recent["time"], active_station_timezone),
                 y=recent.get("pressure_hpa"),
                 name="Pressione",
                 line={"color": "#8b5cf6", "width": 2.5},
@@ -4430,7 +4478,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=recent["time"],
+                x=plotly_local_datetimes(recent["time"], active_station_timezone),
                 y=recent.get("wind_kmh"),
                 name="Vento",
                 line={"color": "#10b981", "width": 2},
@@ -4440,7 +4488,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=recent["time"],
+                x=plotly_local_datetimes(recent["time"], active_station_timezone),
                 y=recent.get("windgust_kmh"),
                 name="Raffiche",
                 line={"color": "#f59e0b", "width": 1.8, "dash": "dash"},
@@ -4466,7 +4514,7 @@ with tab_station:
 
         rain_figure = go.Figure(
             go.Bar(
-                x=recent["time"],
+                x=plotly_local_datetimes(recent["time"], active_station_timezone),
                 y=_numeric_series(recent, "rain_mm", 0).clip(lower=0),
                 name="▮ Quantità misurata per campione",
                 marker_color="#38bdf8",
@@ -4475,7 +4523,7 @@ with tab_station:
         if "rain_rate_mm_h" in recent:
             rain_figure.add_trace(
                 go.Scatter(
-                    x=recent["time"],
+                    x=plotly_local_datetimes(recent["time"], active_station_timezone),
                     y=pd.to_numeric(recent["rain_rate_mm_h"], errors="coerce").clip(
                         lower=0
                     ),
@@ -4638,8 +4686,244 @@ with tab_astro:
             '<div class="section-kicker">Pianificazione personale</div>',
             unsafe_allow_html=True,
         )
-        st.subheader("Pianificatore oggetti")
-        available_targets = target_labels()
+        st.subheader("Pianificatore Astronomia Pro")
+        if "astro_custom_targets" not in st.session_state:
+            st.session_state["astro_custom_targets"] = {}
+        if "astro_equipment_profiles" not in st.session_state:
+            st.session_state["astro_equipment_profiles"] = {}
+        if "astro_horizon_mask" not in st.session_state:
+            st.session_state["astro_horizon_mask"] = {
+                direction: 0.0 for direction in range(0, 360, 45)
+            }
+        if "astro_session_log" not in st.session_state:
+            st.session_state["astro_session_log"] = []
+        pending_configuration = st.session_state.pop(
+            "astro_pending_configuration", None
+        )
+        if pending_configuration is not None:
+            restored_profiles, restored_targets, restored_horizon = (
+                pending_configuration
+            )
+            st.session_state["astro_equipment_profiles"] = restored_profiles
+            st.session_state["astro_custom_targets"] = restored_targets
+            st.session_state.pop("astronomy_targets", None)
+            st.session_state["astro_horizon_mask"] = {
+                float(direction): float(restored_horizon.get(direction, 0.0))
+                for direction in range(0, 360, 45)
+            }
+            for direction in range(0, 360, 45):
+                st.session_state[f"astro_horizon_{direction}"] = float(
+                    restored_horizon.get(float(direction), 0.0)
+                )
+            if restored_profiles:
+                first_profile = next(iter(restored_profiles))
+                st.session_state["astro_active_profile"] = first_profile
+                st.session_state["astro_active_profile_select"] = first_profile
+            st.session_state["astro_configuration_imported"] = True
+        if st.session_state.pop("astro_configuration_imported", False):
+            st.success("Configurazione verificata e ripristinata.")
+
+        with st.expander("Oggetto personalizzato · RA/Dec"):
+            st.caption(
+                "Le coordinate celesti restano nella sessione browser e non vengono "
+                "inviate a cataloghi esterni. RA è espressa in ore decimali."
+            )
+            with st.form("astronomy_custom_target_form", border=False):
+                custom_columns = st.columns(3)
+                custom_name = custom_columns[0].text_input(
+                    "Nome oggetto", placeholder="Es. IC 434"
+                )
+                custom_ra = custom_columns[1].number_input(
+                    "RA ore",
+                    min_value=0.0,
+                    max_value=23.999999,
+                    value=5.683,
+                    step=0.001,
+                )
+                custom_dec = custom_columns[2].number_input(
+                    "Dec gradi", min_value=-90.0, max_value=90.0, value=-2.45, step=0.01
+                )
+                optional_columns = st.columns(3)
+                custom_magnitude = optional_columns[0].text_input(
+                    "Magnitudine · facoltativa", placeholder="es. 7,3"
+                )
+                custom_width = optional_columns[1].text_input(
+                    "Larghezza arcmin · facoltativa", placeholder="es. 60"
+                )
+                custom_height = optional_columns[2].text_input(
+                    "Altezza arcmin · facoltativa", placeholder="es. 20"
+                )
+                add_custom_target = st.form_submit_button("Aggiungi al planner")
+            if add_custom_target:
+                try:
+                    personal_target = custom_target(
+                        custom_name,
+                        custom_ra,
+                        custom_dec,
+                        magnitude=_optional_decimal(custom_magnitude),
+                        angular_width_arcmin=_optional_decimal(custom_width),
+                        angular_height_arcmin=_optional_decimal(custom_height),
+                    )
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["astro_custom_targets"][personal_target.name] = (
+                        personal_target
+                    )
+                    st.success(f"{personal_target.name} aggiunto alla sessione.")
+            custom_targets: list[SkyTarget] = list(
+                st.session_state["astro_custom_targets"].values()
+            )
+            if custom_targets:
+                st.caption(
+                    "Target personali attivi: "
+                    + ", ".join(target.name for target in custom_targets)
+                )
+
+        active_equipment: EquipmentProfile | None = None
+        with st.expander("Attrezzatura e campo inquadrato"):
+            st.caption(
+                "Il calcolo usa dimensioni fisiche del sensore e focale effettiva. "
+                "È una verifica geometrica, non una garanzia di inseguimento o qualità ottica."
+            )
+            with st.form("astronomy_equipment_form", border=False):
+                profile_columns = st.columns(3)
+                profile_name = profile_columns[0].text_input(
+                    "Nome profilo", value="Setup principale"
+                )
+                telescope_name = profile_columns[1].text_input(
+                    "Telescopio", value="Ottica personale"
+                )
+                camera_name = profile_columns[2].text_input(
+                    "Camera", value="Camera personale"
+                )
+                optical_columns = st.columns(4)
+                aperture_mm = optical_columns[0].number_input(
+                    "Apertura mm",
+                    min_value=10.0,
+                    max_value=2000.0,
+                    value=80.0,
+                    step=5.0,
+                )
+                focal_length_mm = optical_columns[1].number_input(
+                    "Focale mm",
+                    min_value=20.0,
+                    max_value=20000.0,
+                    value=400.0,
+                    step=10.0,
+                )
+                focal_multiplier = optical_columns[2].number_input(
+                    "Riduttore/Barlow ×",
+                    min_value=0.1,
+                    max_value=10.0,
+                    value=1.0,
+                    step=0.05,
+                )
+                pixel_size_um = optical_columns[3].number_input(
+                    "Pixel µm", min_value=0.5, max_value=30.0, value=3.76, step=0.01
+                )
+                sensor_columns = st.columns(2)
+                sensor_width_mm = sensor_columns[0].number_input(
+                    "Sensore larghezza mm",
+                    min_value=1.0,
+                    max_value=80.0,
+                    value=23.5,
+                    step=0.1,
+                )
+                sensor_height_mm = sensor_columns[1].number_input(
+                    "Sensore altezza mm",
+                    min_value=1.0,
+                    max_value=80.0,
+                    value=15.6,
+                    step=0.1,
+                )
+                save_equipment = st.form_submit_button("Salva profilo nella sessione")
+            if save_equipment:
+                try:
+                    saved_profile = equipment_profile(
+                        name=profile_name,
+                        telescope=telescope_name,
+                        camera=camera_name,
+                        aperture_mm=aperture_mm,
+                        focal_length_mm=focal_length_mm,
+                        sensor_width_mm=sensor_width_mm,
+                        sensor_height_mm=sensor_height_mm,
+                        pixel_size_um=pixel_size_um,
+                        focal_multiplier=focal_multiplier,
+                    )
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["astro_equipment_profiles"][saved_profile.name] = (
+                        saved_profile
+                    )
+                    st.session_state["astro_active_profile"] = saved_profile.name
+                    st.session_state["astro_active_profile_select"] = saved_profile.name
+                    st.success(f"Profilo {saved_profile.name} attivo.")
+            profiles: dict[str, EquipmentProfile] = st.session_state[
+                "astro_equipment_profiles"
+            ]
+            if profiles:
+                profile_names = list(profiles)
+                if (
+                    st.session_state.get("astro_active_profile_select")
+                    not in profile_names
+                ):
+                    st.session_state["astro_active_profile_select"] = profile_names[0]
+                selected_profile = st.selectbox(
+                    "Profilo attivo",
+                    options=profile_names,
+                    key="astro_active_profile_select",
+                )
+                st.session_state["astro_active_profile"] = selected_profile
+                active_equipment = profiles[selected_profile]
+                view = field_of_view(active_equipment)
+                field_metrics = st.columns(4)
+                field_metrics[0].metric(
+                    "Focale effettiva", f"{view.effective_focal_length_mm:.0f} mm"
+                )
+                field_metrics[1].metric(
+                    "Campo", f"{view.width_deg:.2f}° × {view.height_deg:.2f}°"
+                )
+                field_metrics[2].metric("Diagonale", f"{view.diagonal_deg:.2f}°")
+                field_metrics[3].metric(
+                    "Campionamento", f"{view.image_scale_arcsec_px:.2f}″/px"
+                )
+            else:
+                st.info("Salva almeno un profilo per calcolare campo e campionamento.")
+
+        with st.expander("Orizzonte locale · ostacoli"):
+            st.caption(
+                "Indica l'altezza apparente di tetti, alberi o rilievi nelle otto "
+                "direzioni. Il planner interpola la maschera senza salvare coordinate terrestri."
+            )
+            direction_labels = {
+                0: "N",
+                45: "NE",
+                90: "E",
+                135: "SE",
+                180: "S",
+                225: "SO",
+                270: "O",
+                315: "NO",
+            }
+            horizon_columns = st.columns(4)
+            horizon_mask: dict[float, float] = {}
+            for position, (direction, label) in enumerate(direction_labels.items()):
+                value = horizon_columns[position % 4].number_input(
+                    f"{label} · ostacolo °",
+                    min_value=0.0,
+                    max_value=60.0,
+                    value=float(
+                        st.session_state["astro_horizon_mask"].get(direction, 0.0)
+                    ),
+                    step=1.0,
+                    key=f"astro_horizon_{direction}",
+                )
+                horizon_mask[float(direction)] = float(value)
+            st.session_state["astro_horizon_mask"] = horizon_mask
+
+        available_targets = target_labels(custom_targets)
         default_target_names = {"M31", "M42", "M45", "M13"}
         selected_targets = st.multiselect(
             "Oggetti da osservare o fotografare",
@@ -4676,6 +4960,9 @@ with tab_astro:
             selected_targets,
             minimum_altitude=minimum_altitude,
             minimum_moon_separation=minimum_moon_separation,
+            custom_targets=custom_targets,
+            horizon_mask=horizon_mask,
+            equipment=active_equipment,
         )
         if target_plan.empty:
             st.info("Seleziona almeno un oggetto per calcolare la finestra migliore.")
@@ -4698,6 +4985,18 @@ with tab_astro:
                     "Condensa %": target_plan["dew_risk"],
                     "Distanza Luna °": target_plan["moon_separation"],
                     "Luna %": target_plan["moon_illumination"],
+                    "Ostacolo °": target_plan["horizon_altitude"],
+                    "Margine °": target_plan["horizon_clearance"],
+                    "Campo °": target_plan.apply(
+                        lambda row: (
+                            "—"
+                            if pd.isna(row["field_width_deg"])
+                            else f"{row['field_width_deg']:.2f} × {row['field_height_deg']:.2f}"
+                        ),
+                        axis=1,
+                    ),
+                    "Camp. ″/px": target_plan["image_scale_arcsec_px"],
+                    "Inquadratura": target_plan["framing"],
                     "Esito": target_plan["status"],
                 }
             )
@@ -4705,10 +5004,154 @@ with tab_astro:
                 _style_status_table(planner_table.round(0), dark_mode, "Esito"),
                 height=430,
             )
+            schedulable = target_plan[target_plan["best_time"].notna()].copy()
+            if not schedulable.empty:
+                with st.expander("Calendario e diario della sessione"):
+                    target_options = schedulable["target"].astype(str).tolist()
+                    calendar_target = st.selectbox(
+                        "Finestra da usare",
+                        options=target_options,
+                        format_func=lambda name: (
+                            f"{name} · "
+                            + str(
+                                schedulable.loc[
+                                    schedulable["target"].eq(name), "name"
+                                ].iloc[0]
+                            )
+                        ),
+                        key="astro_calendar_target",
+                    )
+                    selected_plan = schedulable[
+                        schedulable["target"].eq(calendar_target)
+                    ].iloc[0]
+                    session_duration = st.slider(
+                        "Durata sessione",
+                        min_value=30,
+                        max_value=360,
+                        value=120,
+                        step=30,
+                        format="%d min",
+                        key="astro_session_duration",
+                    )
+                    calendar_description = (
+                        f"Score {selected_plan['planner_score']:.0f}/100; "
+                        f"altezza {selected_plan['altitude']:.0f}°; "
+                        f"Luna {selected_plan['moon_separation']:.0f}°."
+                    )
+                    calendar_payload = observing_calendar_ics(
+                        calendar_target,
+                        selected_plan["best_time"],
+                        duration_minutes=session_duration,
+                        timezone_name=CFG.local_timezone,
+                        description=calendar_description,
+                    )
+                    st.download_button(
+                        "Aggiungi la finestra al calendario (.ics)",
+                        data=calendar_payload,
+                        file_name=f"osservazione-{_filename_slug(calendar_target)}.ics",
+                        mime="text/calendar",
+                        width="stretch",
+                    )
+                    with st.form("astronomy_session_log_form", border=False):
+                        log_status = st.selectbox(
+                            "Stato diario",
+                            options=("Pianificata", "Completata", "Annullata"),
+                        )
+                        log_notes = st.text_input(
+                            "Nota facoltativa",
+                            max_chars=240,
+                            placeholder="Filtri, esposizioni, esito",
+                        )
+                        add_to_log = st.form_submit_button("Aggiungi al diario")
+                    if add_to_log:
+                        st.session_state["astro_session_log"].append(
+                            {
+                                "target": calendar_target,
+                                "planned_start": selected_plan["best_time"].isoformat(),
+                                "duration_minutes": session_duration,
+                                "status": log_status,
+                                "score": round(
+                                    float(selected_plan["planner_score"]), 1
+                                ),
+                                "equipment": (
+                                    active_equipment.name
+                                    if active_equipment is not None
+                                    else ""
+                                ),
+                                "notes": log_notes.strip(),
+                            }
+                        )
+                        st.success("Voce aggiunta al diario della sessione browser.")
+                    diary = st.session_state["astro_session_log"]
+                    if diary:
+                        diary_table = pd.DataFrame(diary).rename(
+                            columns={
+                                "target": "Oggetto",
+                                "planned_start": "Inizio",
+                                "duration_minutes": "Durata min",
+                                "status": "Stato",
+                                "score": "Score",
+                                "equipment": "Attrezzatura",
+                                "notes": "Note",
+                            }
+                        )
+                        render_styled_table(_base_table_style(diary_table, dark_mode))
+                        st.download_button(
+                            "Scarica diario CSV",
+                            data=observing_log_csv(diary),
+                            file_name="diario-osservazioni.csv",
+                            mime="text/csv",
+                        )
+                    st.caption(
+                        "Il diario resta privato nella sessione browser; scarica il CSV "
+                        "prima di chiudere. Il file ICS usa UTC standard e si apre "
+                        f"all'ora corretta {CFG.local_timezone}."
+                    )
+
+        with st.expander("Esporta o ripristina la configurazione"):
+            configuration_payload = planner_configuration_json(
+                st.session_state["astro_equipment_profiles"].values(),
+                custom_targets,
+                st.session_state["astro_horizon_mask"],
+            )
+            st.download_button(
+                "Esporta configurazione planner (JSON)",
+                data=configuration_payload,
+                file_name="configurazione-astronomia-pro.json",
+                mime="application/json",
+                width="stretch",
+            )
+            imported_configuration = st.file_uploader(
+                "Ripristina un JSON esportato dal planner",
+                type=("json",),
+                accept_multiple_files=False,
+                key="astro_configuration_upload",
+            )
+            if imported_configuration is not None and st.button(
+                "Importa configurazione verificata",
+                key="astro_configuration_import",
+                width="stretch",
+            ):
+                try:
+                    restored_profiles, restored_targets, restored_horizon = (
+                        parse_planner_configuration(imported_configuration.getvalue())
+                    )
+                except (TypeError, ValueError) as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["astro_pending_configuration"] = (
+                        restored_profiles,
+                        restored_targets,
+                        restored_horizon,
+                    )
+                    st.rerun()
         st.caption(
             "Posizioni e separazione dalla Luna sono calcoli astronomici orari; lo "
-            "score combina altezza, meteo, nuvole e luminosità lunare. Verifica sempre "
-            "ostacoli locali e limiti della montatura prima di iniziare."
+            "score combina altezza, meteo, nuvole, luminosità lunare e maschera locale. "
+            "Dimensioni catalogo e inquadratura sono indicative: verifica sempre "
+            "limiti della montatura e campo reale prima di iniziare. Riferimenti: "
+            "[Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) "
+            "e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/)."
         )
 
         windows = best_observing_windows(astro)
@@ -4728,7 +5171,7 @@ with tab_astro:
         figure = make_subplots(specs=[[{"secondary_y": True}]])
         figure.add_trace(
             go.Scatter(
-                x=night["local_time"],
+                x=plotly_local_datetimes(night["local_time"], CFG.local_timezone),
                 y=night["astro_score"],
                 name="▰ Qualità cielo",
                 fill="tozeroy",
@@ -4744,7 +5187,9 @@ with tab_astro:
             if column in night:
                 figure.add_trace(
                     go.Scatter(
-                        x=night["local_time"],
+                        x=plotly_local_datetimes(
+                            night["local_time"], CFG.local_timezone
+                        ),
                         y=night[column],
                         name=f"··· {name}",
                         line={"color": color, "width": 1.5, "dash": "dot"},

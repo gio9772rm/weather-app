@@ -1,4 +1,4 @@
-# Meteo V4.4
+# Meteo V4.5
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -15,6 +15,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - **Calibrazione 2.0** per variabile, orizzonte e regime meteorologico, combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro e riquadri meteo/pianificazione espandibili con clic o tastiera;
+- grafici con timestamp `Europe/Rome` espliciti, linea **Adesso** allineata allo stesso asse e due ore di emissioni previsionali archiviate mantenute per il confronto con le misure;
 - nuova home **Oggi** con meteo dinamico, riepilogo in linguaggio naturale, timeline scorrevole, pioggia/vento/fiducia e tendenza settimanale;
 - indici orientativi per passeggiata, pollini, ricambio d'aria e astronomia, con il momento migliore e criteri espliciti;
 - qualità dell'aria europea, PM2.5, PM10, NO₂, ozono e pollini CAMS/Open‑Meteo, caricati soltanto quando si apre la scheda dedicata e senza nuove chiavi;
@@ -39,7 +40,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - scheda **Sistema** con salute di ogni fonte, fallback disponibile, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
-- pianificatore astronomico personale con altezza, azimut, distanza dalla Luna e migliore ora prevista per una selezione di oggetti deep-sky;
+- pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, distanza dalla Luna, ostacoli locali, profili ottica/camera, campo inquadrato, calendario ICS e diario CSV;
 - backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
 - issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
 - controllo visuale Playwright su desktop/mobile e tema chiaro/scuro, audit privacy e riferimenti GitHub Actions bloccati a commit immutabili;
@@ -293,7 +294,9 @@ La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario
 
 **Astronomia Pro** aggiunge proxy previsionali di trasparenza e stabilità usando nuvolosità media/alta, visibilità, CAPE, umidità a 700 hPa, vento del jet a 300 hPa e rischio condensa. Quando questi campi non sono disponibili il punteggio base continua a funzionare; quando sono presenti incidono in modo limitato e tracciabile. Non viene stimato né dichiarato un seeing in arcosecondi.
 
-Il **Pianificatore oggetti** combina queste condizioni con coordinate celesti di un catalogo locale di oggetti deep-sky, altezza/azimut orari e separazione angolare dalla Luna. La selezione e le soglie restano nell'interfaccia; non vengono inviate a servizi esterni e non sostituiscono il controllo degli ostacoli locali o dei limiti della montatura.
+Il **Pianificatore Astronomia Pro** combina queste condizioni con coordinate celesti del catalogo locale oppure target RA/Dec inseriti dall'utente, altezza/azimut orari e separazione angolare dalla Luna. La maschera dell'orizzonte interpola otto direzioni locali; i profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), e il suggerimento d'inquadratura restano indicativi.
+
+Target personali, attrezzatura, orizzonte e diario rimangono nella sessione browser. Possono essere esportati come JSON/CSV e la finestra selezionata come calendario ICS; nessuna coordinata terrestre, nota o profilo viene scritto nel repository pubblico. L'evento ICS è salvato in UTC standard così il calendario lo apre all'ora corretta `Europe/Rome` anche durante i cambi d'ora.
 
 Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale serve un fotometro SQM calibrato. Anche la Bortle è una valutazione visuale dell'intero cielo e la conversione dalla sola luminosità zenitale è necessariamente approssimativa.
 
@@ -305,7 +308,7 @@ Il valore non sostituisce una misura effettuata sul posto: per uno SQM reale ser
 .\.venv\Scripts\ruff.exe check .
 ```
 
-I 148 test coprono anche diagnostica Ecowitt, telemetria sanitizzata, pianificatore oggetti, ripristino completo, avvisi operativi deduplicati e audit privacy. La CI aggiunge contratti visuali Playwright su quattro combinazioni desktop/mobile e chiaro/scuro, conservando gli screenshot per 14 giorni.
+La suite automatica copre anche diagnostica Ecowitt, telemetria sanitizzata, planner astronomico, fuso locale/DST, finestra previsionale retrospettiva, ripristino completo, avvisi operativi deduplicati e audit privacy. La CI aggiunge contratti visuali Playwright sulle viste Oggi, Sistema, Panoramica e Astronomia in desktop/mobile e chiaro/scuro, conservando gli screenshot per 14 giorni.
 
 ## Dipendenze riproducibili
 

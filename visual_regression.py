@@ -14,13 +14,18 @@ import time
 from pathlib import Path
 from urllib.request import urlopen
 
+import numpy as np
 import pandas as pd
 
 CASES = (
     ("today-light-desktop", "today", "light", 1440, 1000),
     ("system-dark-desktop", "system", "dark", 1440, 1000),
+    ("overview-light-desktop", "overview", "light", 1440, 1000),
+    ("astronomy-light-desktop", "astronomy", "light", 1440, 1000),
     ("today-light-mobile", "today", "light", 390, 844),
     ("system-dark-mobile", "system", "dark", 390, 844),
+    ("overview-dark-mobile", "overview", "dark", 390, 844),
+    ("astronomy-dark-mobile", "astronomy", "dark", 390, 844),
 )
 
 
@@ -64,6 +69,80 @@ def _seed_database(path: Path) -> None:
     )
     with get_engine().begin() as connection:
         connection.execute(statement, rows)
+        issued_at = now.floor("h").strftime("%Y-%m-%dT%H:%M:%SZ")
+        forecast_rows = []
+        for offset in range(73):
+            moment = now.floor("h") + pd.Timedelta(hours=offset)
+            local_hour = moment.tz_convert("Europe/Rome").hour
+            forecast_rows.append(
+                {
+                    "valid_time": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "issued_at": issued_at,
+                    "temp": 18 + np.sin(offset / 6) * 5,
+                    "humidity": 62 + offset % 5,
+                    "pressure": 1012 + np.cos(offset / 8),
+                    "wind": 7 + offset % 3,
+                    "gust": 12 + offset % 4,
+                    "direction": 180 + offset % 30,
+                    "rain": max(0, np.sin(offset / 9)) * 0.4,
+                    "probability": 20 + offset % 40,
+                    "clouds": 25 + offset % 35,
+                    "low": 10 + offset % 20,
+                    "mid": 15 + offset % 25,
+                    "high": 20 + offset % 30,
+                    "is_day": int(7 <= local_hour < 20),
+                }
+            )
+        connection.execute(
+            text(
+                "INSERT INTO forecast_blend (valid_time,issued_at,temp_c,feels_like_c,"
+                "humidity,dewpoint_c,pressure_hpa,wind_kmh,wind_gust_kmh,wind_dir,"
+                "rain_mm,snow_mm,precip_probability,clouds,cloud_low,cloud_mid,cloud_high,"
+                "visibility_m,weather_code,description,is_day,temp_uncertainty_c,confidence,"
+                "provider_count,provider_weights,method) VALUES ("
+                ":valid_time,:issued_at,:temp,:temp,:humidity,12,:pressure,:wind,:gust,"
+                ":direction,:rain,0,:probability,:clouds,:low,:mid,:high,18000,'1',"
+                "'Sereno',:is_day,1.2,82,2,'{}','visual_fixture')"
+            ),
+            forecast_rows,
+        )
+        archived_rows = []
+        for offset in (-3, -2, -1):
+            moment = now.floor("h") + pd.Timedelta(hours=offset)
+            archived_rows.append(
+                {
+                    "valid_time": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "issued_at": (moment - pd.Timedelta(hours=1)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                    "temp": 18 + np.sin(offset / 6) * 5,
+                    "humidity": 62 + offset % 5,
+                    "pressure": 1012 + np.cos(offset / 8),
+                    "wind": 7 + offset % 3,
+                    "gust": 12 + offset % 4,
+                    "direction": 180 + offset % 30,
+                    "rain": max(0, np.sin(offset / 9)) * 0.4,
+                    "probability": 20 + offset % 40,
+                    "clouds": 25 + offset % 35,
+                    "low": 10 + offset % 20,
+                    "mid": 15 + offset % 25,
+                    "high": 20 + offset % 30,
+                    "is_day": int(7 <= moment.tz_convert("Europe/Rome").hour < 20),
+                }
+            )
+        connection.execute(
+            text(
+                "INSERT INTO forecast_blend_history (valid_time,issued_at,temp_c,"
+                "feels_like_c,humidity,dewpoint_c,pressure_hpa,wind_kmh,wind_gust_kmh,"
+                "wind_dir,rain_mm,snow_mm,precip_probability,clouds,cloud_low,cloud_mid,"
+                "cloud_high,visibility_m,weather_code,description,is_day,"
+                "temp_uncertainty_c,confidence,provider_count,provider_weights,method) "
+                "VALUES (:valid_time,:issued_at,:temp,:temp,:humidity,12,:pressure,"
+                ":wind,:gust,:direction,:rain,0,:probability,:clouds,:low,:mid,:high,"
+                "18000,'1','Sereno',:is_day,1.2,82,2,'{}','visual_archive')"
+            ),
+            archived_rows,
+        )
     reset_engine_cache()
 
 
@@ -139,7 +218,24 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                         page.wait_for_selector(
                             '[data-testid="stAppViewContainer"]', timeout=45_000
                         )
-                        page.wait_for_timeout(2_000)
+                        # Streamlit mounts the app container before the selected tab has
+                        # finished rendering.  Wait for a tab-specific sentinel so the
+                        # visual contract never inspects a partially loaded page.
+                        if tab == "today":
+                            page.wait_for_selector(
+                                "details.expandable-card", timeout=45_000
+                            )
+                        elif tab == "system":
+                            page.get_by_text(
+                                "Diagnostica Ecowitt", exact=True
+                            ).wait_for(state="attached", timeout=45_000)
+                        elif tab == "overview":
+                            page.wait_for_selector(".js-plotly-plot", timeout=45_000)
+                        elif tab == "astronomy":
+                            page.get_by_text(
+                                "Pianificatore Astronomia Pro", exact=True
+                            ).wait_for(state="attached", timeout=45_000)
+                        page.wait_for_timeout(500)
                         body = page.locator("body").inner_text()
                         if any(marker in body for marker in ("�", "Ã", "Â")):
                             raise AssertionError(f"{name}: testo con encoding corrotto")
@@ -184,6 +280,64 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             raise AssertionError(
                                 f"{name}: diagnostica Ecowitt non visibile"
                             )
+                        if tab == "overview":
+                            page.wait_for_selector(".js-plotly-plot", timeout=30_000)
+                            alignment = page.evaluate(
+                                """() => {
+                                  const graphs = [...document.querySelectorAll('.js-plotly-plot')];
+                                  const graph = graphs.find(item =>
+                                    (item.data || []).some(trace =>
+                                      String(trace.name || '').includes('Previsione · da −2 h')));
+                                  if (!graph) return null;
+                                  const trace = graph.data.find(item =>
+                                    String(item.name || '').includes('Previsione · da −2 h'));
+                                  const shape = (graph.layout.shapes || []).find(item =>
+                                    item.type === 'line' && item.line && item.line.dash === 'dot');
+                                  if (!trace || !shape) return null;
+                                  const times = [...trace.x].map(value => Date.parse(value));
+                                  return {
+                                    first: Math.min(...times),
+                                    last: Math.max(...times),
+                                    marker: Date.parse(shape.x0),
+                                    markerRaw: String(shape.x0),
+                                    firstRaw: String(trace.x[0]),
+                                    now: Date.now(),
+                                  };
+                                }"""
+                            )
+                            if alignment is None:
+                                raise AssertionError(
+                                    f"{name}: grafico previsione o linea adesso mancanti"
+                                )
+                            marker_delta = abs(alignment["marker"] - alignment["now"])
+                            lookback = alignment["now"] - alignment["first"]
+                            if marker_delta > 5 * 60_000:
+                                raise AssertionError(
+                                    f"{name}: linea adesso fuori posto di {marker_delta / 60_000:.1f} min"
+                                )
+                            if not 105 * 60_000 <= lookback <= 135 * 60_000:
+                                raise AssertionError(
+                                    f"{name}: coda previsionale non pari a 2 h ({lookback / 60_000:.1f} min)"
+                                )
+                            if not any(
+                                offset in alignment["markerRaw"]
+                                and offset in alignment["firstRaw"]
+                                for offset in ("+01:00", "+02:00")
+                            ):
+                                raise AssertionError(
+                                    f"{name}: offset Europe/Rome non conservato"
+                                )
+                        if tab == "astronomy":
+                            for label in (
+                                "Pianificatore Astronomia Pro",
+                                "Oggetto personalizzato · RA/Dec",
+                                "Attrezzatura e campo inquadrato",
+                                "Orizzonte locale · ostacoli",
+                            ):
+                                if label not in body:
+                                    raise AssertionError(
+                                        f"{name}: controllo astronomico mancante: {label}"
+                                    )
                     finally:
                         page.screenshot(path=str(screenshot), full_page=True)
                         page.close()
@@ -204,7 +358,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.4")
+    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.5")
     parser.add_argument("--output", default="visual-artifacts")
     args = parser.parse_args()
     results = run_visual_checks(args.output)

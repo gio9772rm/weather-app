@@ -120,4 +120,11 @@ def features(cfg: Settings) -> tuple[Feature, ...]:
             True,
             "forecast_blend",
         ),
+        Feature(
+            "astronomy_planner_pro",
+            "Planner RA/Dec, attrezzatura, orizzonte e calendario",
+            "V4.5",
+            True,
+            "sessione browser + export ICS/CSV/JSON",
+        ),
     )

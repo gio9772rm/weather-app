@@ -186,6 +186,27 @@ def load_forecast(hours: int = 192) -> pd.DataFrame:
     )
     if frame.empty:
         return _legacy_forecast()
+    archived_tail = _read(
+        "SELECT history.* FROM forecast_blend_history history JOIN ("
+        " SELECT valid_time,MAX(issued_at) AS issued_at FROM forecast_blend_history"
+        " WHERE valid_time BETWEEN :start AND :now AND issued_at<=valid_time"
+        " GROUP BY valid_time"
+        ") latest ON history.valid_time=latest.valid_time "
+        "AND history.issued_at=latest.issued_at ORDER BY history.valid_time",
+        {
+            "start": start,
+            "now": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    frame["chart_origin"] = "blend_corrente"
+    if not archived_tail.empty:
+        archived_tail["chart_origin"] = "previsione_archiviata"
+        frame = (
+            pd.concat([archived_tail, frame], ignore_index=True)
+            .drop_duplicates("valid_time", keep="last")
+            .sort_values("valid_time")
+            .reset_index(drop=True)
+        )
     for column in ("valid_time", "issued_at"):
         frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
     numeric = [

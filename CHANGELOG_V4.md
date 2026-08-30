@@ -1,5 +1,14 @@
 # Changelog Meteo V4
 
+## V4.5 · Astronomia Pro e orari locali verificabili
+
+- planner astronomico esteso con target RA/Dec personali, dimensione apparente, profili ottica/camera, campo inquadrato e campionamento;
+- maschera circolare dell'orizzonte locale a otto direzioni, usata per escludere finestre coperte da tetti, alberi o rilievi;
+- esportazione calendario ICS all'istante UTC corretto, diario osservativo CSV e configurazione planner JSON mantenuti nella sessione browser;
+- assi temporali Plotly serializzati con offset `Europe/Rome` esplicito per allineare tracce e linea tratteggiata **Adesso**, inclusi i passaggi CET/CEST;
+- due ore di previsione precedente recuperate da `forecast_blend_history` e conservate nei grafici principali per il confronto con le misure, senza traslare o reinterpretare i timestamp;
+- contratti browser estesi alle viste Panoramica e Astronomia su desktop/mobile e tema chiaro/scuro; schema database invariato.
+
 ## V4.4 · affidabilità, diagnostica e pianificazione
 
 - controllo salute con endpoint Render effettivo e issue GitHub operative deduplicate per salute, ingestione, backup e prova di ripristino;
