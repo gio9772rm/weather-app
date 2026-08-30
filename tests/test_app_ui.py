@@ -156,3 +156,61 @@ def test_recent_station_cards_show_real_live_badges(
     assert "live-badge is-stale" in rendered
     assert "NON LIVE" in rendered
     assert "�" not in rendered
+
+
+def test_astronomy_pro_planner_renders_with_forecast_data(
+    tmp_path, monkeypatch, request
+) -> None:
+    from light_pollution import LightPollutionError
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "app-astronomy.db"))
+    monkeypatch.setattr(
+        "light_pollution.fetch_light_pollution",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            LightPollutionError("fixture offline")
+        ),
+    )
+    reset_engine_cache()
+    st.cache_data.clear()
+    request.addfinalizer(st.cache_data.clear)
+    request.addfinalizer(reset_engine_cache)
+    ensure_schema()
+    now = pd.Timestamp.now(tz="UTC").floor("h")
+    rows = []
+    for offset in range(-3, 49):
+        moment = now + pd.Timedelta(hours=offset)
+        rows.append(
+            {
+                "valid_time": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "issued_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "is_day": int(7 <= moment.tz_convert("Europe/Rome").hour < 20),
+            }
+        )
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO forecast_blend (valid_time,issued_at,temp_c,humidity,"
+                "dewpoint_c,pressure_hpa,wind_kmh,wind_gust_kmh,rain_mm,"
+                "precip_probability,clouds,cloud_low,cloud_mid,cloud_high,visibility_m,"
+                "is_day,confidence,provider_count,method) VALUES ("
+                ":valid_time,:issued_at,18,65,11,1013,6,10,0,10,20,10,15,20,18000,"
+                ":is_day,85,2,'ui_fixture')"
+            ),
+            rows,
+        )
+
+    app = AppTest.from_file(
+        Path(__file__).parents[1] / "app_streamlit.py", default_timeout=30
+    )
+    app.query_params["tab"] = "astronomy"
+    app.run()
+
+    assert not app.exception
+    assert any(item.value == "Pianificatore Astronomia Pro" for item in app.subheader)
+    assert {
+        "Oggetto personalizzato · RA/Dec",
+        "Attrezzatura e campo inquadrato",
+        "Orizzonte locale · ostacoli",
+        "Esporta o ripristina la configurazione",
+    } <= {item.label for item in app.expander}

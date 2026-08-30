@@ -82,7 +82,7 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
     manifest: dict[str, Any] = {
         "format": BACKUP_FORMAT,
         "version": 2,
-        "application": "Meteo V4.4",
+        "application": "Meteo V4.5",
         "schema_version": 8,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database_dialect": engine.dialect.name,
@@ -308,7 +308,7 @@ def _append_github_outputs(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Backup portatile e verificato del database Meteo V4.4"
+        description="Backup portatile e verificato del database Meteo V4.5"
     )
     parser.add_argument("--output", default="backups", help="Cartella o file ZIP")
     parser.add_argument("--verify", help="Verifica un archivio esistente")

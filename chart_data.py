@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 DEFAULT_GAP_TOLERANCE = pd.Timedelta(minutes=30)
+FORECAST_CHART_LOOKBACK_HOURS = 2
 
 
 @dataclass(frozen=True)
@@ -25,18 +26,55 @@ def _utc(value: Any) -> pd.Timestamp:
     return pd.to_datetime(value, utc=True, errors="coerce")
 
 
-def plotly_utc_datetime(value: Any) -> datetime:
-    """Return an ISO-serialisable UTC datetime for Plotly date axes.
+def plotly_local_datetime(value: Any, timezone: str) -> datetime:
+    """Return one timezone-aware local datetime for a Plotly date axis.
 
-    Plotly treats numeric Unix milliseconds and ISO datetimes differently in a
-    browser timezone.  Keeping reference lines and trace coordinates on the
-    same datetime representation prevents a UTC offset from moving the
-    ``now`` marker (two hours during summer time in Rome).
+    Passing a timezone-aware pandas Series directly to Plotly silently turns it
+    into naive ``datetime64`` values, while shapes keep their UTC offset.  The
+    browser then places the traces and the ``now`` marker one or two hours
+    apart.  Converting each value to a regular Python datetime preserves the
+    same explicit Europe/Rome offset on traces, shapes and hover labels.
     """
     timestamp = _utc(value)
     if pd.isna(timestamp):
         raise ValueError("Invalid datetime for Plotly")
-    return timestamp.to_pydatetime()
+    return timestamp.tz_convert(timezone).to_pydatetime()
+
+
+def plotly_local_datetimes(values: Any, timezone: str) -> tuple[datetime | None, ...]:
+    """Return local Python datetimes without losing DST offsets in Plotly."""
+    parsed = pd.to_datetime(values, utc=True, errors="coerce")
+    if isinstance(parsed, (pd.Series, pd.DatetimeIndex)):
+        timestamps = parsed.tolist()
+    else:
+        try:
+            timestamps = list(parsed)
+        except TypeError:
+            timestamps = [parsed]
+    return tuple(
+        None
+        if pd.isna(timestamp)
+        else pd.Timestamp(timestamp).tz_convert(timezone).to_pydatetime()
+        for timestamp in timestamps
+    )
+
+
+def forecast_chart_window(
+    frame: pd.DataFrame,
+    now: Any,
+    *,
+    future_hours: int = 72,
+    lookback_hours: int = FORECAST_CHART_LOOKBACK_HOURS,
+) -> pd.DataFrame:
+    """Keep a small truthful forecast tail before now for visual comparison."""
+    reference = _utc(now)
+    if pd.isna(reference):
+        return frame.iloc[0:0].copy()
+    return clip_forecast(
+        frame,
+        reference - pd.Timedelta(hours=max(0, int(lookback_hours))),
+        reference + pd.Timedelta(hours=max(0, int(future_hours))),
+    )
 
 
 def _prepared_forecast(frame: pd.DataFrame) -> pd.DataFrame:
@@ -76,9 +114,9 @@ def _interpolated_row(frame: pd.DataFrame, moment: pd.Timestamp) -> pd.Series | 
         numeric_column = pd.to_numeric(frame[column], errors="coerce")
         if numeric_column.notna().sum() < 2:
             continue
-        left_value = pd.to_numeric(
-            pd.Series([left.get(column)]), errors="coerce"
-        ).iloc[0]
+        left_value = pd.to_numeric(pd.Series([left.get(column)]), errors="coerce").iloc[
+            0
+        ]
         right_value = pd.to_numeric(
             pd.Series([right.get(column)]), errors="coerce"
         ).iloc[0]
@@ -87,9 +125,9 @@ def _interpolated_row(frame: pd.DataFrame, moment: pd.Timestamp) -> pd.Series | 
                 angle_delta = (float(right_value) - float(left_value) + 180) % 360 - 180
                 row[column] = (float(left_value) + angle_delta * ratio) % 360
             else:
-                row[column] = float(left_value) + (
-                    float(right_value) - float(left_value)
-                ) * ratio
+                row[column] = (
+                    float(left_value) + (float(right_value) - float(left_value)) * ratio
+                )
     row["valid_time"] = moment
     return row
 
@@ -107,10 +145,7 @@ def clip_forecast(
     if data.empty or pd.isna(start_time) or pd.isna(end_time) or end_time < start_time:
         return data.iloc[0:0].copy()
     pieces = [
-        data[
-            (data["valid_time"] >= start_time)
-            & (data["valid_time"] <= end_time)
-        ]
+        data[(data["valid_time"] >= start_time) & (data["valid_time"] <= end_time)]
     ]
     if add_boundaries:
         for moment in (start_time, end_time):
