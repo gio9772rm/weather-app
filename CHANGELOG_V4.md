@@ -1,5 +1,11 @@
 # Changelog Meteo V4
 
+## V4.5.1 · coda previsionale archiviata completa
+
+- per gli istanti già trascorsi, l'ultima emissione pubblicata entro l'ora prevista prevale sull'eventuale riga retrospettiva dell'emissione corrente: un valore `null` del provider non interrompe più il confronto delle due ore precedenti;
+- il gate Playwright controlla il primo valore numerico realmente disegnabile, non soltanto il primo timestamp della traccia: la copertura visibile deve iniziare tra 105 e 135 minuti prima della linea locale **Adesso**;
+- nessuna variazione dello schema dati: la correzione riusa `forecast_blend_history` e non sposta artificialmente i timestamp.
+
 ## V4.5 · Astronomia Pro e orari locali verificabili
 
 - planner astronomico esteso con target RA/Dec personali, dimensione apparente, profili ottica/camera, campo inquadrato e campionamento;
