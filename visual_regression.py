@@ -294,13 +294,25 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                   const shape = (graph.layout.shapes || []).find(item =>
                                     item.type === 'line' && item.line && item.line.dash === 'dot');
                                   if (!trace || !shape) return null;
-                                  const times = [...trace.x].map(value => Date.parse(value));
+                                  const points = [...trace.x].map((value, index) => ({
+                                    raw: String(value),
+                                    time: Date.parse(value),
+                                    value: trace.y[index],
+                                  })).filter(point =>
+                                    Number.isFinite(point.time) &&
+                                    point.value !== null &&
+                                    point.value !== undefined &&
+                                    point.value !== '' &&
+                                    Number.isFinite(Number(point.value)));
+                                  if (!points.length) return null;
+                                  const firstPoint = points.reduce((earliest, point) =>
+                                    point.time < earliest.time ? point : earliest);
                                   return {
-                                    first: Math.min(...times),
-                                    last: Math.max(...times),
+                                    first: firstPoint.time,
+                                    last: Math.max(...points.map(point => point.time)),
                                     marker: Date.parse(shape.x0),
                                     markerRaw: String(shape.x0),
-                                    firstRaw: String(trace.x[0]),
+                                    firstRaw: firstPoint.raw,
                                     now: Date.now(),
                                   };
                                 }"""

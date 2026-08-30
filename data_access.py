@@ -201,8 +201,14 @@ def load_forecast(hours: int = 192) -> pd.DataFrame:
     frame["chart_origin"] = "blend_corrente"
     if not archived_tail.empty:
         archived_tail["chart_origin"] = "previsione_archiviata"
+        # A fresh blend can retain the previous valid hour even though it was
+        # issued after that hour and some providers already return nulls for it.
+        # For elapsed times the archived emission is the truthful comparison:
+        # it was available no later than the instant it forecast.  Append it
+        # last so it wins an overlapping valid_time instead of being replaced
+        # by a retrospective/null row from the current blend.
         frame = (
-            pd.concat([archived_tail, frame], ignore_index=True)
+            pd.concat([frame, archived_tail], ignore_index=True)
             .drop_duplicates("valid_time", keep="last")
             .sort_values("valid_time")
             .reset_index(drop=True)
