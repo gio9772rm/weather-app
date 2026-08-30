@@ -218,7 +218,24 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                         page.wait_for_selector(
                             '[data-testid="stAppViewContainer"]', timeout=45_000
                         )
-                        page.wait_for_timeout(2_000)
+                        # Streamlit mounts the app container before the selected tab has
+                        # finished rendering.  Wait for a tab-specific sentinel so the
+                        # visual contract never inspects a partially loaded page.
+                        if tab == "today":
+                            page.wait_for_selector(
+                                "details.expandable-card", timeout=45_000
+                            )
+                        elif tab == "system":
+                            page.get_by_text(
+                                "Diagnostica Ecowitt", exact=True
+                            ).wait_for(state="attached", timeout=45_000)
+                        elif tab == "overview":
+                            page.wait_for_selector(".js-plotly-plot", timeout=45_000)
+                        elif tab == "astronomy":
+                            page.get_by_text(
+                                "Pianificatore Astronomia Pro", exact=True
+                            ).wait_for(state="attached", timeout=45_000)
+                        page.wait_for_timeout(500)
                         body = page.locator("body").inner_text()
                         if any(marker in body for marker in ("�", "Ã", "Â")):
                             raise AssertionError(f"{name}: testo con encoding corrotto")
