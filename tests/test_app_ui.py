@@ -214,3 +214,7 @@ def test_astronomy_pro_planner_renders_with_forecast_data(
         "Orizzonte locale · ostacoli",
         "Esporta o ripristina la configurazione",
     } <= {item.label for item in app.expander}
+    planner_markup = "\n".join(item.value for item in app.markdown)
+    assert ">nan<" not in planner_markup.lower()
+    for english_day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"):
+        assert f">{english_day} " not in planner_markup

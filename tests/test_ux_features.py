@@ -32,7 +32,7 @@ def test_ventilation_prefers_dry_clean_moderately_windy_hour():
         now=pd.Timestamp("2026-08-26T10:00:00Z"),
     )
     assert result.available
-    assert "14:00" in result.timing
+    assert result.timing.startswith("Mer 14:00")
     assert result.score and result.score >= 75
 
 

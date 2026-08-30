@@ -4972,11 +4972,7 @@ with tab_astro:
                     "Oggetto": target_plan["target"] + " · " + target_plan["name"],
                     "Tipo": target_plan["category"],
                     "Mag.": target_plan["magnitude"],
-                    "Finestra migliore": target_plan["best_time"].map(
-                        lambda value: (
-                            "—" if pd.isna(value) else value.strftime("%a %d · %H:%M")
-                        )
-                    ),
+                    "Finestra migliore": target_plan["best_time"].map(_hour_label),
                     "Altezza °": target_plan["altitude"],
                     "Azimut °": target_plan["azimuth"],
                     "Score": target_plan["planner_score"],
@@ -4995,13 +4991,38 @@ with tab_astro:
                         ),
                         axis=1,
                     ),
-                    "Camp. ″/px": target_plan["image_scale_arcsec_px"],
+                    "Camp. ″/px": target_plan["image_scale_arcsec_px"].map(
+                        lambda value: "—" if pd.isna(value) else f"{value:.2f}"
+                    ),
                     "Inquadratura": target_plan["framing"],
                     "Esito": target_plan["status"],
                 }
             )
+            planner_styler = _style_status_table(
+                planner_table, dark_mode, "Esito"
+            ).format(
+                {
+                    "Mag.": "{:.1f}",
+                    **{
+                        column: "{:.0f}"
+                        for column in (
+                            "Altezza °",
+                            "Azimut °",
+                            "Score",
+                            "Meteo",
+                            "Nuvole %",
+                            "Condensa %",
+                            "Distanza Luna °",
+                            "Luna %",
+                            "Ostacolo °",
+                            "Margine °",
+                        )
+                    },
+                },
+                na_rep="—",
+            )
             render_styled_table(
-                _style_status_table(planner_table.round(0), dark_mode, "Esito"),
+                planner_styler,
                 height=430,
             )
             schedulable = target_plan[target_plan["best_time"].notna()].copy()
@@ -5162,8 +5183,10 @@ with tab_astro:
         else:
             cols = st.columns(min(3, len(windows)))
             for position, (_, window) in enumerate(windows.head(3).iterrows()):
+                end_time = pd.to_datetime(window["end"], errors="coerce")
+                end_label = "—" if pd.isna(end_time) else f"{end_time:%H:%M}"
                 cols[position].metric(
-                    f"{window['start']:%a %d · %H:%M}–{window['end']:%H:%M}",
+                    f"{_hour_label(window['start'])}–{end_label}",
                     f"{window['score']:.0f}/100",
                     f"{int(window['hours'])} h · nuvole {window['clouds']:.0f}%",
                 )
