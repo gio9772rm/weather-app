@@ -294,10 +294,14 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                   const shape = (graph.layout.shapes || []).find(item =>
                                     item.type === 'line' && item.line && item.line.dash === 'dot');
                                   if (!trace || !shape) return null;
+                                  const traceIndex = graph.data.indexOf(trace);
+                                  const calculated = (graph.calcdata || [])[traceIndex] || [];
                                   const points = [...trace.x].map((value, index) => ({
                                     raw: String(value),
                                     time: Date.parse(value),
-                                    value: trace.y[index],
+                                    // Plotly 6 may keep the source y values in a binary
+                                    // object. calcdata is the rendered numeric series.
+                                    value: calculated[index] && calculated[index].y,
                                   })).filter(point =>
                                     Number.isFinite(point.time) &&
                                     point.value !== null &&
