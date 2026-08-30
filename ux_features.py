@@ -9,6 +9,8 @@ import pandas as pd
 
 from weather_experience import future_forecast
 
+ITALIAN_WEEKDAYS = ("Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom")
+
 
 @dataclass(frozen=True)
 class VentilationWindow:
@@ -153,7 +155,7 @@ def best_ventilation_window(
         True,
         value,
         label,
-        f"{moment:%a %H:%M}–{end:%H:%M}",
+        f"{ITALIAN_WEEKDAYS[moment.weekday()]} {moment:%H:%M}–{end:%H:%M}",
         detail,
         tone,
     )

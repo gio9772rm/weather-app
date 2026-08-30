@@ -1,5 +1,11 @@
 # Changelog Meteo V4
 
+## V4.5.2 · rifiniture del planner
+
+- la tabella Astronomia Pro mostra un trattino quando non esiste ancora un profilo ottico, invece del valore tecnico `nan`, e usa precisioni numeriche leggibili;
+- finestre astronomiche e card di pianificazione usano sempre le abbreviazioni italiane dei giorni, indipendentemente dalla lingua del server;
+- nessuna variazione dello schema dati.
+
 ## V4.5.1 · coda previsionale archiviata completa
 
 - per gli istanti già trascorsi, l'ultima emissione pubblicata entro l'ora prevista prevale sull'eventuale riga retrospettiva dell'emissione corrente: un valore `null` del provider non interrompe più il confronto delle due ore precedenti;
