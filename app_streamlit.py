@@ -1042,24 +1042,35 @@ def _aladin_field_html(
     }};
     window.showAladinFallback = showAladinFallback;
   </script>
-  <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/3.8.1/aladin.js" charset="utf-8" onerror="window.showAladinFallback()"></script>
   <script>
+    const initialiseAladin = () => {{
+      if (typeof A === 'undefined' || !A.init) {{
+        showAladinFallback();
+        return;
+      }}
+      A.init.then(() => {{
+        const aladin = A.aladin('#aladin-lite-div', {{
+          survey:'P/DSS2/color', target:'{target.ra_deg:.8f} {target.dec_deg:+.8f}',
+          fov:{field:.8f}, projection:'TAN', cooFrame:'ICRS', showReticle:true,
+          showCooGrid:true, showCooGridControl:true, showGotoControl:false,
+          showShareControl:false, showSimbadPointerControl:false, showContextMenu:false
+        }});
+        const overlay = A.graphicOverlay({{color:'#22d3ee',lineWidth:3}});
+        aladin.addOverlay(overlay);
+        overlay.add(A.polyline([{polyline}], {{color:'#22d3ee',lineWidth:3}}));
+        {target_ellipse}
+      }}).catch(showAladinFallback);
+    }};
     const webgl2 = document.createElement('canvas').getContext('webgl2');
-    if (!webgl2 || typeof A === 'undefined' || !A.init) {{
+    if (!webgl2) {{
       showAladinFallback();
     }} else {{
-      A.init.then(() => {{
-      const aladin = A.aladin('#aladin-lite-div', {{
-        survey:'P/DSS2/color', target:'{target.ra_deg:.8f} {target.dec_deg:+.8f}',
-        fov:{field:.8f}, projection:'TAN', cooFrame:'ICRS', showReticle:true,
-        showCooGrid:true, showCooGridControl:true, showGotoControl:false,
-        showShareControl:false, showSimbadPointerControl:false, showContextMenu:false
-      }});
-      const overlay = A.graphicOverlay({{color:'#22d3ee',lineWidth:3}});
-      aladin.addOverlay(overlay);
-      overlay.add(A.polyline([{polyline}], {{color:'#22d3ee',lineWidth:3}}));
-      {target_ellipse}
-      }}).catch(showAladinFallback);
+      const aladinScript = document.createElement('script');
+      aladinScript.src = 'https://aladin.cds.unistra.fr/AladinLite/api/v3/3.8.1/aladin.js';
+      aladinScript.charset = 'utf-8';
+      aladinScript.onerror = showAladinFallback;
+      aladinScript.onload = initialiseAladin;
+      document.head.appendChild(aladinScript);
     }}
   </script>
 </body>

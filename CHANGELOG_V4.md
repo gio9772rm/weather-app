@@ -1,5 +1,11 @@
 # Changelog Meteo V4
 
+## V4.7.2 · caricamento CDS senza avvisi bloccanti
+
+- Aladin Lite viene scaricato soltanto dopo la verifica WebGL2, impedendo alla libreria esterna di aprire avvisi JavaScript sui browser incompatibili;
+- il fallback resta visibile dentro la pagina e il simulatore geometrico continua a funzionare senza dipendenze esterne;
+- nessuna variazione dello schema, delle fonti meteo o dei dati condivisi con CDS.
+
 ## V4.7.1 · atlante CDS resiliente
 
 - il caricamento opzionale di Aladin Lite usa la versione stabile fissata 3.8.1, evitando cambiamenti imprevisti del canale `latest`;

@@ -53,6 +53,8 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
     assert "/AladinLite/api/v3/3.8.1/aladin.js" in source
     assert "Atlante CDS non disponibile in questo browser o rete" in source
     assert "/AladinLite/api/v3/latest/aladin.js" not in source
+    assert "aladinScript.onload = initialiseAladin" in source
+    assert "if (!webgl2)" in source
     today = source[
         source.index("def render_today_dashboard") : source.index(
             "def _city_future_hours"
