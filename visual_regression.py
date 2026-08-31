@@ -152,7 +152,7 @@ def _seed_database(path: Path) -> None:
             text(
                 "INSERT INTO station_profiles (station_id,display_name,timezone,"
                 "source,role,enabled,privacy_level,created_at,updated_at) VALUES ("
-                "'roma-primary','Stazione meteo Roma','Europe/Rome','visual_fixture',"
+                "'visual-primary','Stazione meteo Roma','Europe/Rome','visual_fixture',"
                 "'primary',1,'private_location',:timestamp,:timestamp)"
             ),
             {"timestamp": timestamp},
