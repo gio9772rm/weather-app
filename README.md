@@ -1,4 +1,4 @@
-# Meteo V4.7
+# Meteo V4.7.1
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -299,7 +299,7 @@ La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario
 
 Il **Pianificatore Astronomia Pro** combina queste condizioni con coordinate celesti del catalogo locale oppure target RA/Dec inseriti dall'utente, altezza/azimut, massa d'aria e separazione angolare dalla Luna. L'utente sceglie data, orario iniziale/finale e passo da 15/30/60 minuti; la notte può attraversare mezzanotte e cambi CET/CEST senza spostare le curve. La magnitudine resta un dato intrinseco del soggetto ed è mostrata in tabella e nei tooltip, non come falsa serie variabile nel tempo.
 
-La maschera dell'orizzonte interpola otto direzioni locali; i profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Il simulatore confronta il rettangolo ruotato del sensore con l'ingombro apparente, quantifica riempimento e margine e indica quando serve un mosaico o un riduttore. Su richiesta è disponibile anche l'atlante fotografico interattivo [CDS Aladin Lite](https://aladin.cds.unistra.fr/AladinLite/doc/): riceve soltanto RA/Dec celesti, lascia intatti logo e attribuzione CDS e non sostituisce il fallback geometrico. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), restano indicative.
+La maschera dell'orizzonte interpola otto direzioni locali; i profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Il simulatore confronta il rettangolo ruotato del sensore con l'ingombro apparente, quantifica riempimento e margine e indica quando serve un mosaico o un riduttore. Su richiesta è disponibile anche l'atlante fotografico interattivo [CDS Aladin Lite](https://aladin.cds.unistra.fr/AladinLite/doc/), fissato alla release stabile 3.8.1: riceve soltanto RA/Dec celesti, lascia intatti logo e attribuzione CDS e non sostituisce il fallback geometrico. Se WebGL2 o la rete CDS non sono disponibili, il limite viene dichiarato senza bloccare il planner. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), restano indicative.
 
 La sessione parte con il preset modificabile **Tripletto 80/480 + 571MC-Pro**, riduttore 0,8×, sensore 23,5 × 15,7 mm e pixel 3,76 µm; il preset non viene scritto nel database e può essere sostituito o esportato dal browser.
 

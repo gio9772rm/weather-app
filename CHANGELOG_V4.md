@@ -1,5 +1,11 @@
 # Changelog Meteo V4
 
+## V4.7.1 · atlante CDS resiliente
+
+- il caricamento opzionale di Aladin Lite usa la versione stabile fissata 3.8.1, evitando cambiamenti imprevisti del canale `latest`;
+- browser senza WebGL2, rete filtrata o inizializzazione CDS fallita mostrano lo stesso fallback accurato, mentre il simulatore geometrico resta sempre utilizzabile;
+- nessuna variazione dello schema dati o dei dati inviati: al CDS continuano ad arrivare soltanto RA/Dec celesti e dimensioni del campo.
+
 ## V4.7 · campo inquadrato e piano notturno
 
 - simulatore geometrico del sensore con rotazione, dimensioni apparenti del target, percentuale di riempimento, margine minimo e indicazione compatibile/stretto/mosaico;

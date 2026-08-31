@@ -50,6 +50,9 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
     assert 'content:"\\2193"' not in source
     assert "Controllo automatico" in source
     assert "Verifica automatica · ogni" in source
+    assert "/AladinLite/api/v3/3.8.1/aladin.js" in source
+    assert "Atlante CDS non disponibile in questo browser o rete" in source
+    assert "/AladinLite/api/v3/latest/aladin.js" not in source
     today = source[
         source.index("def render_today_dashboard") : source.index(
             "def _city_future_hours"
