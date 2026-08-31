@@ -57,6 +57,8 @@ jobs:
           OFFICIAL_SCORE_MAX_SHARE: "0.20"
           OFFICIAL_MIN_OVERLAP_SAMPLES: "24"
           ARSIAL_OBSERVATIONS_ENABLED: "false"
+          ARSIAL_OBSERVATIONS_MODE: auto
+          ARSIAL_PROBE_HOURS: "6"
           ARSIAL_DASHBOARD_URL: https://siarl.arsial.it/bi/superset/dashboard/7
           ARSIAL_STATION_NAME: ROMA Lanciani-SEDE ARSIAL
           ARSIAL_TZ: UTC

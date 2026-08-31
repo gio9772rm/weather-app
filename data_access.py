@@ -584,9 +584,10 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
             and not has_telemetry
         ):
             return "scheduled"
-        # SIARL is an optional connector. When explicitly suspended, do not
-        # keep showing historical portal failures while the operational CFR
-        # Lazio reference continues to run.
+        if source == "arsial_siarl" and bool(row["enabled"]) and not has_telemetry:
+            return "scheduled"
+        # SIARL is an optional connector. When explicitly disabled, do not keep
+        # showing historical portal failures while CFR Lazio continues to run.
         if source == "arsial_siarl" and not bool(row["enabled"]):
             return "disabled"
         # The dashboard and the Render Cron Job can intentionally have
@@ -594,6 +595,12 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
         # reported telemetry, trust that shared database state instead of
         # calling a live source disabled merely because the web process does
         # not hold its API key.
+        if (
+            source == "arsial_siarl"
+            and bool(row["enabled"])
+            and stored_status == "disabled"
+        ):
+            return "scheduled"
         if stored_status == "disabled":
             return "disabled"
         if not bool(row["enabled"]) and not has_telemetry:
@@ -603,6 +610,8 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
                 return "cached"
             return "external_unavailable" if source == "arsial_siarl" else "offline"
         failures = int(row["consecutive_failures"])
+        if source == "system_health" and failures == 1:
+            return "delayed" if float(row["age_minutes"]) <= cache_minutes else "offline"
         if failures >= 2:
             if cache_available:
                 return "cached"
@@ -613,6 +622,8 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
                 return "external_unavailable"
             return "offline"
         if failures == 1:
+            if source == "arsial_siarl" and not cache_available:
+                return "external_unavailable"
             return "delayed"
         if pd.isna(row["last_success_at"]):
             return "waiting"

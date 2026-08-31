@@ -30,6 +30,10 @@ services:
         value: "true"
       - key: ARSIAL_OBSERVATIONS_ENABLED
         value: "false"
+      - key: ARSIAL_OBSERVATIONS_MODE
+        value: auto
+      - key: ARSIAL_PROBE_HOURS
+        value: "6"
       - key: ARSIAL_STATION_NAME
         value: ROMA Lanciani-SEDE ARSIAL
       - key: ARSIAL_TZ
@@ -120,6 +124,10 @@ services:
         value: "24"
       - key: ARSIAL_OBSERVATIONS_ENABLED
         value: "false"
+      - key: ARSIAL_OBSERVATIONS_MODE
+        value: auto
+      - key: ARSIAL_PROBE_HOURS
+        value: "6"
       - key: ARSIAL_DASHBOARD_URL
         value: https://siarl.arsial.it/bi/superset/dashboard/7
       - key: ARSIAL_STATION_NAME

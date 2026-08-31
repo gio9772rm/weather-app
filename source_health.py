@@ -86,11 +86,20 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
         SourceDefinition(
             "arsial_siarl",
             "ARSIAL/SIARL",
-            official and cfg.arsial_observations_enabled,
-            cfg.official_observation_refresh_minutes,
+            cfg.arsial_polling_enabled,
+            (
+                cfg.arsial_probe_hours * 60
+                if cfg.arsial_auto_probe
+                else cfg.official_observation_refresh_minutes
+            ),
             "riferimenti",
             cache_minutes=cfg.arsial_cache_hours * 60,
-            continuity="CFR Lazio operativo; archivio SIARL se valido",
+            continuity=(
+                f"Verifica automatica ogni {cfg.arsial_probe_hours} h; "
+                "CFR Lazio operativo; archivio SIARL se valido"
+                if cfg.arsial_auto_probe
+                else "CFR Lazio operativo; archivio SIARL se valido"
+            ),
         ),
         SourceDefinition(
             "cfr_lazio",
@@ -177,8 +186,9 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             "system_health",
             "Controllo salute automatico",
             True,
-            30,
+            60,
             "protezione",
+            cache_minutes=3 * 60,
             continuity="Render riavvia l'app; GitHub verifica dati e DB",
         ),
         SourceDefinition(

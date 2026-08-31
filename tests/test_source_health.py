@@ -127,7 +127,11 @@ def test_suspended_arsial_does_not_keep_showing_historical_portal_failures(
             engine=sqlite_engine,
         )
 
-    cfg = replace(Settings.from_env(), arsial_observations_enabled=False)
+    cfg = replace(
+        Settings.from_env(),
+        arsial_observations_enabled=False,
+        arsial_observations_mode="disabled",
+    )
     health = load_source_health(cfg).set_index("source")
 
     assert health.loc["arsial_siarl", "display_status"] == "disabled"
@@ -139,6 +143,29 @@ def test_unattempted_automatic_protection_jobs_are_scheduled(sqlite_engine):
     assert health.loc["database_backup", "display_status"] == "scheduled"
     assert health.loc["github_backup", "display_status"] == "scheduled"
     assert health.loc["system_health", "display_status"] == "scheduled"
+    assert health.loc["arsial_siarl", "display_status"] == "scheduled"
+
+
+def test_automatic_arsial_probe_exposes_external_outage_after_first_failure(
+    sqlite_engine,
+):
+    cfg = replace(
+        Settings.from_env(),
+        arsial_observations_enabled=False,
+        arsial_observations_mode="auto",
+    )
+    assert record_source_result(
+        "arsial_siarl",
+        success=False,
+        error="portale istituzionale non raggiungibile",
+        engine=sqlite_engine,
+    )
+
+    health = load_source_health(cfg).set_index("source")
+
+    assert health.loc["arsial_siarl", "display_status"] == "external_unavailable"
+    assert health.loc["arsial_siarl", "enabled"]
+    assert "Verifica automatica" in health.loc["arsial_siarl", "continuity"]
 
 
 def test_recent_archived_data_remains_usable_after_repeated_provider_failures(
@@ -224,3 +251,7 @@ def test_v43_source_catalog_labels_official_radar_and_climate_roles():
     assert "1991–2020" in catalog["climatology_era5_land"].label
     assert catalog["github_backup"].expected_minutes == 24 * 60
     assert catalog["dpc_radar_local"].cache_minutes == 30
+    assert catalog["arsial_siarl"].enabled is True
+    assert catalog["arsial_siarl"].expected_minutes == 6 * 60
+    assert catalog["system_health"].expected_minutes == 60
+    assert catalog["system_health"].cache_minutes == 3 * 60

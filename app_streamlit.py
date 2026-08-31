@@ -410,6 +410,74 @@ div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background:var(--s
   color:var(--ink) !important; border-color:var(--line) !important; }
 [data-testid="stDownloadButton"] button { background:var(--control-bg) !important; color:var(--ink) !important;
   border-color:var(--line) !important; }
+
+/* Complete widget palette. Streamlit/BaseWeb can otherwise inherit the OS
+   colour scheme after hydration, producing dark number fields on the light
+   theme and low-contrast form buttons. These selectors intentionally cover
+   the stable public test IDs as well as their input descendants. */
+.stApp [data-testid="stNumberInputContainer"],
+.stApp [data-testid="stTextInputRootElement"],
+.stApp [data-testid="stTextInput"] > div > div,
+.stApp [data-baseweb="input"],
+.stApp [data-baseweb="select"] > div {
+  background:var(--control-bg) !important;
+  color:var(--ink) !important;
+  border-color:var(--line) !important;
+  color-scheme:inherit !important;
+}
+.stApp [data-testid="stNumberInputContainer"] input,
+.stApp [data-testid="stNumberInputField"],
+.stApp [data-testid="stTextInput"] input,
+.stApp [data-baseweb="input"] input {
+  background:transparent !important;
+  color:var(--ink) !important;
+  -webkit-text-fill-color:var(--ink) !important;
+  caret-color:var(--blue) !important;
+  opacity:1 !important;
+}
+.stApp [data-testid^="stNumberInputStep"] {
+  background:var(--surface-soft) !important;
+  color:var(--ink) !important;
+  border-color:var(--line) !important;
+}
+.stApp [data-testid^="stNumberInputStep"] *,
+.stApp [data-testid^="stNumberInputStep"] svg {
+  color:var(--ink) !important;
+  fill:currentColor !important;
+  opacity:1 !important;
+}
+.stApp [data-testid="stFormSubmitButton"] button,
+.stApp button[data-testid="stBaseButton-secondaryFormSubmit"],
+.stApp [data-testid="stBaseButton-secondaryFormSubmit"] {
+  background:var(--control-bg) !important;
+  color:var(--ink) !important;
+  border:1px solid var(--line) !important;
+  opacity:1 !important;
+}
+.stApp [data-testid="stFormSubmitButton"] button *,
+.stApp [data-testid="stBaseButton-secondaryFormSubmit"] * {
+  color:var(--ink) !important;
+  opacity:1 !important;
+}
+.stApp [data-testid="stFormSubmitButton"] button:disabled,
+.stApp [data-testid="stBaseButton-secondaryFormSubmit"]:disabled {
+  background:var(--surface-soft) !important;
+  color:var(--muted) !important;
+  -webkit-text-fill-color:var(--muted) !important;
+  opacity:1 !important;
+  cursor:not-allowed !important;
+}
+.stApp [data-testid="stCaptionContainer"],
+.stApp [data-testid="stCaptionContainer"] * {
+  color:var(--muted) !important;
+  opacity:1 !important;
+}
+.stApp input::placeholder,
+.stApp textarea::placeholder {
+  color:var(--muted) !important;
+  -webkit-text-fill-color:var(--muted) !important;
+  opacity:1 !important;
+}
 @media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
 @media(max-width:1050px){.current-grid{grid-template-columns:repeat(3,minmax(0,1fr));}}
 @media(max-width:680px){
@@ -4117,7 +4185,7 @@ with tab_forecast:
         reference_scores = reference_score_data()
         official_stations = official_station_data()
         enabled_reference_sources = {"awc_metar"}
-        if CFG.arsial_observations_enabled:
+        if CFG.arsial_polling_enabled:
             enabled_reference_sources.add("arsial_siarl")
         if CFG.cfr_observations_enabled:
             enabled_reference_sources.add("cfr_lazio")
@@ -4135,8 +4203,11 @@ with tab_forecast:
             "cfr_lazio": "CFR Lazio · MeteoHub",
         }
         active_reference_names = ["Fiumicino e Ciampino"]
-        if CFG.arsial_observations_enabled:
-            active_reference_names.append("ARSIAL Roma-Lanciani")
+        if CFG.arsial_polling_enabled:
+            active_reference_names.append(
+                "ARSIAL Roma-Lanciani"
+                + (" · verifica automatica" if CFG.arsial_auto_probe else "")
+            )
         if CFG.cfr_observations_enabled:
             active_reference_names.append("CFR Roma Monte Mario via MeteoHub")
         cfr_status_caption = (
@@ -5546,6 +5617,67 @@ with tab_system:
         "Schema dati v8 · migrazioni additive · controllo Render continuo + verifica "
         "indipendente GitHub ogni 30 minuti."
     )
+    status_labels = {
+        "online": "Operativa",
+        "delayed": "In ritardo",
+        "cached": "Archivio disponibile",
+        "external_unavailable": "Fonte esterna indisponibile",
+        "offline": "Non disponibile",
+        "waiting": "In attesa",
+        "manual": "Manuale · mai eseguito",
+        "scheduled": "Pianificata",
+        "disabled": "Disattivata",
+    }
+    if not sources.empty:
+        protection_labels = {
+            "online": "Operativo",
+            "delayed": "Ultima verifica valida",
+            "cached": "Ultima verifica valida",
+            "scheduled": "Pianificato",
+            "waiting": "In attesa",
+            "offline": "Non disponibile",
+            "external_unavailable": "Non disponibile",
+            "disabled": "Disattivato",
+        }
+
+        def _protection_summary(source_name: str) -> tuple[str, str]:
+            selected = sources[sources["source"].eq(source_name)]
+            if selected.empty:
+                return "In attesa", "nessuna telemetria"
+            row = selected.iloc[0]
+            state = str(row.get("display_status") or "waiting")
+            success = _local_time(row.get("last_success_at"))
+            detail = (
+                "prima esecuzione programmata"
+                if success == "—" and state == "scheduled"
+                else f"ultimo successo {success}"
+                if success != "—"
+                else "nessun esito valido"
+            )
+            return protection_labels.get(state, "Da controllare"), detail
+
+        health_label, health_detail = _protection_summary("system_health")
+        backup_label, backup_detail = _protection_summary("github_backup")
+        data_sources = sources[
+            sources["enabled"].fillna(False)
+            & sources["category"].ne("protezione")
+        ]
+        usable_sources = data_sources[
+            data_sources["display_status"].isin({"online", "cached", "delayed"})
+        ]
+        protection_columns = st.columns(3)
+        protection_columns[0].metric(
+            "Controllo automatico", health_label, health_detail, delta_color="off"
+        )
+        protection_columns[1].metric(
+            "Backup cloud cifrato", backup_label, backup_detail, delta_color="off"
+        )
+        protection_columns[2].metric(
+            "Fonti utilizzabili",
+            f"{len(usable_sources)} / {len(data_sources)}",
+            "fallback inclusi; dettagli sotto",
+            delta_color="off",
+        )
     st.markdown("#### Fonti e processi indipendenti")
     st.caption(
         "Un errore di una fonte non interrompe le altre. Lo stato considera sia "
@@ -5554,17 +5686,6 @@ with tab_system:
     if sources.empty:
         st.info("Lo stato dettagliato comparirà dopo la prossima acquisizione.")
     else:
-        status_labels = {
-            "online": "Operativa",
-            "delayed": "In ritardo",
-            "cached": "Archivio disponibile",
-            "external_unavailable": "Fonte esterna indisponibile",
-            "offline": "Non disponibile",
-            "waiting": "In attesa",
-            "manual": "Manuale · mai eseguito",
-            "scheduled": "Pianificata",
-            "disabled": "Disattivata",
-        }
         category_labels = {
             "misure": "Misure",
             "previsioni": "Previsioni",
@@ -5580,6 +5701,12 @@ with tab_system:
             {"database_backup", "github_backup"}
         ) & sources["display_status"].eq("scheduled")
         readable_status.loc[scheduled_backup] = "Pianificata · ore 22:00"
+        scheduled_arsial = sources["source"].eq(
+            "arsial_siarl"
+        ) & sources["display_status"].eq("scheduled")
+        readable_status.loc[scheduled_arsial] = (
+            f"Verifica automatica · ogni {CFG.arsial_probe_hours} h"
+        )
         source_table = pd.DataFrame(
             {
                 "Componente": sources["label"],
@@ -5638,18 +5765,23 @@ with tab_system:
         if not arsial_state.empty and arsial_state.iloc[0] == "external_unavailable":
             st.warning(
                 "Il portale pubblico ARSIAL/SIARL al momento non restituisce un "
-                "export leggibile. Il connettore ritenta automaticamente ogni "
-                f"{CFG.official_observation_refresh_minutes} minuti; Ecowitt, METAR "
+                "export orario leggibile. Il connettore verifica automaticamente ogni "
+                f"{CFG.arsial_probe_hours} ore e si riattiva al primo campione valido; "
+                "Ecowitt, METAR "
                 "e previsioni continuano normalmente. Dopo il primo campione valido, "
                 f"l'archivio resta utilizzabile fino a {CFG.arsial_cache_hours} ore "
                 "durante eventuali nuovi disservizi."
             )
-        elif not CFG.arsial_observations_enabled:
+        elif not arsial_state.empty and arsial_state.iloc[0] == "scheduled":
             st.info(
-                "ARSIAL/SIARL è sospesa perché il suo export pubblico non è "
-                "attualmente affidabile. Il riferimento regionale operativo è "
-                "CFR Lazio via MeteoHub; il connettore SIARL resta disponibile "
-                "come opzione e può essere riattivato quando il servizio torna stabile."
+                "La verifica automatica ARSIAL/SIARL è attiva: il primo sondaggio "
+                f"utile verrà eseguito entro {CFG.arsial_probe_hours} ore. CFR Lazio "
+                "via MeteoHub resta il riferimento regionale operativo."
+            )
+        elif not CFG.arsial_polling_enabled:
+            st.info(
+                "ARSIAL/SIARL è disattivata dalla configurazione. CFR Lazio via "
+                "MeteoHub resta il riferimento regionale operativo."
             )
 
     st.markdown("#### Percorso V4 modulare")
@@ -5829,8 +5961,8 @@ with tab_system:
         )
 
 reference_attribution = " · riferimenti: Aviation Weather"
-if CFG.arsial_observations_enabled:
-    reference_attribution += " + [ARSIAL/SIARL](https://siarl.arsial.it/)"
+if CFG.arsial_polling_enabled:
+    reference_attribution += " + [ARSIAL/SIARL](https://siarl.arsial.it/) · auto"
 if CFG.cfr_observations_enabled:
     reference_attribution += " + CFR Lazio"
 st.caption(

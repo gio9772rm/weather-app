@@ -1,4 +1,4 @@
-# Meteo V4.5
+# Meteo V4.6
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -10,7 +10,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - controlli avanzati su intervalli fisici, salti anomali, sensori fermi e coerenza tra vento medio e raffica;
 - previsione esplicita **ItaliaMeteo/ARPAE ICON-2I a 2,2 km** per le prime 72 ore e Open‑Meteo best-match per completare l'orizzonte fino a 7 giorni, senza contare due volte le ore dipendenti dallo stesso modello;
 - secondo modello OpenWeather a 3 ore, quando è presente la relativa chiave;
-- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e **CFR Lazio via MeteoHub**, archiviate separatamente e usate come controlli statistici secondari; il connettore ARSIAL/SIARL resta disponibile ma è sospeso di default finché l'export pubblico non torna stabile;
+- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e **CFR Lazio via MeteoHub**, archiviate separatamente e usate come controlli statistici secondari; ARSIAL/SIARL viene verificata automaticamente ogni sei ore e inizia ad archiviare appena l'export pubblico torna valido;
 - archivio di ogni emissione, confronto con la stazione, validazione temporale recente, baseline di persistenza e affidabilità della probabilità di pioggia;
 - **Calibrazione 2.0** per variabile, orizzonte e regime meteorologico, combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
@@ -19,7 +19,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - nuova home **Oggi** con meteo dinamico, riepilogo in linguaggio naturale, timeline scorrevole, pioggia/vento/fiducia e tendenza settimanale;
 - indici orientativi per passeggiata, pollini, ricambio d'aria e astronomia, con il momento migliore e criteri espliciti;
 - qualità dell'aria europea, PM2.5, PM10, NO₂, ozono e pollini CAMS/Open‑Meteo, caricati soltanto quando si apre la scheda dedicata e senza nuove chiavi;
-- tema chiaro/scuro completo, tabelle semantiche a contrasto con intestazione fissa e passo selezionabile ogni 1, 3 o 6 ore;
+- tema chiaro/scuro completo, controlli nativi verificati WCAG AA, tabelle semantiche a contrasto con intestazione fissa e passo selezionabile ogni 1, 3 o 6 ore;
 - stato di vista, tema, città, intervallo e scheda conservato nell'URL per riaprire o salvare direttamente la stessa schermata;
 - ricerca meteo mondiale per città o CAP, con condizioni attuali, previsione internet a 7 giorni, grafico, CSV e mappa senza mescolare la stazione locale;
 - città preferite riapribili dall'URL e confronto giornaliero fra Roma e la località scelta;
@@ -38,7 +38,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
-- scheda **Sistema** con salute di ogni fonte, fallback disponibile, latenza, errori consecutivi, copertura a 5 minuti, anomalie e stato backup;
+- scheda **Sistema** con riepilogo immediato del controllo automatico, backup e fonti utilizzabili, seguito da fallback, latenza, errori consecutivi, copertura a 5 minuti e anomalie;
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
 - pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, distanza dalla Luna, ostacoli locali, profili ottica/camera, campo inquadrato, calendario ICS e diario CSV;
 - backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
@@ -57,7 +57,7 @@ flowchart TD
   OW["OpenWeather"] --> P
   ENS["ICON-EPS · ensemble"] --> P
   METAR["METAR ufficiali · LIRF/LIRA"] --> P
-  ARSIAL["ARSIAL/SIARL · opt-in sospesa"] -.-> P
+  ARSIAL["ARSIAL/SIARL · recupero ogni 6 h"] -.-> P
   CFR["CFR Lazio · MeteoHub"] --> P
   RAD["DPC · radar e fulmini locali"] --> P
   ERA["ERA5-Land · 1991–2020"] --> P
@@ -164,7 +164,9 @@ Backfill Ecowitt di 7 giorni:
 | `OFFICIAL_OBSERVATION_LOOKBACK_HOURS` | no | finestra riletta in modo idempotente, default 48 ore |
 | `OFFICIAL_SCORE_MAX_SHARE` | no | contributo massimo ufficiale quando esiste il punteggio Ecowitt, default 0,20 |
 | `OFFICIAL_MIN_OVERLAP_SAMPLES` | no | campioni simultanei per imparare la differenza tra sito remoto ed Ecowitt, default 24 |
-| `ARSIAL_OBSERVATIONS_ENABLED` | no | riattiva esplicitamente Roma-Lanciani come riferimento secondario, default `false` finché l'export pubblico non torna stabile |
+| `ARSIAL_OBSERVATIONS_ENABLED` | no | forza l'acquisizione ARSIAL a ogni ciclo ufficiale; normalmente resta `false` perché è sufficiente il recupero automatico |
+| `ARSIAL_OBSERVATIONS_MODE` | no | `auto` (default), `enabled` o `disabled`; in `auto` verifica il ritorno di un export valido senza martellare il portale |
+| `ARSIAL_PROBE_HOURS` | no | intervallo del sondaggio in modalità automatica, default 6 ore |
 | `ARSIAL_DASHBOARD_URL` | no | dashboard pubblica oraria SIARL; già configurata |
 | `ARSIAL_STATION_NAME` | no | stazione ARSIAL da selezionare, default `ROMA Lanciani-SEDE ARSIAL` |
 | `ARSIAL_TZ` | no | fuso dichiarato dalla dashboard oraria SIARL, default `UTC`; la UI converte poi in `Europe/Rome` |
@@ -211,7 +213,7 @@ La tabella di accuratezza distingue MAE storico e MAE di validazione e mostra lo
 
 Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugiada, umidità derivata, pressione, vento, raffiche e direzione entrano nella statistica ufficiale solo dopo almeno 24 osservazioni sovrapposte. Il peso considera anche la correlazione realmente misurata fra il riferimento e il sito Ecowitt: una stazione lontana con andamento poco coerente viene automaticamente attenuata. Nubi, visibilità e presenza di precipitazioni hanno un peso ancora più prudente, perché gli aeroporti rappresentano un'area diversa. La quantità di pioggia locale continua a dipendere soprattutto dalla Ecowitt; un METAR contribuisce solo quando pubblica realmente l'accumulo.
 
-ARSIAL usa esclusivamente gli export pubblici SIARL e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Poiché l'export Superset è attualmente instabile, `ARSIAL_OBSERVATIONS_ENABLED` è `false` per impostazione predefinita e la pagina Sistema la mostra come **Disattivata**, non come guasto della pipeline; CFR Lazio resta il riferimento regionale operativo. Se il connettore viene riattivato, prova prima le API e gli export dei grafici salvati, quindi la pagina dashboard. Se ogni percorso ufficiale fallisce, l'ultimo archivio valido resta consultabile per `ARSIAL_CACHE_HOURS`, viene mostrato come **Archivio disponibile** e non viene mai dichiarato live. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali.
+ARSIAL usa esclusivamente gli export pubblici SIARL e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Poiché l'export Superset è attualmente instabile, `ARSIAL_OBSERVATIONS_MODE=auto` esegue un solo sondaggio ogni `ARSIAL_PROBE_HOURS`: al primo campione orario valido il connettore archivia automaticamente, mentre CFR Lazio resta sempre il riferimento regionale operativo. La pagina Sistema distingue **Verifica automatica**, **Fonte esterna indisponibile** e **Archivio disponibile**, senza presentare il disservizio SIARL come guasto della pipeline. Il connettore prova prima le API e gli export dei grafici salvati, quindi la pagina dashboard. Se ogni percorso ufficiale fallisce, l'ultimo archivio valido resta consultabile per `ARSIAL_CACHE_HOURS` e non viene mai dichiarato live. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali.
 
 CFR Lazio è attivo tramite l'endpoint anonimo MeteoHub e il network `dpcn-lazio`: temperatura Kelvin, vento m/s, pressione Pa e precipitazione kg/m² vengono convertiti esplicitamente nelle unità interne. La fonte conserva il flag `official_ccby4` e resta una stazione remota di confronto. L'URL/token generico rimane disponibile soltanto come override; una risposta MeteoHub non valida è isolata e non blocca Ecowitt o il blend.
 

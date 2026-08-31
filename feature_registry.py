@@ -127,4 +127,25 @@ def features(cfg: Settings) -> tuple[Feature, ...]:
             True,
             "sessione browser + export ICS/CSV/JSON",
         ),
+        Feature(
+            "institutional_source_recovery",
+            "Recupero automatico fonti istituzionali",
+            "V4.6",
+            True,
+            "source_health + fallback CFR Lazio",
+        ),
+        Feature(
+            "health_overview",
+            "Salute automatica e continuità visibili",
+            "V4.6",
+            True,
+            "source_health + GitHub Actions + Render",
+        ),
+        Feature(
+            "contrast_contracts",
+            "Contrasto WCAG dei controlli nativi",
+            "V4.6",
+            True,
+            "contratti browser desktop/mobile",
+        ),
     )

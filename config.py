@@ -41,6 +41,11 @@ def _as_bool(value: str, default: bool) -> bool:
     return default
 
 
+def _as_choice(value: str, choices: set[str], default: str) -> str:
+    normalised = str(value or "").strip().lower()
+    return normalised if normalised in choices else default
+
+
 def _station_ids(value: str) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
@@ -87,10 +92,12 @@ class Settings:
     official_observation_lookback_hours: int = 48
     official_score_max_share: float = 0.20
     official_min_overlap_samples: int = 24
-    # SIARL remains available as an explicit opt-in connector. Its public
-    # Superset export is currently not reliable enough to poll by default;
-    # CFR Lazio via MeteoHub is the operational regional reference instead.
+    # SIARL remains an independent secondary reference. In automatic mode the
+    # unstable public export is probed infrequently and starts archiving as
+    # soon as it returns a valid table; CFR Lazio remains the live fallback.
     arsial_observations_enabled: bool = False
+    arsial_observations_mode: str = "auto"
+    arsial_probe_hours: int = 6
     arsial_dashboard_url: str = "https://siarl.arsial.it/bi/superset/dashboard/7"
     arsial_station_name: str = "ROMA Lanciani-SEDE ARSIAL"
     arsial_timezone: str = "UTC"
@@ -197,6 +204,15 @@ class Settings:
             arsial_observations_enabled=_as_bool(
                 _first_env("ARSIAL_OBSERVATIONS_ENABLED", default="false"), False
             ),
+            arsial_observations_mode=_as_choice(
+                _first_env("ARSIAL_OBSERVATIONS_MODE", default="auto"),
+                {"auto", "enabled", "disabled"},
+                "auto",
+            ),
+            arsial_probe_hours=max(
+                1,
+                min(24, _as_int(_first_env("ARSIAL_PROBE_HOURS"), 6)),
+            ),
             arsial_dashboard_url=_first_env(
                 "ARSIAL_DASHBOARD_URL",
                 default="https://siarl.arsial.it/bi/superset/dashboard/7",
@@ -294,6 +310,23 @@ class Settings:
     def has_station_credentials(self) -> bool:
         return bool(
             self.ecowitt_application_key and self.ecowitt_api_key and self.ecowitt_mac
+        )
+
+    @property
+    def arsial_polling_enabled(self) -> bool:
+        """Whether SIARL should be fetched or periodically auto-probed."""
+        return self.official_observations_enabled and (
+            self.arsial_observations_enabled
+            or self.arsial_observations_mode in {"auto", "enabled"}
+        )
+
+    @property
+    def arsial_auto_probe(self) -> bool:
+        """Whether SIARL is in low-frequency recovery mode."""
+        return (
+            self.official_observations_enabled
+            and not self.arsial_observations_enabled
+            and self.arsial_observations_mode == "auto"
         )
 
 

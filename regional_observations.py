@@ -905,7 +905,7 @@ def fetch_arsial_observations(
     cfg: Settings = settings,
     session: requests.Session | None = None,
 ) -> pd.DataFrame:
-    if not cfg.arsial_observations_enabled:
+    if not cfg.arsial_polling_enabled:
         return pd.DataFrame(columns=OBSERVATION_COLUMNS)
     own_session = session is None
     if session is None:

@@ -112,9 +112,9 @@ def probe_app(
 ) -> tuple[bool, str]:
     """Probe Streamlit through retries; return a redacted diagnostic."""
     own_session = session is None
-    session = session or build_session(retries=3)
+    session = session or build_session(retries=4)
     try:
-        response = session.get(health_endpoint(app_url), timeout=(5, 20))
+        response = session.get(health_endpoint(app_url), timeout=(5, 45))
         if 200 <= response.status_code < 400:
             return True, ""
         return False, f"endpoint web HTTP {response.status_code}"
@@ -154,7 +154,7 @@ def run_check(app_url: str = "") -> HealthReport:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Controllo salute Meteo V4.4")
+    parser = argparse.ArgumentParser(description="Controllo salute Meteo V4.6")
     parser.add_argument(
         "--app-url",
         default=os.getenv("APP_HEALTH_URL") or os.getenv("APP_URL") or "",

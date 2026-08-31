@@ -17,16 +17,95 @@ from urllib.request import urlopen
 import numpy as np
 import pandas as pd
 
-CASES = (
-    ("today-light-desktop", "today", "light", 1440, 1000),
-    ("system-dark-desktop", "system", "dark", 1440, 1000),
-    ("overview-light-desktop", "overview", "light", 1440, 1000),
-    ("astronomy-light-desktop", "astronomy", "light", 1440, 1000),
-    ("today-light-mobile", "today", "light", 390, 844),
-    ("system-dark-mobile", "system", "dark", 390, 844),
-    ("overview-dark-mobile", "overview", "dark", 390, 844),
-    ("astronomy-dark-mobile", "astronomy", "dark", 390, 844),
+CASES = tuple(
+    (f"{tab}-{theme}-{viewport}", tab, theme, width, height)
+    for tab in ("today", "system", "overview", "astronomy")
+    for theme in ("light", "dark")
+    for viewport, width, height in (
+        ("desktop", 1440, 1000),
+        ("mobile", 390, 844),
+    )
 )
+
+
+ASTRONOMY_CONTRAST_AUDIT = """() => {
+  const parse = value => {
+    const parts = String(value || '').match(/[\\d.]+/g) || [];
+    return {
+      r: Number(parts[0] || 0), g: Number(parts[1] || 0),
+      b: Number(parts[2] || 0), a: Number(parts[3] || 1),
+    };
+  };
+  const blend = (foreground, background, alpha) => ({
+    r: foreground.r * alpha + background.r * (1 - alpha),
+    g: foreground.g * alpha + background.g * (1 - alpha),
+    b: foreground.b * alpha + background.b * (1 - alpha),
+  });
+  const luminance = color => {
+    const channels = [color.r, color.g, color.b].map(value => {
+      const normalised = value / 255;
+      return normalised <= 0.04045
+        ? normalised / 12.92
+        : Math.pow((normalised + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const ratio = (foreground, background) => {
+    const first = luminance(foreground);
+    const second = luminance(background);
+    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+  };
+  const backgroundFor = element => {
+    let node = element;
+    while (node) {
+      const colour = parse(getComputedStyle(node).backgroundColor);
+      if (colour.a >= 0.98) return colour;
+      node = node.parentElement;
+    }
+    return {r: 255, g: 255, b: 255, a: 1};
+  };
+  const opacityFor = element => {
+    let opacity = 1;
+    let node = element;
+    while (node && node.matches && !node.matches('.stApp')) {
+      opacity *= Number(getComputedStyle(node).opacity || 1);
+      node = node.parentElement;
+    }
+    return opacity;
+  };
+  const visible = element => {
+    const style = getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && element.getClientRects().length > 0;
+  };
+  const selectors = [
+    '[data-testid="stNumberInputField"]',
+    '[data-testid="stTextInput"] input',
+    '[data-testid="stBaseButton-secondaryFormSubmit"]',
+    '[data-testid="stCaptionContainer"] p',
+  ];
+  const samples = [];
+  for (const selector of selectors) {
+    for (const element of [...document.querySelectorAll(selector)].filter(visible)) {
+      const style = getComputedStyle(element);
+      const background = backgroundFor(element);
+      const opacity = opacityFor(element);
+      const foreground = blend(parse(style.color), background, opacity);
+      samples.push({
+        selector,
+        contrast: ratio(foreground, background),
+        opacity,
+        backgroundLuminance: luminance(background),
+      });
+    }
+  }
+  const numberContainers = [...document.querySelectorAll(
+    '[data-testid="stNumberInputContainer"]'
+  )].filter(visible).map(element => ({
+    backgroundLuminance: luminance(backgroundFor(element)),
+  }));
+  return {samples, numberContainers};
+}"""
 
 
 def _available_port() -> int:
@@ -354,6 +433,55 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                     raise AssertionError(
                                         f"{name}: controllo astronomico mancante: {label}"
                                     )
+                            for label in (
+                                "Oggetto personalizzato · RA/Dec",
+                                "Attrezzatura e campo inquadrato",
+                            ):
+                                summary = page.locator(
+                                    '[data-testid="stExpander"] summary'
+                                ).filter(has_text=label).first
+                                if summary.count() != 1:
+                                    raise AssertionError(
+                                        f"{name}: expander non individuato: {label}"
+                                    )
+                                details = summary.locator("xpath=..")
+                                if details.get_attribute("open") is None:
+                                    summary.click()
+                            page.wait_for_selector(
+                                '[data-testid="stNumberInputField"]', timeout=15_000
+                            )
+                            audit = page.evaluate(ASTRONOMY_CONTRAST_AUDIT)
+                            if not audit["samples"] or not audit["numberContainers"]:
+                                raise AssertionError(
+                                    f"{name}: controlli astronomici non verificabili"
+                                )
+                            low_contrast = [
+                                sample
+                                for sample in audit["samples"]
+                                if sample["contrast"] < 4.5
+                            ]
+                            if low_contrast:
+                                raise AssertionError(
+                                    f"{name}: contrasto controlli sotto WCAG AA: "
+                                    f"{low_contrast[:3]}"
+                                )
+                            faded = [
+                                sample
+                                for sample in audit["samples"]
+                                if "stCaptionContainer" in sample["selector"]
+                                and sample["opacity"] < 0.99
+                            ]
+                            if faded:
+                                raise AssertionError(
+                                    f"{name}: didascalie attenuate dal tema: {faded[:3]}"
+                                )
+                            if theme == "light" and any(
+                                item["backgroundLuminance"] < 0.75
+                                for item in audit["numberContainers"]
+                            ):
+                                raise AssertionError(
+                                    f"{name}: input numerici ancora scuri nel tema chiaro"
+                                )
                     finally:
                         page.screenshot(path=str(screenshot), full_page=True)
                         page.close()
@@ -374,7 +502,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.5")
+    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.6")
     parser.add_argument("--output", default="visual-artifacts")
     args = parser.parse_args()
     results = run_visual_checks(args.output)
