@@ -221,6 +221,18 @@ def test_astronomy_pro_planner_renders_with_forecast_data(
         "Esporta o ripristina la configurazione",
     } <= {item.label for item in app.expander}
     planner_markup = "\n".join(item.value for item in app.markdown)
+    assert "Piano della notte" in planner_markup
+    assert any(item.label == "Notte che inizia il" for item in app.date_input)
+    assert {"Dalle", "Alle"} <= {item.label for item in app.time_input}
+    active_profile = next(
+        item for item in app.selectbox if item.label == "Profilo attivo"
+    )
+    assert active_profile.value == "Setup Tripletto"
+    assert any(item.label == "Pannello inferiore del grafico" for item in app.selectbox)
+    assert any(
+        item.label == "Scarica il piano dettagliato (CSV)"
+        for item in app.download_button
+    )
     assert ">nan<" not in planner_markup.lower()
     for english_day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"):
         assert f">{english_day} " not in planner_markup

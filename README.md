@@ -1,4 +1,4 @@
-# Meteo V4.6
+# Meteo V4.7
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -40,7 +40,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - scheda **Sistema** con riepilogo immediato del controllo automatico, backup e fonti utilizzabili, seguito da fallback, latenza, errori consecutivi, copertura a 5 minuti e anomalie;
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
-- pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, distanza dalla Luna, ostacoli locali, profili ottica/camera, campo inquadrato, calendario ICS e diario CSV;
+- pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, massa d'aria, distanza dalla Luna, ostacoli locali, profili ottica/camera, simulatore del campo inquadrato, atlante CDS opzionale, piano notturno multi-target in ora locale, calendario ICS e CSV;
 - backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
 - controllo salute indipendente a ogni merge e ogni 30 minuti; se GitHub ritarda, la UI distingue per 24 ore l'ultimo esito valido dal controllo continuo Render;
 - issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
@@ -297,7 +297,13 @@ La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario
 
 **Astronomia Pro** aggiunge proxy previsionali di trasparenza e stabilità usando nuvolosità media/alta, visibilità, CAPE, umidità a 700 hPa, vento del jet a 300 hPa e rischio condensa. Quando questi campi non sono disponibili il punteggio base continua a funzionare; quando sono presenti incidono in modo limitato e tracciabile. Non viene stimato né dichiarato un seeing in arcosecondi.
 
-Il **Pianificatore Astronomia Pro** combina queste condizioni con coordinate celesti del catalogo locale oppure target RA/Dec inseriti dall'utente, altezza/azimut orari e separazione angolare dalla Luna. La maschera dell'orizzonte interpola otto direzioni locali; i profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), e il suggerimento d'inquadratura restano indicativi.
+Il **Pianificatore Astronomia Pro** combina queste condizioni con coordinate celesti del catalogo locale oppure target RA/Dec inseriti dall'utente, altezza/azimut, massa d'aria e separazione angolare dalla Luna. L'utente sceglie data, orario iniziale/finale e passo da 15/30/60 minuti; la notte può attraversare mezzanotte e cambi CET/CEST senza spostare le curve. La magnitudine resta un dato intrinseco del soggetto ed è mostrata in tabella e nei tooltip, non come falsa serie variabile nel tempo.
+
+La maschera dell'orizzonte interpola otto direzioni locali; i profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Il simulatore confronta il rettangolo ruotato del sensore con l'ingombro apparente, quantifica riempimento e margine e indica quando serve un mosaico o un riduttore. Su richiesta è disponibile anche l'atlante fotografico interattivo [CDS Aladin Lite](https://aladin.cds.unistra.fr/AladinLite/doc/): riceve soltanto RA/Dec celesti, lascia intatti logo e attribuzione CDS e non sostituisce il fallback geometrico. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), restano indicative.
+
+La sessione parte con il preset modificabile **Tripletto 80/480 + 571MC-Pro**, riduttore 0,8×, sensore 23,5 × 15,7 mm e pixel 3,76 µm; il preset non viene scritto nel database e può essere sostituito o esportato dal browser.
+
+Il piano notturno confronta fino a cinque soggetti per mantenere il grafico leggibile su mobile. Altezza e orizzonte occupano il pannello principale; il pannello inferiore può mostrare qualità, massa d'aria o distanza dalla Luna. Nuvole, Luna, azimut, magnitudine e altri valori restano leggibili nei tooltip e nel riepilogo. Se una parte della notte non è coperta dal forecast, il grafico conserva i calcoli astronomici e dichiara esplicitamente che lo score residuo è soltanto geometrico.
 
 Target personali, attrezzatura, orizzonte e diario rimangono nella sessione browser. Possono essere esportati come JSON/CSV e la finestra selezionata come calendario ICS; nessuna coordinata terrestre, nota o profilo viene scritto nel repository pubblico. L'evento ICS è salvato in UTC standard così il calendario lo apre all'ora corretta `Europe/Rome` anche durante i cambi d'ora.
 
@@ -330,6 +336,10 @@ I timestamp senza fuso vengono interpretati come `Europe/Rome`; è possibile cam
 ## Migrazione e pubblicazione
 
 Per provare e pubblicare questa versione segui [MIGRAZIONE_V4.md](MIGRAZIONE_V4.md): mantiene Render sulla V3 finché la V4 non viene approvata e descrive il ripristino senza riscrivere la cronologia. La precedente [MIGRAZIONE_PASSO_PASSO.md](MIGRAZIONE_PASSO_PASSO.md) resta come riferimento storico della prima installazione V3.
+
+Per trasformare la dashboard attuale in un sito promosso al pubblico, usa la
+checklist [PUBBLICAZIONE_SITO.md](PUBBLICAZIONE_SITO.md): separa vista pubblica e
+amministrazione, autenticazione, dominio/TLS, licenze, capacità e collaudo.
 
 ## Sicurezza e manutenzione
 

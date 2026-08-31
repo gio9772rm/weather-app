@@ -8,7 +8,7 @@ import io
 import json
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 import numpy as np
@@ -51,6 +51,23 @@ class FieldOfView:
     height_deg: float
     diagonal_deg: float
     image_scale_arcsec_px: float
+
+
+@dataclass(frozen=True)
+class FramingAssessment:
+    """Geometric relationship between a target footprint and the camera sensor."""
+
+    field_width_arcmin: float
+    field_height_arcmin: float
+    target_width_arcmin: float | None
+    target_height_arcmin: float | None
+    rotation_deg: float
+    width_fill_percent: float | None
+    height_fill_percent: float | None
+    area_fill_percent: float | None
+    minimum_margin_arcmin: float | None
+    fits: bool | None
+    status: str
 
 
 TARGETS = (
@@ -192,6 +209,125 @@ def field_of_view(profile: EquipmentProfile) -> FieldOfView:
     )
 
 
+def resolve_targets(
+    selected_targets: Iterable[str],
+    custom_targets: Iterable[SkyTarget] = (),
+) -> list[SkyTarget]:
+    """Resolve UI labels to catalogue objects while preserving selection order."""
+    targets = {**TARGET_BY_NAME, **{target.name: target for target in custom_targets}}
+    return [targets[name] for name in _target_names(selected_targets, targets)]
+
+
+def framing_assessment(
+    target: SkyTarget,
+    profile: EquipmentProfile,
+    *,
+    rotation_deg: float = 0,
+) -> FramingAssessment:
+    """Evaluate a target ellipse inside a rotated rectangular camera field.
+
+    Catalogue dimensions are treated as an indicative, axis-aligned ellipse.
+    Rotating the sensor therefore changes the occupied width and height without
+    pretending to know the object's photographic position angle.
+    """
+    view = field_of_view(profile)
+    field_width = view.width_deg * 60
+    field_height = view.height_deg * 60
+    rotation = float(rotation_deg) % 180
+    if target.angular_width_arcmin is None or target.angular_height_arcmin is None:
+        return FramingAssessment(
+            field_width_arcmin=field_width,
+            field_height_arcmin=field_height,
+            target_width_arcmin=None,
+            target_height_arcmin=None,
+            rotation_deg=rotation,
+            width_fill_percent=None,
+            height_fill_percent=None,
+            area_fill_percent=None,
+            minimum_margin_arcmin=None,
+            fits=None,
+            status="Dimensioni del soggetto non disponibili",
+        )
+
+    target_width = float(target.angular_width_arcmin)
+    target_height = float(target.angular_height_arcmin)
+    samples = np.linspace(0, 2 * np.pi, 721)
+    target_x = target_width / 2 * np.cos(samples)
+    target_y = target_height / 2 * np.sin(samples)
+    angle = np.deg2rad(rotation)
+    sensor_x = target_x * np.cos(angle) + target_y * np.sin(angle)
+    sensor_y = -target_x * np.sin(angle) + target_y * np.cos(angle)
+    occupied_width = float(2 * np.max(np.abs(sensor_x)))
+    occupied_height = float(2 * np.max(np.abs(sensor_y)))
+    width_fill = occupied_width / field_width * 100
+    height_fill = occupied_height / field_height * 100
+    area_fill = (
+        np.pi * target_width * target_height / 4 / (field_width * field_height) * 100
+    )
+    margin = min(
+        (field_width - occupied_width) / 2,
+        (field_height - occupied_height) / 2,
+    )
+    fits = width_fill <= 100 and height_fill <= 100
+    maximum_fill = max(width_fill, height_fill)
+    if not fits:
+        status = "Fuori campo · valuta rotazione, riduttore o mosaico"
+    elif maximum_fill > 90:
+        status = "Inquadratura stretta · margine ridotto"
+    elif maximum_fill < 8:
+        status = "Soggetto molto piccolo nel campo"
+    else:
+        status = "Inquadratura compatibile"
+    return FramingAssessment(
+        field_width_arcmin=field_width,
+        field_height_arcmin=field_height,
+        target_width_arcmin=target_width,
+        target_height_arcmin=target_height,
+        rotation_deg=rotation,
+        width_fill_percent=float(width_fill),
+        height_fill_percent=float(height_fill),
+        area_fill_percent=float(area_fill),
+        minimum_margin_arcmin=float(margin),
+        fits=bool(fits),
+        status=status,
+    )
+
+
+def framing_geometry(
+    target: SkyTarget,
+    profile: EquipmentProfile,
+    *,
+    rotation_deg: float = 0,
+) -> dict[str, tuple[float, ...]]:
+    """Return sensor and target outlines in arcminutes for a Plotly preview."""
+    assessment = framing_assessment(target, profile, rotation_deg=rotation_deg)
+    half_width = assessment.field_width_arcmin / 2
+    half_height = assessment.field_height_arcmin / 2
+    corners_x = np.asarray(
+        [-half_width, half_width, half_width, -half_width, -half_width], dtype=float
+    )
+    corners_y = np.asarray(
+        [-half_height, -half_height, half_height, half_height, -half_height],
+        dtype=float,
+    )
+    angle = np.deg2rad(assessment.rotation_deg)
+    sensor_x = corners_x * np.cos(angle) - corners_y * np.sin(angle)
+    sensor_y = corners_x * np.sin(angle) + corners_y * np.cos(angle)
+    if assessment.target_width_arcmin is None:
+        target_x = np.asarray([0.0])
+        target_y = np.asarray([0.0])
+    else:
+        samples = np.linspace(0, 2 * np.pi, 241)
+        target_x = assessment.target_width_arcmin / 2 * np.cos(samples)
+        target_y = assessment.target_height_arcmin / 2 * np.sin(samples)
+    return {
+        "sensor_x": tuple(sensor_x.tolist()),
+        "sensor_y": tuple(sensor_y.tolist()),
+        "target_x": tuple(target_x.tolist()),
+        "target_y": tuple(target_y.tolist()),
+    }
+
+
 def framing_status(target: SkyTarget, view: FieldOfView | None) -> str:
     """Return a conservative framing hint from indicative catalogue dimensions."""
     if view is None:
@@ -319,6 +455,379 @@ def _target_names(values: Iterable[str], targets: dict[str, SkyTarget]) -> list[
         if name in targets and name not in selected:
             selected.append(name)
     return selected
+
+
+def local_night_window(
+    observing_date: date,
+    start_time: time,
+    end_time: time,
+    timezone_name: str = "Europe/Rome",
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Build a timezone-aware observing interval, including midnight crossing."""
+    if not isinstance(observing_date, date):
+        observing_date = pd.Timestamp(observing_date).date()
+    start_clock = (
+        start_time if isinstance(start_time, time) else pd.Timestamp(start_time).time()
+    )
+    end_clock = (
+        end_time if isinstance(end_time, time) else pd.Timestamp(end_time).time()
+    )
+    end_date = observing_date + timedelta(days=end_clock <= start_clock)
+    start = pd.Timestamp(datetime.combine(observing_date, start_clock)).tz_localize(
+        timezone_name, ambiguous=True, nonexistent="shift_forward"
+    )
+    end = pd.Timestamp(datetime.combine(end_date, end_clock)).tz_localize(
+        timezone_name, ambiguous=True, nonexistent="shift_forward"
+    )
+    duration = end - start
+    if duration <= pd.Timedelta(0) or duration > pd.Timedelta(hours=16):
+        raise ValueError("La finestra notturna deve durare da 15 minuti a 16 ore")
+    if duration < pd.Timedelta(minutes=15):
+        raise ValueError("La finestra notturna deve durare almeno 15 minuti")
+    return start, end
+
+
+_TRACK_WEATHER_COLUMNS = (
+    "astro_score",
+    "clouds",
+    "cloud_low",
+    "cloud_mid",
+    "cloud_high",
+    "dew_risk",
+    "wind_kmh",
+    "visibility_m",
+    "precip_probability",
+    "transparency_proxy",
+    "stability_proxy",
+)
+
+
+def _interpolate_track_weather(
+    astronomy: pd.DataFrame, times: pd.DatetimeIndex
+) -> pd.DataFrame:
+    """Interpolate forecast fields without bridging long or uncovered gaps."""
+    output = pd.DataFrame(index=times)
+    for column in _TRACK_WEATHER_COLUMNS:
+        output[column] = np.nan
+    if astronomy.empty or "valid_time" not in astronomy:
+        return output
+    source = astronomy.copy()
+    source["valid_time"] = pd.to_datetime(
+        source["valid_time"], utc=True, errors="coerce"
+    )
+    source = (
+        source.dropna(subset=["valid_time"])
+        .drop_duplicates("valid_time", keep="last")
+        .sort_values("valid_time")
+    )
+    if source.empty:
+        return output
+    target_ns = times.asi8.astype(float)
+    max_distance_ns = pd.Timedelta(minutes=90).value
+    for column in _TRACK_WEATHER_COLUMNS:
+        if column not in source:
+            continue
+        values = pd.to_numeric(source[column], errors="coerce")
+        valid = values.notna()
+        if not valid.any():
+            continue
+        source_ns = source.loc[valid, "valid_time"].array.asi8.astype(float)
+        source_values = values.loc[valid].to_numpy(dtype=float)
+        if len(source_ns) == 1:
+            interpolated = np.full(len(times), source_values[0], dtype=float)
+        else:
+            interpolated = np.interp(target_ns, source_ns, source_values)
+        insertion = np.searchsorted(source_ns, target_ns)
+        left_index = np.clip(insertion - 1, 0, len(source_ns) - 1)
+        right_index = np.clip(insertion, 0, len(source_ns) - 1)
+        distance = np.minimum(
+            np.abs(target_ns - source_ns[left_index]),
+            np.abs(source_ns[right_index] - target_ns),
+        )
+        covered = (
+            (target_ns >= source_ns[0])
+            & (target_ns <= source_ns[-1])
+            & (distance <= max_distance_ns)
+        )
+        output[column] = np.where(covered, interpolated, np.nan)
+    return output
+
+
+def _airmass(altitude_deg: np.ndarray) -> np.ndarray:
+    """Kasten-Young optical airmass; undefined below the astronomical horizon."""
+    altitude = np.asarray(altitude_deg, dtype=float)
+    output = np.full_like(altitude, np.nan, dtype=float)
+    visible = altitude > 0
+    angle = altitude[visible]
+    output[visible] = 1 / (
+        np.sin(np.deg2rad(angle)) + 0.50572 * np.power(angle + 6.07995, -1.6364)
+    )
+    return output
+
+
+def night_plan_tracks(
+    astronomy: pd.DataFrame,
+    cfg: Settings,
+    selected_targets: Iterable[str],
+    *,
+    start: Any,
+    end: Any,
+    minimum_altitude: float = 25,
+    minimum_moon_separation: float = 30,
+    custom_targets: Iterable[SkyTarget] = (),
+    horizon_mask: dict[float, float] | None = None,
+    sample_minutes: int = 15,
+) -> pd.DataFrame:
+    """Build a multi-target, local-time night track independent of forecast gaps."""
+    columns = [
+        "target",
+        "name",
+        "category",
+        "magnitude",
+        "valid_time",
+        "local_time",
+        "altitude",
+        "azimuth",
+        "airmass",
+        "planner_score",
+        "weather_score",
+        "clouds",
+        "dew_risk",
+        "wind_kmh",
+        "transparency_proxy",
+        "stability_proxy",
+        "moon_separation",
+        "moon_illumination",
+        "horizon_altitude",
+        "horizon_clearance",
+        "visible",
+        "weather_available",
+    ]
+    targets = resolve_targets(selected_targets, custom_targets)
+    if not targets:
+        return pd.DataFrame(columns=columns)
+    start_time = pd.Timestamp(start)
+    end_time = pd.Timestamp(end)
+    start_time = (
+        start_time.tz_localize(
+            cfg.local_timezone, ambiguous=True, nonexistent="shift_forward"
+        )
+        if start_time.tzinfo is None
+        else start_time.tz_convert(cfg.local_timezone)
+    )
+    end_time = (
+        end_time.tz_localize(
+            cfg.local_timezone, ambiguous=True, nonexistent="shift_forward"
+        )
+        if end_time.tzinfo is None
+        else end_time.tz_convert(cfg.local_timezone)
+    )
+    if end_time <= start_time or end_time - start_time > pd.Timedelta(hours=16):
+        raise ValueError("Intervallo del piano notturno non valido")
+    interval = int(sample_minutes)
+    if interval not in {10, 15, 20, 30, 60}:
+        raise ValueError("Campionamento non supportato")
+    utc_times = pd.date_range(
+        start_time.tz_convert("UTC"),
+        end_time.tz_convert("UTC"),
+        freq=f"{interval}min",
+        inclusive="both",
+    )
+    weather = _interpolate_track_weather(astronomy, utc_times)
+    julian = _julian_date(utc_times)
+    moon_ra, moon_dec, moon_illumination = _moon_position(julian)
+    weather_score = weather["astro_score"].to_numpy(dtype=float)
+    rows: list[pd.DataFrame] = []
+    for target in targets:
+        altitude, azimuth = equatorial_altaz(
+            target.ra_deg,
+            target.dec_deg,
+            utc_times,
+            latitude=cfg.latitude,
+            longitude=cfg.longitude,
+        )
+        local_horizon = horizon_altitudes(azimuth, horizon_mask)
+        required_altitude = np.maximum(float(minimum_altitude), local_horizon)
+        visible = altitude >= required_altitude
+        separation = _angular_separation(
+            target.ra_deg, target.dec_deg, moon_ra, moon_dec
+        )
+        altitude_quality = (
+            np.clip(
+                (altitude - required_altitude) / np.maximum(90 - required_altitude, 1),
+                0,
+                1,
+            )
+            * 100
+        )
+        lunar_proximity = np.clip(
+            (minimum_moon_separation * 2 - separation)
+            / max(minimum_moon_separation * 2, 1),
+            0,
+            1,
+        )
+        lunar_penalty = moon_illumination / 100 * lunar_proximity * 35
+        geometry_score = altitude_quality - lunar_penalty
+        combined_score = np.where(
+            np.isfinite(weather_score),
+            weather_score * 0.72 + altitude_quality * 0.28 - lunar_penalty,
+            geometry_score,
+        )
+        combined_score = np.where(visible, np.clip(combined_score, 0, 100), 0)
+        target_frame = pd.DataFrame(
+            {
+                "target": target.name,
+                "name": target.common_name,
+                "category": target.category,
+                "magnitude": target.magnitude,
+                "valid_time": utc_times,
+                "local_time": utc_times.tz_convert(cfg.local_timezone),
+                "altitude": altitude,
+                "azimuth": azimuth,
+                "airmass": _airmass(altitude),
+                "planner_score": combined_score,
+                "weather_score": weather_score,
+                "clouds": weather["clouds"].to_numpy(dtype=float),
+                "dew_risk": weather["dew_risk"].to_numpy(dtype=float),
+                "wind_kmh": weather["wind_kmh"].to_numpy(dtype=float),
+                "transparency_proxy": weather["transparency_proxy"].to_numpy(
+                    dtype=float
+                ),
+                "stability_proxy": weather["stability_proxy"].to_numpy(dtype=float),
+                "moon_separation": separation,
+                "moon_illumination": moon_illumination,
+                "horizon_altitude": local_horizon,
+                "horizon_clearance": altitude - local_horizon,
+                "visible": visible,
+                "weather_available": np.isfinite(weather_score),
+            }
+        )
+        rows.append(target_frame)
+    return pd.concat(rows, ignore_index=True)[columns]
+
+
+def summarize_night_plan(
+    tracks: pd.DataFrame,
+    *,
+    equipment: EquipmentProfile | None = None,
+    custom_targets: Iterable[SkyTarget] = (),
+    rotation_deg: float = 0,
+) -> pd.DataFrame:
+    """Reduce detailed tracks to one truthful scheduling row per target."""
+    columns = [
+        "target",
+        "name",
+        "category",
+        "magnitude",
+        "best_time",
+        "max_altitude",
+        "best_azimuth",
+        "minimum_airmass",
+        "planner_score",
+        "moon_separation",
+        "visible_hours",
+        "weather_coverage",
+        "framing",
+        "status",
+    ]
+    if tracks.empty:
+        return pd.DataFrame(columns=columns)
+    target_lookup = {
+        **TARGET_BY_NAME,
+        **{target.name: target for target in custom_targets},
+    }
+    rows: list[dict[str, Any]] = []
+    for target_name, group in tracks.groupby("target", sort=False):
+        ordered = group.sort_values("valid_time").reset_index(drop=True)
+        visible = ordered[ordered["visible"].astype(bool)]
+        candidates = visible if not visible.empty else ordered
+        best_index = pd.to_numeric(
+            candidates["planner_score"], errors="coerce"
+        ).idxmax()
+        best = ordered.loc[best_index]
+        visible_flags = ordered["visible"].astype(bool)
+        interval_hours = (
+            ordered["valid_time"].diff().dt.total_seconds().fillna(0) / 3600
+        )
+        visible_hours = float(
+            interval_hours.where(
+                visible_flags & visible_flags.shift(fill_value=False), 0
+            ).sum()
+        )
+        weather_coverage = float(ordered["weather_available"].astype(bool).mean() * 100)
+        target = target_lookup.get(str(target_name))
+        status = "Fuori dalla finestra utile" if visible.empty else "Pianificabile"
+        if (
+            visible.empty
+            and pd.to_numeric(ordered["altitude"], errors="coerce").max() > 0
+        ):
+            status = "Sotto soglia o dietro ostacolo"
+        rows.append(
+            {
+                "target": target_name,
+                "name": best["name"],
+                "category": best["category"],
+                "magnitude": best["magnitude"],
+                "best_time": pd.NaT if visible.empty else best["local_time"],
+                "max_altitude": float(
+                    pd.to_numeric(ordered["altitude"], errors="coerce").max()
+                ),
+                "best_azimuth": float(best["azimuth"]),
+                "minimum_airmass": float(
+                    pd.to_numeric(visible["airmass"], errors="coerce").min()
+                )
+                if not visible.empty
+                else np.nan,
+                "planner_score": float(best["planner_score"]),
+                "moon_separation": float(best["moon_separation"]),
+                "visible_hours": float(visible_hours),
+                "weather_coverage": weather_coverage,
+                "framing": (
+                    "Profilo non impostato"
+                    if equipment is None
+                    else "Target non disponibile"
+                    if target is None
+                    else framing_assessment(
+                        target, equipment, rotation_deg=rotation_deg
+                    ).status
+                ),
+                "status": status,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        ["planner_score", "max_altitude"], ascending=[False, False]
+    )
+
+
+def night_plan_csv(tracks: pd.DataFrame) -> bytes:
+    """Export the selected night without terrestrial coordinates or private notes."""
+    columns = {
+        "target": "Oggetto",
+        "name": "Nome",
+        "magnitude": "Magnitudine",
+        "local_time": "Ora locale",
+        "altitude": "Altezza gradi",
+        "azimuth": "Azimut gradi",
+        "airmass": "Massa aria",
+        "planner_score": "Qualita",
+        "weather_score": "Meteo",
+        "clouds": "Nuvole percento",
+        "dew_risk": "Condensa percento",
+        "wind_kmh": "Vento kmh",
+        "moon_separation": "Distanza Luna gradi",
+        "moon_illumination": "Luna percento",
+        "horizon_altitude": "Orizzonte locale gradi",
+        "visible": "Visibile",
+        "weather_available": "Meteo disponibile",
+    }
+    available = [column for column in columns if column in tracks]
+    export = tracks[available].copy()
+    if "local_time" in export:
+        export["local_time"] = pd.to_datetime(
+            export["local_time"], errors="coerce"
+        ).map(lambda value: "" if pd.isna(value) else value.isoformat())
+    export = export.rename(columns=columns)
+    return export.to_csv(index=False, lineterminator="\n").encode("utf-8-sig")
 
 
 def plan_targets(

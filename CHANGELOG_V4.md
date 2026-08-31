@@ -1,5 +1,17 @@
 # Changelog Meteo V4
 
+## V4.7 · campo inquadrato e piano notturno
+
+- simulatore geometrico del sensore con rotazione, dimensioni apparenti del target, percentuale di riempimento, margine minimo e indicazione compatibile/stretto/mosaico;
+- preset di sessione immediatamente utilizzabile per Tripletto 80/480, riduttore 0,8× e 571MC-Pro, sempre modificabile e mai scritto nel database;
+- atlante fotografico CDS Aladin Lite opzionale e isolato, con DSS2, reticolo del sensore e ingombro del soggetto; il fallback geometrico resta sempre disponibile e nessuna coordinata terrestre viene inviata;
+- piano notturno configurabile per data, ora iniziale/finale e dettaglio 15/30/60 minuti, con attraversamento di mezzanotte e cambi CET/CEST;
+- confronto leggibile di massimo cinque soggetti con altezza e orizzonte locale, pannello secondario selezionabile tra qualità, massa d'aria e distanza dalla Luna, più tooltip per azimut, magnitudine, nuvole e separazione lunare;
+- riepilogo per target con finestra migliore, altezza massima, massa d'aria minima, ore utili, copertura meteo, inquadratura ed export CSV privo di coordinate terrestri;
+- in assenza di forecast restano disponibili i calcoli astronomici e lo score viene dichiarato geometrico, senza trasformare un buco di una fonte in un blocco del planner;
+- checklist versionata per la futura pubblicazione come sito: separazione area pubblica/amministrativa, autenticazione, dominio/TLS, licenze, capacità e collaudo;
+- restano esclusi notifiche meteo personali, attivazione di una seconda stazione e un secondo backup.
+
 ## V4.6 · recupero fonti, salute e accessibilità
 
 - ARSIAL/SIARL passa dalla sospensione fissa al recupero automatico: un sondaggio ogni sei ore evita di sovraccaricare il portale instabile e attiva l'archiviazione appena torna un export orario valido;

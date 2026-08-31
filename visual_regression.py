@@ -425,6 +425,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                         if tab == "astronomy":
                             for label in (
                                 "Pianificatore Astronomia Pro",
+                                "Piano della notte",
                                 "Oggetto personalizzato · RA/Dec",
                                 "Attrezzatura e campo inquadrato",
                                 "Orizzonte locale · ostacoli",
@@ -437,9 +438,11 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                 "Oggetto personalizzato · RA/Dec",
                                 "Attrezzatura e campo inquadrato",
                             ):
-                                summary = page.locator(
-                                    '[data-testid="stExpander"] summary'
-                                ).filter(has_text=label).first
+                                summary = (
+                                    page.locator('[data-testid="stExpander"] summary')
+                                    .filter(has_text=label)
+                                    .first
+                                )
                                 if summary.count() != 1:
                                     raise AssertionError(
                                         f"{name}: expander non individuato: {label}"
@@ -450,6 +453,27 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             page.wait_for_selector(
                                 '[data-testid="stNumberInputField"]', timeout=15_000
                             )
+                            save_profile = page.get_by_role(
+                                "button", name="Salva profilo nella sessione"
+                            )
+                            if save_profile.count() != 1:
+                                raise AssertionError(
+                                    f"{name}: salvataggio profilo ottico non disponibile"
+                                )
+                            save_profile.click()
+                            page.wait_for_function(
+                                "document.querySelectorAll('.js-plotly-plot').length >= 3",
+                                timeout=30_000,
+                            )
+                            chart_overflow = page.evaluate(
+                                "Math.max(...[...document.querySelectorAll('.js-plotly-plot')]"
+                                ".map(el => el.scrollWidth - el.clientWidth), 0)"
+                            )
+                            if chart_overflow > 3:
+                                raise AssertionError(
+                                    f"{name}: grafico astronomico eccede di "
+                                    f"{chart_overflow}px"
+                                )
                             audit = page.evaluate(ASTRONOMY_CONTRAST_AUDIT)
                             if not audit["samples"] or not audit["numberContainers"]:
                                 raise AssertionError(
@@ -502,7 +526,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.6")
+    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.7")
     parser.add_argument("--output", default="visual-artifacts")
     args = parser.parse_args()
     results = run_visual_checks(args.output)

@@ -11,12 +11,18 @@ from astronomy_planner import (
     equatorial_altaz,
     equipment_profile,
     field_of_view,
+    framing_assessment,
+    framing_geometry,
     horizon_altitudes,
+    local_night_window,
+    night_plan_csv,
+    night_plan_tracks,
     observing_calendar_ics,
     observing_log_csv,
     parse_planner_configuration,
     plan_targets,
     planner_configuration_json,
+    summarize_night_plan,
     target_labels,
 )
 from config import Settings
@@ -97,6 +103,118 @@ def test_equipment_field_of_view_and_sampling_use_effective_focal_length():
     assert 3.3 < view.width_deg < 3.4
     assert 2.2 < view.height_deg < 2.3
     assert 1.9 < view.image_scale_arcsec_px < 2.0
+
+
+def test_framing_preview_respects_sensor_rotation_and_closes_outline():
+    profile = equipment_profile(
+        name="APS-C",
+        telescope="Rifrattore",
+        camera="Camera",
+        aperture_mm=80,
+        focal_length_mm=400,
+        sensor_width_mm=23.5,
+        sensor_height_mm=15.6,
+        pixel_size_um=3.76,
+    )
+    target = custom_target(
+        "Esteso",
+        1.0,
+        40.0,
+        magnitude=5.0,
+        angular_width_arcmin=190,
+        angular_height_arcmin=60,
+    )
+
+    landscape = framing_assessment(target, profile, rotation_deg=0)
+    portrait = framing_assessment(target, profile, rotation_deg=90)
+    geometry = framing_geometry(target, profile, rotation_deg=30)
+
+    assert landscape.fits is True
+    assert portrait.fits is False
+    assert landscape.width_fill_percent > 90
+    assert geometry["sensor_x"][0] == geometry["sensor_x"][-1]
+    assert geometry["sensor_y"][0] == geometry["sensor_y"][-1]
+
+
+def test_local_night_window_crosses_midnight_and_preserves_dst_duration():
+    start, end = local_night_window(
+        pd.Timestamp("2026-10-24").date(),
+        pd.Timestamp("20:00").time(),
+        pd.Timestamp("06:00").time(),
+        "Europe/Rome",
+    )
+
+    assert start.strftime("%Y-%m-%d %H:%M %z") == "2026-10-24 20:00 +0200"
+    assert end.strftime("%Y-%m-%d %H:%M %z") == "2026-10-25 06:00 +0100"
+    assert end.tz_convert("UTC") - start.tz_convert("UTC") == pd.Timedelta(hours=11)
+
+
+def test_night_track_keeps_astronomy_when_weather_is_uncovered():
+    cfg = Settings.from_env()
+    target = custom_target("Polare", 2.5, 89.0, magnitude=2.0)
+    start, end = local_night_window(
+        pd.Timestamp("2026-08-31").date(),
+        pd.Timestamp("20:00").time(),
+        pd.Timestamp("22:00").time(),
+        cfg.local_timezone,
+    )
+
+    tracks = night_plan_tracks(
+        pd.DataFrame(),
+        cfg,
+        ["Polare · Oggetto personalizzato"],
+        start=start,
+        end=end,
+        custom_targets=[target],
+        sample_minutes=30,
+    )
+    summary = summarize_night_plan(tracks, custom_targets=[target])
+    exported = night_plan_csv(tracks).decode("utf-8-sig")
+
+    assert len(tracks) == 5
+    assert tracks["altitude"].between(-90, 90).all()
+    assert tracks["azimuth"].between(0, 360).all()
+    assert tracks["weather_available"].eq(False).all()
+    assert tracks["magnitude"].eq(2.0).all()
+    assert summary.iloc[0]["status"] == "Pianificabile"
+    assert summary.iloc[0]["weather_coverage"] == 0
+    assert "latitude" not in exported.casefold()
+    assert "longitude" not in exported.casefold()
+
+
+def test_night_track_interpolates_covered_weather_in_local_time():
+    cfg = Settings.from_env()
+    start, end = local_night_window(
+        pd.Timestamp("2026-08-31").date(),
+        pd.Timestamp("20:00").time(),
+        pd.Timestamp("22:00").time(),
+        cfg.local_timezone,
+    )
+    times = pd.date_range(start.tz_convert("UTC"), end.tz_convert("UTC"), freq="h")
+    astronomy = pd.DataFrame(
+        {
+            "valid_time": times,
+            "astro_score": [60, 80, 70],
+            "clouds": [40, 10, 20],
+            "dew_risk": [30, 20, 10],
+            "wind_kmh": [8, 6, 5],
+        }
+    )
+
+    tracks = night_plan_tracks(
+        astronomy,
+        cfg,
+        target_labels()[:2],
+        start=start,
+        end=end,
+        sample_minutes=30,
+    )
+
+    assert len(tracks) == 10
+    assert tracks["weather_available"].all()
+    assert set(pd.to_datetime(tracks["local_time"]).dt.hour) == {20, 21, 22}
+    assert tracks["clouds"].between(10, 40).all()
+    assert "magnitude" in tracks
 
 
 def test_horizon_mask_is_circular_and_can_reject_an_otherwise_visible_target():
