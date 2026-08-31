@@ -1,5 +1,15 @@
 # Changelog Meteo V4
 
+## V4.8 · orizzonte indicativo e diagnostica ambientale
+
+- stima opzionale dell'orizzonte da 96 campioni radiali Copernicus GLO-90 via Open-Meteo, mantenuta nella sessione e combinata con gli ostacoli manuali senza mai abbassarli;
+- grafico polare comparativo manuale/DEM/profilo effettivo e avvertenza esplicita sui limiti della risoluzione di 90 m per tetti, alberi e antenne vicini;
+- temperatura percepita all'ombra e punto di rugiada derivati dalle misure Ecowitt, aggiunti a hero, card espandibili, Panoramica e grafici Stazione; punto di rugiada aggiunto anche alle viste previsionali e città;
+- diagnostica temperatura/umidità con motivazione leggibile per valori fuori scala, salti troppo rapidi e sensori fermi;
+- telemetria Sensor Array corretta: `Normal/Normale` significa batteria carica e viene mostrato in verde, mentre ogni altro stato testuale indica un problema; le tensioni numeriche conservano le soglie esistenti;
+- il selettore attenuato della singola stazione è sostituito da una card attiva ad alto contrasto; il menu selezionabile comparirà automaticamente quando verrà registrata una seconda stazione;
+- nessuna migrazione distruttiva, nessuna coordinata aggiunta al repository e nessuna attivazione della seconda stazione.
+
 ## V4.7.2 · caricamento CDS senza avvisi bloccanti
 
 - Aladin Lite viene scaricato soltanto dopo la verifica WebGL2, impedendo alla libreria esterna di aprire avvisi JavaScript sui browser incompatibili;

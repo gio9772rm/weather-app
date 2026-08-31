@@ -20,6 +20,7 @@ from astral import Observer
 from astral.sun import sun
 
 from forecast_providers import WMO_DESCRIPTIONS_IT, build_session
+from weather_derived import dew_point_c
 
 
 class CityWeatherError(RuntimeError):
@@ -178,6 +179,7 @@ HOURLY_FIELDS = {
     "temperature_2m": "temp_c",
     "apparent_temperature": "feels_like_c",
     "relative_humidity_2m": "humidity",
+    "dew_point_2m": "dewpoint_c",
     "precipitation_probability": "precip_probability",
     "precipitation": "precipitation_mm",
     "rain": "rain_mm",
@@ -211,6 +213,7 @@ CURRENT_FIELDS = {
     "temperature_2m": "temp_c",
     "apparent_temperature": "feels_like_c",
     "relative_humidity_2m": "humidity",
+    "dew_point_2m": "dewpoint_c",
     "precipitation": "precipitation_mm",
     "rain": "rain_mm",
     "weather_code": "weather_code",
@@ -242,8 +245,17 @@ def parse_city_forecast(
         if pd.notna(code)
         else "Variabile"
     )
+    if _as_float(current.get("dewpoint_c")) is None:
+        current["dewpoint_c"] = dew_point_c(
+            pd.Series([current.get("temp_c")]),
+            pd.Series([current.get("humidity")]),
+        ).iloc[0]
 
     hourly = _frame_from_block(payload.get("hourly") or {}, timezone, HOURLY_FIELDS)
+    calculated_dewpoint = dew_point_c(hourly["temp_c"], hourly["humidity"])
+    hourly["dewpoint_c"] = pd.to_numeric(
+        hourly.get("dewpoint_c"), errors="coerce"
+    ).fillna(calculated_dewpoint)
     daily = _frame_from_block(payload.get("daily") or {}, timezone, DAILY_FIELDS)
     for column in ("sunrise", "sunset"):
         if column in daily:
@@ -371,6 +383,7 @@ def _metno_hourly(payload: dict[str, Any], timezone: str) -> pd.DataFrame:
     frame["precipitation_mm"] = frame["precipitation_mm"].clip(lower=0)
     frame["rain_mm"] = frame["rain_mm"].clip(lower=0)
     frame["precip_probability"] = frame["precip_probability"].clip(0, 100)
+    frame["dewpoint_c"] = dew_point_c(frame["temp_c"], frame["humidity"])
     return frame.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
 

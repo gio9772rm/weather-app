@@ -147,6 +147,16 @@ def _seed_database(path: Path) -> None:
         ":wind,:gust,:direction,0,0,0,:solar,:uv,'visual_fixture','ok')"
     )
     with get_engine().begin() as connection:
+        timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        connection.execute(
+            text(
+                "INSERT INTO station_profiles (station_id,display_name,timezone,"
+                "source,role,enabled,privacy_level,created_at,updated_at) VALUES ("
+                "'visual-primary','Stazione meteo Roma','Europe/Rome','visual_fixture',"
+                "'primary',1,'private_location',:timestamp,:timestamp)"
+            ),
+            {"timestamp": timestamp},
+        )
         connection.execute(statement, rows)
         issued_at = now.floor("h").strftime("%Y-%m-%dT%H:%M:%SZ")
         forecast_rows = []
@@ -336,9 +346,15 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             )
                         if tab == "today":
                             cards = page.locator("details.expandable-card")
-                            if cards.count() < 6:
+                            current_cards = page.locator("details.current-card")
+                            if current_cards.count() != 8 or cards.count() < 8:
                                 raise AssertionError(
                                     f"{name}: card espandibili mancanti"
+                                )
+                            station_card = page.locator(".station-active-card")
+                            if station_card.count() != 1:
+                                raise AssertionError(
+                                    f"{name}: riquadro stazione attiva mancante"
                                 )
                             first = cards.first
                             first.locator("summary").click()

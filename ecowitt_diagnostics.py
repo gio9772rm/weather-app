@@ -50,6 +50,25 @@ def _safe_name(value: Any) -> str:
     return (name or "sensor")[:80]
 
 
+def _battery_text_status(value: Any) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("value", value.get("val", value.get("v")))
+    if value is None or isinstance(value, (int, float)):
+        return None
+    rendered = str(value).strip().casefold()
+    if not rendered:
+        return None
+    if rendered in {"normal", "normale", "ok", "good", "charged", "carica"}:
+        return "ok"
+    try:
+        float(rendered)
+    except ValueError:
+        # Ecowitt uses "Normal" for a charged Sensor Array. Any other textual
+        # battery state is therefore a real warning, not an unknown value.
+        return "critical"
+    return None
+
+
 def _battery_status(value: float | None, unit: str) -> str:
     if value is None:
         return "unknown"
@@ -61,6 +80,18 @@ def _battery_status(value: float | None, unit: str) -> str:
             return "critical" if value <= 1.05 else "warning" if value <= 1.25 else "ok"
         return "critical" if value <= 2.35 else "warning" if value <= 2.55 else "ok"
     return "unknown"
+
+
+def telemetry_sensor_label(value: Any) -> str:
+    """Return a readable device label without exposing a hardware identifier."""
+    sensor = _safe_name(value)
+    if any(code in sensor for code in ("wh65", "wh69", "wh80", "wh90")):
+        return "Sensor Array"
+    if "console" in sensor or "gateway" in sensor or "gw" in sensor:
+        return "Console / gateway"
+    return (
+        sensor.replace("battery_", "").replace("radio_", "").replace("_", " ").title()
+    )
 
 
 def _signal_status(value: float | None, unit: str) -> str:
@@ -99,14 +130,22 @@ def extract_telemetry(
     rows: list[dict[str, Any]] = []
 
     def walk(node: Any, path: tuple[str, ...], metric_hint: str | None = None) -> None:
-        if len(path) > 5 or not isinstance(node, dict):
+        if len(path) > 5:
             return
+        if not isinstance(node, dict):
+            if metric_hint is None:
+                return
+            node = {"value": node}
         lowered_path = ".".join(path).casefold()
         if any(word in lowered_path for word in SECRET_WORDS):
             return
+        raw_value = node.get("value", node.get("val", node.get("v")))
         value = _safe_number(node)
+        text_battery_status = (
+            _battery_text_status(raw_value) if metric_hint == "battery" else None
+        )
         unit = str(node.get("unit") or node.get("u") or "")[:16]
-        if metric_hint and value is not None:
+        if metric_hint and (value is not None or text_battery_status is not None):
             node_time = pd.to_datetime(
                 node.get("time") or node.get("timestamp") or fallback_time,
                 utc=True,
@@ -117,7 +156,7 @@ def extract_telemetry(
             sensor_path = path[:-1] if path[-1] in {"value", "val", "v"} else path
             sensor = _safe_name("_".join(sensor_path[-2:]))
             status = (
-                _battery_status(value, unit)
+                text_battery_status or _battery_status(value, unit)
                 if metric_hint == "battery"
                 else _signal_status(value, unit)
             )
@@ -128,7 +167,7 @@ def extract_telemetry(
                     "sensor": sensor,
                     "metric": metric_hint,
                     "value": value,
-                    "unit": unit,
+                    "unit": unit or ("stato" if text_battery_status else ""),
                     "status": status,
                     "fetched_at": fetched.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
@@ -210,6 +249,7 @@ def diagnose_observations(
                     "coverage": 0.0,
                     "largest_gap_minutes": float("nan"),
                     "quality_flags": 0,
+                    "quality_note": "Nessun dato disponibile",
                 }
                 for label, column, unit in METRIC_DEFINITIONS
             ]
@@ -231,9 +271,36 @@ def diagnose_observations(
         age = _age_minutes(current, last_time)
         buckets = available["time"].dt.floor("5min").nunique()
         gaps = available["time"].sort_values().diff().dt.total_seconds().div(60)
-        flags = quality.astype(str).str.contains(
-            rf"(?:stuck_{re.escape(column)}|spike_{re.escape(column)})", regex=True
-        )
+        quality_text = quality.astype(str)
+        flag_patterns = {
+            "Valore invariato troppo a lungo": rf"stuck_{re.escape(column)}",
+            "Variazione troppo rapida": rf"spike_{re.escape(column)}",
+            "Valore fuori scala scartato": rf"range_filtered_{re.escape(column)}",
+        }
+        reason_masks = {
+            reason: quality_text.str.contains(pattern, regex=True)
+            for reason, pattern in flag_patterns.items()
+        }
+        flags = pd.Series(False, index=data.index)
+        for mask in reason_masks.values():
+            flags |= mask
+        direct_suspicious = pd.Series(False, index=data.index)
+        direct_reason = ""
+        if column in {"temp_c", "humidity"} and not available.empty:
+            limits = {"temp_c": (-45.0, 55.0), "humidity": (0.0, 100.0)}
+            minimum, maximum = limits[column]
+            direct_suspicious = values.notna() & ~values.between(minimum, maximum)
+            elapsed = data["time"].diff().dt.total_seconds().div(3600)
+            rate_limit = 15.0 if column == "temp_c" else 60.0
+            direct_suspicious |= values.diff().abs().div(elapsed).gt(
+                rate_limit
+            ) & elapsed.between(1 / 120, 1.0)
+            if direct_suspicious.any():
+                direct_reason = "Valore o variazione non plausibile"
+        flags |= direct_suspicious
+        reasons = [reason for reason, mask in reason_masks.items() if bool(mask.any())]
+        if direct_reason and direct_reason not in reasons:
+            reasons.append(direct_reason)
         status = "online"
         if not math.isfinite(age) or age > stale_minutes * 3:
             status = "offline"
@@ -257,6 +324,9 @@ def diagnose_observations(
                 "coverage": min(100.0, buckets / expected * 100.0),
                 "largest_gap_minutes": float(gaps.max()) if not gaps.empty else 0.0,
                 "quality_flags": int(flags.sum()),
+                "quality_note": (
+                    " · ".join(reasons) if reasons else "Nessuna anomalia recente"
+                ),
             }
         )
     return pd.DataFrame(rows)

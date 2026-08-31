@@ -99,7 +99,9 @@ def test_parse_city_forecast_normalises_current_hourly_and_daily() -> None:
     result = parse_city_forecast(payload, pd.Timestamp("2026-08-21T20:00:00Z"))
 
     assert result.current["description"] == "Parzialmente nuvoloso"
+    assert 19 < result.current["dewpoint_c"] < 20
     assert result.hourly.iloc[1]["description"] == "Coperto"
+    assert result.hourly["dewpoint_c"].notna().all()
     assert str(result.hourly.iloc[0]["time"].tzinfo) == "Europe/Rome"
     assert result.daily.iloc[0]["temp_max_c"] == 30
     assert result.daily.iloc[0]["sunset"].strftime("%H:%M") == "20:00"
