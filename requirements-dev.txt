@@ -1,5 +1,5 @@
 -c constraints.txt
 -r requirements.txt
 pytest>=8.2,<9
-ruff>=0.6,<1
+ruff>=0.16.5,<1
 playwright>=1.50,<2
