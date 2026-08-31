@@ -1031,11 +1031,24 @@ def _aladin_field_html(
   </style>
 </head>
 <body>
-  <div id="aladin-lite-div" aria-label="Atlante celeste interattivo"></div>
+  <div id="aladin-lite-div" aria-label="Atlante celeste interattivo">
+    <div style="padding:24px">Caricamento dell’atlante CDS…</div>
+  </div>
   <div class="note">CDS Aladin Lite · DSS2 a colori · rettangolo azzurro: sensore · ellisse arancio: ingombro indicativo.</div>
-  <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
   <script>
-    A.init.then(() => {{
+    const showAladinFallback = () => {{
+      document.getElementById('aladin-lite-div').innerHTML =
+        '<div style="padding:24px">Atlante CDS non disponibile in questo browser o rete. L’anteprima geometrica sopra resta valida.</div>';
+    }};
+    window.showAladinFallback = showAladinFallback;
+  </script>
+  <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/3.8.1/aladin.js" charset="utf-8" onerror="window.showAladinFallback()"></script>
+  <script>
+    const webgl2 = document.createElement('canvas').getContext('webgl2');
+    if (!webgl2 || typeof A === 'undefined' || !A.init) {{
+      showAladinFallback();
+    }} else {{
+      A.init.then(() => {{
       const aladin = A.aladin('#aladin-lite-div', {{
         survey:'P/DSS2/color', target:'{target.ra_deg:.8f} {target.dec_deg:+.8f}',
         fov:{field:.8f}, projection:'TAN', cooFrame:'ICRS', showReticle:true,
@@ -1046,10 +1059,8 @@ def _aladin_field_html(
       aladin.addOverlay(overlay);
       overlay.add(A.polyline([{polyline}], {{color:'#22d3ee',lineWidth:3}}));
       {target_ellipse}
-    }}).catch(() => {{
-      document.getElementById('aladin-lite-div').innerHTML =
-        '<div style="padding:24px">Atlante CDS temporaneamente non raggiungibile. L’anteprima geometrica sopra resta valida.</div>';
-    }});
+      }}).catch(showAladinFallback);
+    }}
   </script>
 </body>
 </html>
