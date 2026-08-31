@@ -24,6 +24,7 @@ def test_health_check_runs_away_from_the_top_of_the_hour():
     workflow = (ROOT / ".github/workflows/health_check.yml").read_text(encoding="utf-8")
 
     assert 'cron: "17,47 * * * *"' in workflow
+    assert "branches: [main]" in workflow
     assert "python health_check.py" in workflow
     assert "secrets.DATABASE_URL" in workflow
     assert "weather-app-v3-w2jd.onrender.com" in workflow

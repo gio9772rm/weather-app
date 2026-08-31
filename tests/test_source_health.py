@@ -254,4 +254,4 @@ def test_v43_source_catalog_labels_official_radar_and_climate_roles():
     assert catalog["arsial_siarl"].enabled is True
     assert catalog["arsial_siarl"].expected_minutes == 6 * 60
     assert catalog["system_health"].expected_minutes == 60
-    assert catalog["system_health"].cache_minutes == 3 * 60
+    assert catalog["system_health"].cache_minutes == 24 * 60

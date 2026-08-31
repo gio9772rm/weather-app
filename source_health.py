@@ -188,7 +188,7 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             True,
             60,
             "protezione",
-            cache_minutes=3 * 60,
+            cache_minutes=24 * 60,
             continuity="Render riavvia l'app; GitHub verifica dati e DB",
         ),
         SourceDefinition(
