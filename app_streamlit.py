@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
 from air_quality import AirQualityError, AirQualityForecast, fetch_air_quality
@@ -26,11 +27,17 @@ from astronomy_planner import (
     custom_target,
     equipment_profile,
     field_of_view,
+    framing_assessment,
+    framing_geometry,
+    local_night_window,
+    night_plan_csv,
+    night_plan_tracks,
     observing_calendar_ics,
     observing_log_csv,
     parse_planner_configuration,
-    plan_targets,
     planner_configuration_json,
+    resolve_targets,
+    summarize_night_plan,
     target_labels,
 )
 from chart_data import (
@@ -913,6 +920,297 @@ def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
         zerolinecolor=line,
     )
     return figure
+
+
+def _framing_figure(
+    target: SkyTarget,
+    profile: EquipmentProfile,
+    rotation_deg: float,
+    dark_mode: bool,
+) -> go.Figure:
+    """Draw a geometric camera footprint without pretending to be a sky survey."""
+    geometry = framing_geometry(target, profile, rotation_deg=rotation_deg)
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=geometry["sensor_x"],
+            y=geometry["sensor_y"],
+            mode="lines",
+            fill="toself",
+            fillcolor="rgba(14,165,233,.12)",
+            line={"color": "#0ea5e9", "width": 3},
+            name="Campo del sensore",
+            hovertemplate="Sensore · %{x:.1f}′ × %{y:.1f}′<extra></extra>",
+        )
+    )
+    has_dimensions = target.angular_width_arcmin is not None
+    figure.add_trace(
+        go.Scatter(
+            x=geometry["target_x"],
+            y=geometry["target_y"],
+            mode="lines" if has_dimensions else "markers",
+            fill="toself" if has_dimensions else None,
+            fillcolor="rgba(245,158,11,.28)" if has_dimensions else None,
+            line={"color": "#f59e0b", "width": 3},
+            marker={"color": "#f59e0b", "size": 14, "symbol": "cross"},
+            name=f"{target.name} · ingombro indicativo",
+            hovertemplate=(
+                f"{html.escape(target.name)} · offset %{{x:.1f}}′, %{{y:.1f}}′"
+                "<extra></extra>"
+            ),
+        )
+    )
+    all_x = [*geometry["sensor_x"], *geometry["target_x"]]
+    all_y = [*geometry["sensor_y"], *geometry["target_y"]]
+    extent = max(max(abs(value) for value in [*all_x, *all_y]), 1) * 1.18
+    figure.add_hline(y=0, line={"color": "rgba(148,163,184,.45)", "width": 1})
+    figure.add_vline(x=0, line={"color": "rgba(148,163,184,.45)", "width": 1})
+    figure.update_xaxes(
+        title_text="Offset orizzontale · arcmin",
+        range=[-extent, extent],
+        scaleanchor="y",
+        scaleratio=1,
+    )
+    figure.update_yaxes(title_text="Offset verticale · arcmin", range=[-extent, extent])
+    figure.update_layout(
+        height=520,
+        hovermode="closest",
+        margin={"l": 10, "r": 10, "t": 74, "b": 10},
+        title={
+            "text": f"Campo inquadrato · {target.name} · rotazione {rotation_deg:.0f}°",
+            "x": 0,
+        },
+    )
+    return _style_plotly(figure, dark_mode)
+
+
+def _aladin_field_html(
+    target: SkyTarget,
+    profile: EquipmentProfile,
+    rotation_deg: float,
+    dark_mode: bool,
+) -> str:
+    """Build an isolated CDS Aladin view with only celestial coordinates."""
+    view = field_of_view(profile)
+    geometry = framing_geometry(target, profile, rotation_deg=rotation_deg)
+    cosine_declination = max(abs(np.cos(np.deg2rad(target.dec_deg))), 0.01)
+    corners = [
+        [
+            (target.ra_deg + x / (60 * cosine_declination)) % 360,
+            float(np.clip(target.dec_deg + y / 60, -90, 90)),
+        ]
+        for x, y in zip(geometry["sensor_x"][:4], geometry["sensor_y"][:4], strict=True)
+    ]
+    corners.append(corners[0])
+    polyline = ",".join(f"[{ra:.8f},{dec:.8f}]" for ra, dec in corners)
+    target_ellipse = ""
+    if (
+        target.angular_width_arcmin is not None
+        and target.angular_height_arcmin is not None
+    ):
+        target_ellipse = (
+            "overlay.add(A.ellipse("
+            f"{target.ra_deg:.8f},{target.dec_deg:.8f},"
+            f"{target.angular_width_arcmin / 120:.8f},"
+            f"{target.angular_height_arcmin / 120:.8f},0,"
+            "{color:'#f59e0b',lineWidth:2}));"
+        )
+    background = "#05070b" if dark_mode else "#eef3f8"
+    foreground = "#f8fafc" if dark_mode else "#10243d"
+    field = max(view.width_deg, view.height_deg) * 1.35
+    return f"""
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1">
+  <style>
+    html,body{{margin:0;background:{background};color:{foreground};font-family:system-ui,sans-serif}}
+    #aladin-lite-div{{width:100%;height:500px;border-radius:14px;overflow:hidden}}
+    .note{{padding:8px 4px 0;font-size:12px;line-height:1.45;color:{foreground}}}
+  </style>
+</head>
+<body>
+  <div id="aladin-lite-div" aria-label="Atlante celeste interattivo"></div>
+  <div class="note">CDS Aladin Lite · DSS2 a colori · rettangolo azzurro: sensore · ellisse arancio: ingombro indicativo.</div>
+  <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
+  <script>
+    A.init.then(() => {{
+      const aladin = A.aladin('#aladin-lite-div', {{
+        survey:'P/DSS2/color', target:'{target.ra_deg:.8f} {target.dec_deg:+.8f}',
+        fov:{field:.8f}, projection:'TAN', cooFrame:'ICRS', showReticle:true,
+        showCooGrid:true, showCooGridControl:true, showGotoControl:false,
+        showShareControl:false, showSimbadPointerControl:false, showContextMenu:false
+      }});
+      const overlay = A.graphicOverlay({{color:'#22d3ee',lineWidth:3}});
+      aladin.addOverlay(overlay);
+      overlay.add(A.polyline([{polyline}], {{color:'#22d3ee',lineWidth:3}}));
+      {target_ellipse}
+    }}).catch(() => {{
+      document.getElementById('aladin-lite-div').innerHTML =
+        '<div style="padding:24px">Atlante CDS temporaneamente non raggiungibile. L’anteprima geometrica sopra resta valida.</div>';
+    }});
+  </script>
+</body>
+</html>
+"""
+
+
+def _night_plan_figure(
+    tracks: pd.DataFrame,
+    dark_mode: bool,
+    minimum_altitude: float,
+    secondary_metric: str = "Qualità",
+) -> go.Figure:
+    """Render ASIAIR-inspired altitude and quality tracks in explicit local time."""
+    secondary_options = {
+        "Qualità": ("planner_score", "Qualità della finestra", "Qualità /100"),
+        "Massa d'aria": ("airmass", "Massa d'aria", "Massa d'aria"),
+        "Distanza Luna": (
+            "moon_separation",
+            "Separazione angolare dalla Luna",
+            "Distanza Luna °",
+        ),
+    }
+    secondary_column, secondary_title, secondary_axis = secondary_options.get(
+        secondary_metric, secondary_options["Qualità"]
+    )
+    secondary_format = ".2f" if secondary_column == "airmass" else ".0f"
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.12,
+        row_heights=(0.64, 0.36),
+        subplot_titles=("Altezza e orizzonte locale", secondary_title),
+    )
+    colors = ("#2563eb", "#f59e0b", "#8b5cf6", "#10b981", "#ef4444")
+
+    def hover_value(value: Any, digits: int = 0, suffix: str = "") -> str:
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        return "n/d" if pd.isna(number) else f"{number:.{digits}f}{suffix}"
+
+    for position, (target_name, group) in enumerate(
+        tracks.groupby("target", sort=False)
+    ):
+        ordered = group.sort_values("valid_time")
+        color = colors[position % len(colors)]
+        x_values = plotly_local_datetimes(ordered["local_time"], CFG.local_timezone)
+        custom_data = [
+            [
+                hover_value(row["magnitude"], 1),
+                hover_value(row["azimuth"], 0, "°"),
+                hover_value(row["airmass"], 2),
+                hover_value(row["planner_score"], 0, "/100"),
+                hover_value(row["clouds"], 0, "%"),
+                hover_value(row["moon_separation"], 0, "°"),
+                hover_value(row["horizon_altitude"], 0, "°"),
+                "sì" if bool(row["weather_available"]) else "no",
+            ]
+            for _, row in ordered.iterrows()
+        ]
+        figure.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=ordered["altitude"],
+                customdata=custom_data,
+                name=str(target_name),
+                mode="lines",
+                line={"color": color, "width": 3},
+                hovertemplate=(
+                    "%{x|%d/%m · %H:%M}<br>"
+                    "Altezza %{y:.1f}° · Azimut %{customdata[1]}<br>"
+                    "Massa d'aria %{customdata[2]} · Magnitudine %{customdata[0]}<br>"
+                    "Qualità %{customdata[3]} · Nuvole %{customdata[4]}<br>"
+                    "Luna %{customdata[5]} · Orizzonte %{customdata[6]}<br>"
+                    "Meteo coperto: %{customdata[7]}<extra>%{fullData.name}</extra>"
+                ),
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=ordered["horizon_altitude"],
+                name=f"Orizzonte · {target_name}",
+                mode="lines",
+                line={"color": color, "width": 1.3, "dash": "dot"},
+                opacity=0.52,
+                showlegend=False,
+                hovertemplate="Orizzonte locale %{y:.1f}°<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=ordered[secondary_column],
+                name=f"{secondary_metric} · {target_name}",
+                mode="lines",
+                line={"color": color, "width": 2.4},
+                showlegend=False,
+                customdata=custom_data,
+                hovertemplate=(
+                    f"%{{x|%d/%m · %H:%M}}<br>{secondary_metric} "
+                    f"%{{y:{secondary_format}}}<br>"
+                    "Nuvole %{customdata[4]} · Luna %{customdata[5]}"
+                    "<extra>%{fullData.name}</extra>"
+                ),
+            ),
+            row=2,
+            col=1,
+        )
+    figure.add_hline(
+        y=float(minimum_altitude),
+        line={"color": "#64748b", "width": 1.5, "dash": "dash"},
+        row=1,
+        col=1,
+    )
+    now_local = pd.Timestamp.now(tz=CFG.local_timezone)
+    start = pd.to_datetime(tracks["local_time"], errors="coerce").min()
+    end = pd.to_datetime(tracks["local_time"], errors="coerce").max()
+    if pd.notna(start) and start <= now_local <= end:
+        marker = plotly_local_datetime(now_local, CFG.local_timezone)
+        for row in (1, 2):
+            figure.add_vline(
+                x=marker,
+                line={"color": "#ef4444", "width": 2, "dash": "dash"},
+                row=row,
+                col=1,
+            )
+    figure.update_yaxes(title_text="Altezza °", range=[-5, 95], row=1, col=1)
+    if secondary_column == "planner_score":
+        figure.update_yaxes(title_text=secondary_axis, range=[0, 105], row=2, col=1)
+    elif secondary_column == "moon_separation":
+        figure.update_yaxes(title_text=secondary_axis, range=[0, 180], row=2, col=1)
+    else:
+        finite_airmass = pd.to_numeric(tracks["airmass"], errors="coerce").dropna()
+        upper_airmass = (
+            min(6.0, max(3.0, float(finite_airmass.max())))
+            if not finite_airmass.empty
+            else 3.0
+        )
+        figure.update_yaxes(
+            title_text=secondary_axis,
+            range=[upper_airmass, 1],
+            row=2,
+            col=1,
+        )
+    figure.update_xaxes(
+        title_text=f"Ora locale · {CFG.local_timezone}",
+        tickformat="%H:%M",
+        row=2,
+        col=1,
+    )
+    figure.update_layout(
+        height=680,
+        hovermode="x unified",
+        margin={"l": 10, "r": 10, "t": 78, "b": 10},
+        title={"text": "Andamento dei soggetti nella notte", "x": 0},
+    )
+    return _style_plotly(figure, dark_mode)
 
 
 def _use_local_subplot_keys(figure: go.Figure) -> go.Figure:
@@ -4761,7 +5059,22 @@ with tab_astro:
         if "astro_custom_targets" not in st.session_state:
             st.session_state["astro_custom_targets"] = {}
         if "astro_equipment_profiles" not in st.session_state:
-            st.session_state["astro_equipment_profiles"] = {}
+            default_profile = equipment_profile(
+                name="Setup Tripletto",
+                telescope="Tripletto 80/480",
+                camera="571MC-Pro",
+                aperture_mm=80,
+                focal_length_mm=480,
+                sensor_width_mm=23.5,
+                sensor_height_mm=15.7,
+                pixel_size_um=3.76,
+                focal_multiplier=0.8,
+            )
+            st.session_state["astro_equipment_profiles"] = {
+                default_profile.name: default_profile
+            }
+            st.session_state["astro_active_profile"] = default_profile.name
+            st.session_state["astro_active_profile_select"] = default_profile.name
         if "astro_horizon_mask" not in st.session_state:
             st.session_state["astro_horizon_mask"] = {
                 direction: 0.0 for direction in range(0, 360, 45)
@@ -4850,8 +5163,10 @@ with tab_astro:
                     "Target personali attivi: "
                     + ", ".join(target.name for target in custom_targets)
                 )
+        available_targets = target_labels(custom_targets)
 
         active_equipment: EquipmentProfile | None = None
+        framing_rotation = 0
         with st.expander("Attrezzatura e campo inquadrato"):
             st.caption(
                 "Il calcolo usa dimensioni fisiche del sensore e focale effettiva. "
@@ -4860,14 +5175,12 @@ with tab_astro:
             with st.form("astronomy_equipment_form", border=False):
                 profile_columns = st.columns(3)
                 profile_name = profile_columns[0].text_input(
-                    "Nome profilo", value="Setup principale"
+                    "Nome profilo", value="Setup Tripletto"
                 )
                 telescope_name = profile_columns[1].text_input(
-                    "Telescopio", value="Ottica personale"
+                    "Telescopio", value="Tripletto 80/480"
                 )
-                camera_name = profile_columns[2].text_input(
-                    "Camera", value="Camera personale"
-                )
+                camera_name = profile_columns[2].text_input("Camera", value="571MC-Pro")
                 optical_columns = st.columns(4)
                 aperture_mm = optical_columns[0].number_input(
                     "Apertura mm",
@@ -4880,14 +5193,14 @@ with tab_astro:
                     "Focale mm",
                     min_value=20.0,
                     max_value=20000.0,
-                    value=400.0,
+                    value=480.0,
                     step=10.0,
                 )
                 focal_multiplier = optical_columns[2].number_input(
                     "Riduttore/Barlow ×",
                     min_value=0.1,
                     max_value=10.0,
-                    value=1.0,
+                    value=0.8,
                     step=0.05,
                 )
                 pixel_size_um = optical_columns[3].number_input(
@@ -4905,7 +5218,7 @@ with tab_astro:
                     "Sensore altezza mm",
                     min_value=1.0,
                     max_value=80.0,
-                    value=15.6,
+                    value=15.7,
                     step=0.1,
                 )
                 save_equipment = st.form_submit_button("Salva profilo nella sessione")
@@ -4960,6 +5273,118 @@ with tab_astro:
                 field_metrics[3].metric(
                     "Campionamento", f"{view.image_scale_arcsec_px:.2f}″/px"
                 )
+                default_framing_target = next(
+                    (
+                        label
+                        for label in available_targets
+                        if label.split(" · ", 1)[0] == "M42"
+                    ),
+                    available_targets[0],
+                )
+                if (
+                    st.session_state.get("astro_framing_target")
+                    not in available_targets
+                ):
+                    st.session_state["astro_framing_target"] = default_framing_target
+                framing_controls = st.columns((3, 2))
+                framing_target_label = framing_controls[0].selectbox(
+                    "Soggetto da inquadrare",
+                    options=available_targets,
+                    key="astro_framing_target",
+                )
+                framing_rotation = framing_controls[1].slider(
+                    "Rotazione camera",
+                    min_value=0,
+                    max_value=175,
+                    value=0,
+                    step=5,
+                    format="%d°",
+                    key="astro_framing_rotation",
+                )
+                framing_target = resolve_targets(
+                    [framing_target_label], custom_targets
+                )[0]
+                assessment = framing_assessment(
+                    framing_target,
+                    active_equipment,
+                    rotation_deg=framing_rotation,
+                )
+                framing_metrics = st.columns(3)
+                framing_metrics[0].metric(
+                    "Soggetto",
+                    (
+                        "dimensioni n/d"
+                        if assessment.target_width_arcmin is None
+                        else (
+                            f"{assessment.target_width_arcmin:.0f}′ × "
+                            f"{assessment.target_height_arcmin:.0f}′"
+                        )
+                    ),
+                )
+                framing_metrics[1].metric(
+                    "Riempimento massimo",
+                    (
+                        "n/d"
+                        if assessment.width_fill_percent is None
+                        else (
+                            f"{max(assessment.width_fill_percent, assessment.height_fill_percent):.0f}%"
+                        )
+                    ),
+                )
+                framing_metrics[2].metric(
+                    "Margine minimo",
+                    (
+                        "n/d"
+                        if assessment.minimum_margin_arcmin is None
+                        else f"{assessment.minimum_margin_arcmin:.1f}′"
+                    ),
+                )
+                if assessment.fits is False:
+                    st.warning(assessment.status)
+                elif assessment.fits is True:
+                    st.success(assessment.status)
+                else:
+                    st.info(assessment.status)
+                st.plotly_chart(
+                    _framing_figure(
+                        framing_target,
+                        active_equipment,
+                        framing_rotation,
+                        dark_mode,
+                    ),
+                    width="stretch",
+                    theme=None,
+                    key="astronomy_framing_preview",
+                )
+                st.caption(
+                    "Anteprima geometrica centrata sul soggetto: il rettangolo è il "
+                    "sensore, l'ellisse usa le dimensioni apparenti di catalogo. Non "
+                    "è un'immagine del cielo e non simula vignettatura o distorsione."
+                )
+                show_sky_atlas = st.toggle(
+                    "Apri atlante fotografico CDS",
+                    value=False,
+                    key="astro_show_aladin",
+                    help=(
+                        "Carica su richiesta Aladin Lite e il rilievo DSS2. Sono "
+                        "trasmesse al CDS soltanto le coordinate celesti del soggetto."
+                    ),
+                )
+                if show_sky_atlas:
+                    components.html(
+                        _aladin_field_html(
+                            framing_target,
+                            active_equipment,
+                            framing_rotation,
+                            dark_mode,
+                        ),
+                        height=550,
+                        scrolling=False,
+                    )
+                    st.caption(
+                        "Atlante interattivo fornito da CDS Aladin Lite. Nessuna "
+                        "coordinata terrestre, profilo o nota viene inviato al servizio."
+                    )
             else:
                 st.info("Salva almeno un profilo per calcolare campo e campionamento.")
 
@@ -4994,7 +5419,6 @@ with tab_astro:
                 horizon_mask[float(direction)] = float(value)
             st.session_state["astro_horizon_mask"] = horizon_mask
 
-        available_targets = target_labels(custom_targets)
         default_target_names = {"M31", "M42", "M45", "M13"}
         selected_targets = st.multiselect(
             "Oggetti da osservare o fotografare",
@@ -5006,6 +5430,12 @@ with tab_astro:
             ],
             key="astronomy_targets",
         )
+        if len(selected_targets) > 5:
+            st.warning(
+                "Il grafico confronta al massimo cinque soggetti per restare leggibile; "
+                "sono usati i primi cinque selezionati."
+            )
+        plotted_targets = selected_targets[:5]
         planner_controls = st.columns(2)
         minimum_altitude = planner_controls[0].slider(
             "Altezza minima",
@@ -5025,46 +5455,126 @@ with tab_astro:
             format="%d°",
             key="astronomy_moon_separation",
         )
-        target_plan = plan_targets(
-            astro,
-            CFG,
-            selected_targets,
-            minimum_altitude=minimum_altitude,
-            minimum_moon_separation=minimum_moon_separation,
-            custom_targets=custom_targets,
-            horizon_mask=horizon_mask,
+        st.markdown("#### Piano della notte")
+        now_local = pd.Timestamp.now(tz=CFG.local_timezone)
+        default_night_date = (
+            (now_local - pd.Timedelta(days=1)).date()
+            if now_local.hour < 8
+            else now_local.date()
+        )
+        time_controls = st.columns((2, 1, 1, 1))
+        observing_date = time_controls[0].date_input(
+            "Notte che inizia il",
+            value=default_night_date,
+            key="astronomy_plan_date",
+        )
+        plan_start_clock = time_controls[1].time_input(
+            "Dalle",
+            value=pd.Timestamp("20:00").time(),
+            step=900,
+            key="astronomy_plan_start",
+        )
+        plan_end_clock = time_controls[2].time_input(
+            "Alle",
+            value=pd.Timestamp("06:00").time(),
+            step=900,
+            key="astronomy_plan_end",
+        )
+        sample_minutes = time_controls[3].selectbox(
+            "Dettaglio",
+            options=(15, 30, 60),
+            format_func=lambda value: f"{value} min",
+            key="astronomy_plan_sample",
+        )
+        secondary_metric = st.selectbox(
+            "Pannello inferiore del grafico",
+            options=("Qualità", "Massa d'aria", "Distanza Luna"),
+            key="astronomy_plan_secondary_metric",
+            help=(
+                "La magnitudine non varia durante la notte: resta nei tooltip e "
+                "nella tabella, invece di essere disegnata come una curva fuorviante."
+            ),
+        )
+        try:
+            plan_start, plan_end = local_night_window(
+                observing_date,
+                plan_start_clock,
+                plan_end_clock,
+                CFG.local_timezone,
+            )
+            detailed_plan = night_plan_tracks(
+                astro,
+                CFG,
+                plotted_targets,
+                start=plan_start,
+                end=plan_end,
+                minimum_altitude=minimum_altitude,
+                minimum_moon_separation=minimum_moon_separation,
+                custom_targets=custom_targets,
+                horizon_mask=horizon_mask,
+                sample_minutes=sample_minutes,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            detailed_plan = pd.DataFrame()
+        target_plan = summarize_night_plan(
+            detailed_plan,
             equipment=active_equipment,
+            custom_targets=custom_targets,
+            rotation_deg=framing_rotation,
         )
         if target_plan.empty:
-            st.info("Seleziona almeno un oggetto per calcolare la finestra migliore.")
+            st.info("Seleziona almeno un oggetto per costruire il piano della notte.")
         else:
+            st.plotly_chart(
+                _night_plan_figure(
+                    detailed_plan,
+                    dark_mode,
+                    minimum_altitude,
+                    secondary_metric,
+                ),
+                width="stretch",
+                theme=None,
+                key="astronomy_night_plan_chart",
+            )
+            coverage = float(detailed_plan["weather_available"].mean() * 100)
+            if coverage == 0:
+                st.warning(
+                    "La finestra non è coperta dalle previsioni disponibili: altezza, "
+                    "azimut, massa d'aria e Luna restano calcolati; la qualità è solo geometrica."
+                )
+            elif coverage < 100:
+                st.info(
+                    f"Copertura meteo del piano: {coverage:.0f}%. Nei tratti mancanti "
+                    "restano disponibili i calcoli astronomici."
+                )
+            else:
+                st.caption(
+                    "Copertura meteo completa. La linea rossa tratteggiata, quando "
+                    f"presente, indica l'ora attuale in {CFG.local_timezone}."
+                )
+            st.download_button(
+                "Scarica il piano dettagliato (CSV)",
+                data=night_plan_csv(detailed_plan),
+                file_name=(
+                    f"piano-astronomico-{pd.Timestamp(observing_date):%Y-%m-%d}.csv"
+                ),
+                mime="text/csv",
+                width="stretch",
+            )
             planner_table = pd.DataFrame(
                 {
                     "Oggetto": target_plan["target"] + " · " + target_plan["name"],
                     "Tipo": target_plan["category"],
                     "Mag.": target_plan["magnitude"],
                     "Finestra migliore": target_plan["best_time"].map(_hour_label),
-                    "Altezza °": target_plan["altitude"],
-                    "Azimut °": target_plan["azimuth"],
+                    "Altezza max °": target_plan["max_altitude"],
+                    "Azimut al meglio °": target_plan["best_azimuth"],
+                    "Massa d'aria min": target_plan["minimum_airmass"],
                     "Score": target_plan["planner_score"],
-                    "Meteo": target_plan["weather_score"],
-                    "Nuvole %": target_plan["clouds"],
-                    "Condensa %": target_plan["dew_risk"],
                     "Distanza Luna °": target_plan["moon_separation"],
-                    "Luna %": target_plan["moon_illumination"],
-                    "Ostacolo °": target_plan["horizon_altitude"],
-                    "Margine °": target_plan["horizon_clearance"],
-                    "Campo °": target_plan.apply(
-                        lambda row: (
-                            "—"
-                            if pd.isna(row["field_width_deg"])
-                            else f"{row['field_width_deg']:.2f} × {row['field_height_deg']:.2f}"
-                        ),
-                        axis=1,
-                    ),
-                    "Camp. ″/px": target_plan["image_scale_arcsec_px"].map(
-                        lambda value: "—" if pd.isna(value) else f"{value:.2f}"
-                    ),
+                    "Ore utili": target_plan["visible_hours"],
+                    "Copertura meteo %": target_plan["weather_coverage"],
                     "Inquadratura": target_plan["framing"],
                     "Esito": target_plan["status"],
                 }
@@ -5074,19 +5584,16 @@ with tab_astro:
             ).format(
                 {
                     "Mag.": "{:.1f}",
+                    "Massa d'aria min": "{:.2f}",
+                    "Ore utili": "{:.1f}",
                     **{
                         column: "{:.0f}"
                         for column in (
-                            "Altezza °",
-                            "Azimut °",
+                            "Altezza max °",
+                            "Azimut al meglio °",
                             "Score",
-                            "Meteo",
-                            "Nuvole %",
-                            "Condensa %",
                             "Distanza Luna °",
-                            "Luna %",
-                            "Ostacolo °",
-                            "Margine °",
+                            "Copertura meteo %",
                         )
                     },
                 },
@@ -5127,7 +5634,7 @@ with tab_astro:
                     )
                     calendar_description = (
                         f"Score {selected_plan['planner_score']:.0f}/100; "
-                        f"altezza {selected_plan['altitude']:.0f}°; "
+                        f"altezza massima {selected_plan['max_altitude']:.0f}°; "
                         f"Luna {selected_plan['moon_separation']:.0f}°."
                     )
                     calendar_payload = observing_calendar_ics(
@@ -5659,8 +6166,7 @@ with tab_system:
         health_label, health_detail = _protection_summary("system_health")
         backup_label, backup_detail = _protection_summary("github_backup")
         data_sources = sources[
-            sources["enabled"].fillna(False)
-            & sources["category"].ne("protezione")
+            sources["enabled"].fillna(False) & sources["category"].ne("protezione")
         ]
         usable_sources = data_sources[
             data_sources["display_status"].isin({"online", "cached", "delayed"})
@@ -5701,18 +6207,16 @@ with tab_system:
             {"database_backup", "github_backup"}
         ) & sources["display_status"].eq("scheduled")
         readable_status.loc[scheduled_backup] = "Pianificata · ore 22:00"
-        scheduled_arsial = sources["source"].eq(
-            "arsial_siarl"
-        ) & sources["display_status"].eq("scheduled")
+        scheduled_arsial = sources["source"].eq("arsial_siarl") & sources[
+            "display_status"
+        ].eq("scheduled")
         readable_status.loc[scheduled_arsial] = (
             f"Verifica automatica · ogni {CFG.arsial_probe_hours} h"
         )
         cached_health = sources["source"].eq("system_health") & sources[
             "display_status"
         ].eq("cached")
-        readable_status.loc[cached_health] = (
-            "Ultima verifica valida · Render attivo"
-        )
+        readable_status.loc[cached_health] = "Ultima verifica valida · Render attivo"
         source_table = pd.DataFrame(
             {
                 "Componente": sources["label"],

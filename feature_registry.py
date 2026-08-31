@@ -148,4 +148,18 @@ def features(cfg: Settings) -> tuple[Feature, ...]:
             True,
             "contratti browser desktop/mobile",
         ),
+        Feature(
+            "astronomy_framing_atlas",
+            "Campo inquadrato geometrico e atlante CDS opzionale",
+            "V4.7",
+            True,
+            "sessione browser + CDS Aladin Lite su richiesta",
+        ),
+        Feature(
+            "astronomy_night_tracks",
+            "Piano notturno multi-target in ora locale",
+            "V4.7",
+            True,
+            "forecast_blend + calcolo astronomico + CSV",
+        ),
     )
