@@ -42,6 +42,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
 - pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, distanza dalla Luna, ostacoli locali, profili ottica/camera, campo inquadrato, calendario ICS e diario CSV;
 - backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
+- controllo salute indipendente a ogni merge e ogni 30 minuti; se GitHub ritarda, la UI distingue per 24 ore l'ultimo esito valido dal controllo continuo Render;
 - issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
 - controllo visuale Playwright su desktop/mobile e tema chiaro/scuro, audit privacy e riferimenti GitHub Actions bloccati a commit immutabili;
 - dipendenze riproducibili tramite `constraints.txt` e aggiornamenti settimanali minori/patch con Dependabot;

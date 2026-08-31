@@ -1,6 +1,8 @@
 name: Meteo V4.4 - Controllo salute
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "17,47 * * * *"

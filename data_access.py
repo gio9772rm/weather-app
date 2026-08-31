@@ -611,7 +611,11 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
             return "external_unavailable" if source == "arsial_siarl" else "offline"
         failures = int(row["consecutive_failures"])
         if source == "system_health" and failures == 1:
-            return "delayed" if float(row["age_minutes"]) <= cache_minutes else "offline"
+            age = float(row["age_minutes"])
+            expected = max(1.0, float(row["expected_minutes"]))
+            if age <= expected * 3.5:
+                return "delayed"
+            return "cached" if cache_available else "offline"
         if failures >= 2:
             if cache_available:
                 return "cached"

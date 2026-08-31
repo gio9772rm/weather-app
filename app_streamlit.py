@@ -5707,6 +5707,12 @@ with tab_system:
         readable_status.loc[scheduled_arsial] = (
             f"Verifica automatica · ogni {CFG.arsial_probe_hours} h"
         )
+        cached_health = sources["source"].eq("system_health") & sources[
+            "display_status"
+        ].eq("cached")
+        readable_status.loc[cached_health] = (
+            "Ultima verifica valida · Render attivo"
+        )
         source_table = pd.DataFrame(
             {
                 "Componente": sources["label"],

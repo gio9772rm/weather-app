@@ -4,7 +4,7 @@
 
 - ARSIAL/SIARL passa dalla sospensione fissa al recupero automatico: un sondaggio ogni sei ore evita di sovraccaricare il portale instabile e attiva l'archiviazione appena torna un export orario valido;
 - CFR Lazio via MeteoHub resta il riferimento regionale operativo e ogni dato SIARL continua a essere separato dalle misure Ecowitt;
-- il controllo salute tollera i normali ritardi del runner GitHub, conserva l'ultimo esito valido per tre ore e continua a rendere visibili i guasti effettivi;
+- il controllo salute parte anche a ogni merge su `main`; se il runner pianificato ritarda, conserva per 24 ore l'ultimo esito indipendente distinguendolo dal controllo continuo Render e continua a rendere visibili i guasti effettivi;
 - la pagina Sistema espone subito stato della verifica automatica, backup cloud cifrato e numero di fonti utilizzabili, prima della tabella tecnica;
 - input numerici, pulsanti, simboli, placeholder e didascalie di Astronomia Pro seguono il tema scelto senza ereditare la palette del sistema operativo;
 - il gate browser copre Oggi, Sistema, Panoramica e Astronomia in entrambe le modalità e su desktop/mobile, con verifica WCAG AA dei controlli astronomici;
