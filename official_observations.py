@@ -18,6 +18,7 @@ import pandas as pd
 import requests
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from config import Settings, settings
 from db import get_engine
@@ -329,6 +330,41 @@ def _cached_source_observations(
     return frame.dropna(subset=["time"]).reindex(columns=OBSERVATION_COLUMNS)
 
 
+def _source_attempt_due(
+    source: str,
+    interval_minutes: int,
+    engine: Engine,
+    *,
+    now: pd.Timestamp | None = None,
+) -> bool:
+    """Return true when an optional recovery probe may run again.
+
+    A missing telemetry row or an unreadable health table must never prevent a
+    provider from recovering. The throttle only suppresses repeated requests
+    after a recorded attempt.
+    """
+    try:
+        with engine.connect() as connection:
+            last_attempt = connection.execute(
+                text(
+                    "SELECT last_attempt_at FROM source_health "
+                    "WHERE source=:source"
+                ),
+                {"source": source},
+            ).scalar_one_or_none()
+    except SQLAlchemyError:
+        return True
+    attempted_at = pd.to_datetime(last_attempt, utc=True, errors="coerce")
+    if pd.isna(attempted_at):
+        return True
+    checked_at = pd.to_datetime(
+        now if now is not None else pd.Timestamp.now(tz="UTC"), utc=True
+    )
+    return checked_at - attempted_at >= pd.Timedelta(
+        minutes=max(1, int(interval_minutes))
+    )
+
+
 def ingest_official_observations(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> dict[str, Any]:
@@ -343,13 +379,23 @@ def ingest_official_observations(
     warnings: list[str] = []
     cached_sources: list[str] = []
     sources = (
-        ("awc_metar", True, fetch_metar_observations),
-        ("arsial_siarl", cfg.arsial_observations_enabled, fetch_arsial_observations),
-        ("cfr_lazio", cfg.cfr_observations_enabled, fetch_cfr_observations),
+        ("awc_metar", True, True, fetch_metar_observations),
+        (
+            "arsial_siarl",
+            cfg.arsial_polling_enabled,
+            not cfg.arsial_auto_probe
+            or _source_attempt_due(
+                "arsial_siarl", cfg.arsial_probe_hours * 60, engine
+            ),
+            fetch_arsial_observations,
+        ),
+        ("cfr_lazio", cfg.cfr_observations_enabled, True, fetch_cfr_observations),
     )
-    for source, enabled, fetcher in sources:
+    for source, enabled, due, fetcher in sources:
         if not enabled:
             record_source_disabled(source, engine)
+            continue
+        if not due:
             continue
         started = perf_counter()
         try:

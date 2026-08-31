@@ -14,11 +14,13 @@ from forecast_blend import (
 from official_observations import (
     OBSERVATION_COLUMNS,
     OfficialObservationError,
+    _source_attempt_due,
     archive_official_observations,
     ingest_official_observations,
     parse_metar_payload,
     relative_humidity,
 )
+from source_health import record_source_result
 
 
 def _settings() -> Settings:
@@ -272,6 +274,44 @@ def test_arsial_failure_never_discards_metar_or_touches_ecowitt(
         assert connection.execute(
             text("SELECT COUNT(*) FROM station_raw")
         ).scalar_one() == 0
+
+
+def test_automatic_arsial_probe_is_throttled_without_disabling_source(
+    sqlite_engine,
+    monkeypatch,
+):
+    cfg = replace(
+        _settings(),
+        arsial_observations_enabled=False,
+        arsial_observations_mode="auto",
+        arsial_probe_hours=6,
+        cfr_observations_enabled=False,
+    )
+    assert record_source_result(
+        "arsial_siarl",
+        success=False,
+        error="portale temporaneamente non disponibile",
+        engine=sqlite_engine,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "official_observations.fetch_metar_observations",
+        lambda configured: pd.DataFrame(columns=OBSERVATION_COLUMNS),
+    )
+
+    def unexpected_probe(configured):
+        calls.append(configured)
+        return pd.DataFrame(columns=OBSERVATION_COLUMNS)
+
+    monkeypatch.setattr(
+        "regional_observations.fetch_arsial_observations", unexpected_probe
+    )
+
+    result = ingest_official_observations(cfg, sqlite_engine)
+
+    assert calls == []
+    assert not result["warnings"]
+    assert not _source_attempt_due("arsial_siarl", 6 * 60, sqlite_engine)
 
 
 def test_recent_arsial_archive_is_reused_without_being_reported_live(

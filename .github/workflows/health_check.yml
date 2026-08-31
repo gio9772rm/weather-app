@@ -49,6 +49,8 @@ jobs:
           FORECAST_REFRESH_MINUTES: "60"
           OFFICIAL_OBSERVATIONS_ENABLED: "true"
           ARSIAL_OBSERVATIONS_ENABLED: "false"
+          ARSIAL_OBSERVATIONS_MODE: auto
+          ARSIAL_PROBE_HOURS: "6"
           CFR_OBSERVATIONS_ENABLED: "true"
           DPC_RADAR_ENABLED: "true"
           REFERENCE_CLIMATOLOGY_ENABLED: "true"

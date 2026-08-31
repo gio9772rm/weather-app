@@ -100,7 +100,7 @@ def _enabled_reference_frame(frame: pd.DataFrame, cfg: Settings) -> pd.DataFrame
     if frame.empty or not cfg.official_observations_enabled or "source" not in frame:
         return frame.iloc[0:0].copy()
     enabled_sources = {"awc_metar"}
-    if cfg.arsial_observations_enabled:
+    if cfg.arsial_polling_enabled:
         enabled_sources.add("arsial_siarl")
     if cfg.cfr_observations_enabled:
         enabled_sources.add("cfr_lazio")

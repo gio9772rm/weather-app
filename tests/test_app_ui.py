@@ -36,6 +36,10 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         ".air-grid",
         ".live-badge",
         "@keyframes live-pulse",
+        '[data-testid="stNumberInputContainer"]',
+        '[data-testid="stNumberInputField"]',
+        '[data-testid="stBaseButton-secondaryFormSubmit"]',
+        '[data-testid="stCaptionContainer"] *',
         "_use_local_subplot_keys",
     ):
         assert selector in source
@@ -44,6 +48,8 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
     assert '<details class="air-card expandable-card' in source
     assert 'content:"↓"' in source
     assert 'content:"\\2193"' not in source
+    assert "Controllo automatico" in source
+    assert "Verifica automatica · ogni" in source
     today = source[
         source.index("def render_today_dashboard") : source.index(
             "def _city_future_hours"

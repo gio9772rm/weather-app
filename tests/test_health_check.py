@@ -80,4 +80,4 @@ def test_probe_app_accepts_success_without_closing_injected_session():
 
     assert ok
     assert not error
-    assert session.calls == [("https://example.test/_stcore/health", (5, 20))]
+    assert session.calls == [("https://example.test/_stcore/health", (5, 45))]

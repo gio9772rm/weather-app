@@ -17,6 +17,8 @@ def test_rome_official_observation_defaults(monkeypatch):
         "METAR_STATIONS",
         "OFFICIAL_SCORE_MAX_SHARE",
         "ARSIAL_OBSERVATIONS_ENABLED",
+        "ARSIAL_OBSERVATIONS_MODE",
+        "ARSIAL_PROBE_HOURS",
         "ARSIAL_STATION_NAME",
         "ARSIAL_TZ",
         "CFR_OBSERVATIONS_ENABLED",
@@ -30,6 +32,10 @@ def test_rome_official_observation_defaults(monkeypatch):
     assert configured.metar_station_ids == ("LIRF", "LIRA")
     assert configured.official_score_max_share == 0.20
     assert configured.arsial_observations_enabled is False
+    assert configured.arsial_observations_mode == "auto"
+    assert configured.arsial_probe_hours == 6
+    assert configured.arsial_polling_enabled is True
+    assert configured.arsial_auto_probe is True
     assert configured.arsial_station_name == "ROMA Lanciani-SEDE ARSIAL"
     assert configured.arsial_timezone == "UTC"
     assert configured.cfr_observations_enabled is True
@@ -38,6 +44,17 @@ def test_rome_official_observation_defaults(monkeypatch):
     assert configured.dpc_radar_enabled is True
     assert configured.reference_climatology_enabled is True
     assert configured.station_id == "roma-primary"
+
+
+def test_arsial_mode_supports_explicit_disable_and_forced_enable(monkeypatch):
+    monkeypatch.setenv("ARSIAL_OBSERVATIONS_ENABLED", "false")
+    monkeypatch.setenv("ARSIAL_OBSERVATIONS_MODE", "disabled")
+    assert Settings.from_env().arsial_polling_enabled is False
+
+    monkeypatch.setenv("ARSIAL_OBSERVATIONS_ENABLED", "true")
+    configured = Settings.from_env()
+    assert configured.arsial_polling_enabled is True
+    assert configured.arsial_auto_probe is False
 
 
 def test_cfr_custom_endpoint_can_override_public_meteohub(monkeypatch):
