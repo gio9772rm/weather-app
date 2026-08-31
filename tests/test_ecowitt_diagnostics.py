@@ -38,6 +38,52 @@ def test_extracts_only_sanitised_battery_and_signal_values():
     assert all(row["status"] == "ok" for row in rows)
 
 
+def test_sensor_array_normal_means_charged_and_other_text_means_problem():
+    rows = extract_telemetry(
+        {
+            "data": {
+                "battery": {
+                    "wh65": {"value": "Normal"},
+                    "wh90": {"value": "Low"},
+                }
+            }
+        },
+        station_id="primary",
+    )
+    by_sensor = {row["sensor"]: row for row in rows}
+
+    assert by_sensor["battery_wh65"]["status"] == "ok"
+    assert by_sensor["battery_wh65"]["value"] is None
+    assert by_sensor["battery_wh65"]["unit"] == "stato"
+    assert by_sensor["battery_wh90"]["status"] == "critical"
+
+
+def test_temperature_and_humidity_diagnostics_explain_suspicious_values():
+    now = pd.Timestamp("2026-08-28T12:00:00Z")
+    times = pd.date_range(now - pd.Timedelta(hours=1), now, freq="5min")
+    frame = pd.DataFrame(
+        {
+            "time": times,
+            "temp_c": [20.0] * 12 + [35.0],
+            "humidity": [55.0] * 12 + [120.0],
+            "pressure_hpa": 1012.0,
+            "wind_kmh": 5.0,
+            "rain_rate_mm_h": 0.0,
+            "solar_w_m2": 100.0,
+            "uv_index": 2.0,
+            "data_quality": "ok",
+        }
+    )
+
+    diagnostics = diagnose_observations(frame, now=now, hours=1, stale_minutes=20)
+    indexed = diagnostics.set_index("metric")
+
+    assert indexed.loc["temp_c", "status"] == "warning"
+    assert indexed.loc["humidity", "status"] == "warning"
+    assert "non plausibile" in indexed.loc["temp_c", "quality_note"]
+    assert "non plausibile" in indexed.loc["humidity", "quality_note"]
+
+
 def test_optional_telemetry_failure_never_raises():
     rows = [
         {

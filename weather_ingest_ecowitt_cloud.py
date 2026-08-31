@@ -424,6 +424,8 @@ def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
         output[column] = pd.to_numeric(output[column], errors="coerce")
         bad = output[column].notna() & ~output[column].between(minimum, maximum)
         invalid |= bad
+        if column in {"temp_c", "humidity"}:
+            _append_quality_flag(output, bad, f"range_filtered_{column}")
         output.loc[bad, column] = np.nan
     _append_quality_flag(output, invalid, "range_filtered")
 
@@ -761,9 +763,7 @@ def run_station_ingest(
                 session,
             )
             try:
-                telemetry.extend(
-                    extract_telemetry(payload, station_id=cfg.station_id)
-                )
+                telemetry.extend(extract_telemetry(payload, station_id=cfg.station_id))
             except Exception:  # noqa: BLE001 - diagnostics never block measurements
                 warnings.append("Telemetria diagnostica Ecowitt non interpretabile")
             realtime = parse_payload(payload)

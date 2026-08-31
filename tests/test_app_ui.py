@@ -35,6 +35,7 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
         ".card-expanded",
         ".air-grid",
         ".live-badge",
+        ".station-active-card",
         "@keyframes live-pulse",
         '[data-testid="stNumberInputContainer"]',
         '[data-testid="stNumberInputField"]',
@@ -49,6 +50,8 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
     assert 'content:"↓"' in source
     assert 'content:"\\2193"' not in source
     assert "Controllo automatico" in source
+    assert "Stima l’orizzonte dal DEM" in source
+    assert "Punto di rugiada" in source
     assert "Verifica automatica · ogni" in source
     assert "/AladinLite/api/v3/3.8.1/aladin.js" in source
     assert "Atlante CDS non disponibile in questo browser o rete" in source
@@ -162,7 +165,9 @@ def test_recent_station_cards_show_real_live_badges(
 
     assert not app.exception
     rendered = "\n".join(item.value for item in app.markdown)
-    assert rendered.count('<details class="current-card expandable-card">') == 6
+    assert rendered.count('<details class="current-card expandable-card">') == 8
+    assert "Percepita" in rendered
+    assert "Punto di rugiada" in rendered
     assert "live-badge is-live" in rendered
     assert "live-badge is-stale" in rendered
     assert "NON LIVE" in rendered

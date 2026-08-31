@@ -29,6 +29,7 @@ from astronomy_planner import (
     field_of_view,
     framing_assessment,
     framing_geometry,
+    horizon_altitudes,
     local_night_window,
     night_plan_csv,
     night_plan_tracks,
@@ -82,7 +83,7 @@ from data_access import (
     load_station_profiles,
 )
 from dpc_radar import DpcRadarError, fetch_dpc_radar_snapshot
-from ecowitt_diagnostics import load_ecowitt_diagnostics
+from ecowitt_diagnostics import load_ecowitt_diagnostics, telemetry_sensor_label
 from feature_registry import features as feature_registry
 from forecast_change import ForecastChangeSummary, summarize_forecast_change
 from light_pollution import (
@@ -99,6 +100,12 @@ from monthly_report import (
 from radar_nowcast import RadarNowcastError, fetch_radar_nowcast
 from rain_consistency import reportable_rain_amount, reportable_rain_series
 from share_card import ShareCardSummary, render_share_card
+from terrain_horizon import (
+    TerrainHorizonError,
+    TerrainHorizonEstimate,
+    combine_horizon_masks,
+    fetch_terrain_horizon,
+)
 from ux_features import best_ventilation_window, daily_city_comparison
 from weather_display import compass_direction, forecast_interval, weather_cell_style
 from weather_experience import (
@@ -260,6 +267,14 @@ div[data-baseweb="tab-list"] { gap:.25rem; } button[data-baseweb="tab"] { border
 [data-baseweb="select"],[data-baseweb="select"] > div,[data-baseweb="select"] input,
 [data-baseweb="select"] span { background-color:var(--control-bg) !important; color:var(--ink) !important; }
 [data-baseweb="select"] svg { fill:var(--ink) !important; }
+.station-active-card { display:flex; align-items:center; gap:.7rem; padding:.72rem .78rem; margin:.15rem 0 .7rem;
+  border:1px solid rgba(37,99,235,.38); border-radius:14px;
+  background:linear-gradient(135deg,rgba(37,99,235,.14),var(--surface)); box-shadow:var(--shadow); }
+.station-active-dot { width:.62rem; height:.62rem; flex:0 0 .62rem; border-radius:50%; background:#009e73;
+  box-shadow:0 0 0 4px rgba(0,158,115,.14); }
+.station-active-copy { min-width:0; }.station-active-copy small { display:block; color:var(--muted); font-size:.66rem;
+  font-weight:700; letter-spacing:.065em; text-transform:uppercase; }
+.station-active-copy strong { display:block; color:var(--ink); font-size:.86rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 [data-baseweb="popover"] > div,ul[role="listbox"],div[role="listbox"] {
   background:var(--control-bg) !important; color:var(--ink) !important; border-color:var(--line) !important; }
 li[role="option"],div[role="option"] { background:var(--control-bg) !important; color:var(--ink) !important; }
@@ -319,7 +334,7 @@ li[role="option"][aria-selected="true"],div[role="option"][aria-selected="true"]
 .hero-brief small { display:block; opacity:.78; line-height:1.45; }
 .v4-section-head { display:flex; justify-content:space-between; align-items:end; gap:1rem; margin:.9rem 0 .65rem; }
 .v4-section-head h3 { margin:0; font-size:1.35rem; }.v4-section-head span { color:var(--muted); font-size:.76rem; }
-.current-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:.65rem; margin:.8rem 0 1rem; }
+.current-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.65rem; margin:.8rem 0 1rem; }
 .current-card { min-width:0; min-height:118px; border:1px solid var(--line); border-radius:18px; padding:.82rem .88rem;
   background:var(--surface); box-shadow:var(--shadow); }
 .current-head,.air-title-row { display:flex; align-items:center; justify-content:space-between; gap:.45rem; min-width:0; }
@@ -486,7 +501,7 @@ div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background:var(--s
   opacity:1 !important;
 }
 @media(max-width:1050px){.forecast-grid{grid-template-columns:repeat(4,minmax(140px,1fr));}}
-@media(max-width:1050px){.current-grid{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media(max-width:1050px){.current-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:680px){
   .block-container{padding:.7rem}.hero{padding:1.25rem;border-radius:18px}
   .forecast-grid{grid-template-columns:repeat(2,minmax(135px,1fr));}.day-card{min-height:190px}
@@ -984,6 +999,75 @@ def _framing_figure(
     return _style_plotly(figure, dark_mode)
 
 
+def _horizon_profile_figure(
+    manual_mask: dict[float, float],
+    terrain: TerrainHorizonEstimate,
+    combined_mask: dict[float, float],
+    dark_mode: bool,
+) -> go.Figure:
+    """Compare manual, DEM and effective obstruction masks without coordinates."""
+    directions = np.asarray(sorted(terrain.mask), dtype=float)
+    closed_directions = np.append(directions, directions[0])
+    manual = horizon_altitudes(directions, manual_mask)
+    profiles = (
+        ("Manuale", manual, "#f59e0b", "dot"),
+        (
+            "Terreno Copernicus GLO-90",
+            np.asarray([terrain.mask[float(value)] for value in directions]),
+            "#0ea5e9",
+            "dash",
+        ),
+        (
+            "Usato dal planner · massimo dei due",
+            np.asarray([combined_mask[float(value)] for value in directions]),
+            "#7c3aed",
+            "solid",
+        ),
+    )
+    figure = go.Figure()
+    for label, values, colour, dash in profiles:
+        closed_values = np.append(values, values[0])
+        figure.add_trace(
+            go.Scatterpolar(
+                theta=closed_directions,
+                r=closed_values,
+                name=label,
+                mode="lines",
+                line={"color": colour, "width": 3, "dash": dash},
+                hovertemplate="Azimut %{theta:.0f}° · ostacolo %{r:.1f}°<extra>%{fullData.name}</extra>",
+            )
+        )
+    maximum = max(
+        10.0,
+        float(
+            np.nanmax(
+                [
+                    value
+                    for _label, values, _colour, _dash in profiles
+                    for value in values
+                ]
+            )
+        )
+        + 3,
+    )
+    figure.update_layout(
+        height=470,
+        margin={"l": 30, "r": 30, "t": 75, "b": 35},
+        title={"text": "Profilo indicativo dell’orizzonte", "x": 0},
+        polar={
+            "angularaxis": {
+                "direction": "clockwise",
+                "rotation": 90,
+                "tickmode": "array",
+                "tickvals": list(range(0, 360, 45)),
+                "ticktext": ["N", "NE", "E", "SE", "S", "SO", "O", "NO"],
+            },
+            "radialaxis": {"range": [0, min(60.0, maximum)], "ticksuffix": "°"},
+        },
+    )
+    return _style_plotly(figure, dark_mode)
+
+
 def _aladin_field_html(
     target: SkyTarget,
     profile: EquipmentProfile,
@@ -1273,7 +1357,7 @@ def _base_table_style(frame: pd.DataFrame, dark_mode: bool) -> Any:
 def _style_hourly_table(table: pd.DataFrame, dark_mode: bool) -> Any:
     styler = _base_table_style(table, dark_mode)
     metric_columns = {
-        "temperature": ["Temp °C", "Percepita °C"],
+        "temperature": ["Temp °C", "Percepita °C", "Rugiada °C"],
         "humidity": ["Umidità %"],
         "pressure": ["Pressione hPa"],
         "rain": ["Pioggia mm"],
@@ -1293,6 +1377,7 @@ def _style_hourly_table(table: pd.DataFrame, dark_mode: bool) -> Any:
     formats = {
         "Temp °C": "{:.1f}",
         "Percepita °C": "{:.1f}",
+        "Rugiada °C": "{:.1f}",
         "Pioggia mm": "{:.1f}",
         "Prob. %": "{:.0f}",
         "Umidità %": "{:.0f}",
@@ -1338,13 +1423,14 @@ def _style_status_table(
                     "non disponibile",
                     "non disponibili",
                     "critica",
+                    "problema",
                     "troppo basso",
                 }
                 else weather_cell_style(55, "confidence")
             ),
             subset=[status_column],
         )
-    for text_column in ("Continuità / fallback", "Ultimo errore"):
+    for text_column in ("Continuità / fallback", "Ultimo errore", "Motivo"):
         if text_column in table:
             styler = styler.set_properties(
                 subset=[text_column],
@@ -1737,7 +1823,8 @@ def render_three_hour_forecast(forecast: pd.DataFrame) -> None:
             f'<div class="hour-meta">🌡️ {_number(row.get("temp_c"), 1, " °C")} · percepita {_number(row.get("feels_like_c"), 1, " °C")}</div>'
             '<div class="expand-hint"><span class="closed-label">Altri dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
-            f"☁️ Nuvole {_number(row.get('clouds'), 0, '%')}"
+            f"◉ Punto di rugiada {_number(row.get('dewpoint_c'), 1, ' °C')}"
+            f"<br>☁️ Nuvole {_number(row.get('clouds'), 0, '%')}"
             f"<br>☔ {_number(reportable_rain_amount(row.get('rain_mm'), row.get('precip_probability')), 1, ' mm')} · rischio {_number(row.get('precip_probability'), 0, '%')}"
             f"<br>💨 {_number(row.get('wind_kmh'), 0, ' km/h')} · {html.escape(compass_direction(row.get('wind_dir')))}"
             f"<br>◎ Fiducia {_number(row.get('confidence'), 0, '%')} · fonte {html.escape(str(row.get('model') or 'blend calibrato'))}"
@@ -1829,7 +1916,18 @@ def render_v4_hero(
     )
     confidence = "—" if briefing.confidence is None else f"{briefing.confidence:.0f}%"
     temperature = _number(current_temp, 1, "°")
-    perceived = _number(forecast_row.get("feels_like_c"), 1, "° percepiti")
+    perceived_value = (
+        measured.get("feels_like_c")
+        if measured is not None
+        else forecast_row.get("feels_like_c")
+    )
+    dewpoint_value = (
+        measured.get("dewpoint_c")
+        if measured is not None
+        else forecast_row.get("dewpoint_c")
+    )
+    perceived = _number(perceived_value, 1, "° percepiti")
+    dewpoint = _number(dewpoint_value, 1, "° rugiada")
     minimum = _number(today.get("temp_min"), 0, "°")
     maximum = _number(today.get("temp_max"), 0, "°")
     variant = _hero_variant(description, is_day)
@@ -1843,7 +1941,7 @@ def render_v4_hero(
         f'<div class="hero-temperature">{temperature}</div>'
         '<div><div class="hero-description">'
         f'{html.escape(description)}</div><div class="hero-secondary">'
-        f"{html.escape(perceived)} · min {html.escape(minimum)} · max {html.escape(maximum)}"
+        f"{html.escape(perceived)} · {html.escape(dewpoint)} · min {html.escape(minimum)} · max {html.escape(maximum)}"
         "</div></div></div>"
         f'<div class="hero-secondary">Aggiornato alle {html.escape(updated)} · {html.escape(source)} · orari {html.escape(CFG.local_timezone)}</div>'
         "</div>"
@@ -1895,7 +1993,8 @@ def render_v4_hourly_strip(
             '<div class="expand-hint"><span class="closed-label">Dettagli</span><span class="open-label">Riduci</span></div>'
             '</summary><div class="card-expanded">'
             f"Condizione: {html.escape(description)}"
-            f"<br>🌡️ Percepita {_number(row.get('feels_like_c'), 1, ' °C')} · umidità {_number(row.get('humidity'), 0, '%')}"
+            f"<br>🌡️ Percepita {_number(row.get('feels_like_c'), 1, ' °C')} · rugiada {_number(row.get('dewpoint_c'), 1, ' °C')}"
+            f"<br>💧 Umidità {_number(row.get('humidity'), 0, '%')}"
             f"<br>☁️ Nuvole {_number(row.get('clouds'), 0, '%')}"
             f"<br>💨 Vento {_number(row.get('wind_kmh'), 0, ' km/h')} · {html.escape(compass_direction(row.get('wind_dir')))}"
             f"<br>◎ Fiducia {_number(row.get('confidence'), 0, '%')} · {html.escape(str(row.get('model') or 'blend calibrato'))}"
@@ -3192,7 +3291,7 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
         row_heights=[0.64, 0.36],
         specs=[[{}], [{"secondary_y": True}]],
         subplot_titles=(
-            "Temperatura · ━ temperatura · ··· percepita",
+            "Temperatura · blu aria · arancio percepita · turchese rugiada",
             "Pioggia · ▮ quantità · ━ probabilità",
         ),
     )
@@ -3206,6 +3305,17 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
         row=1,
         col=1,
     )
+    if "dewpoint_c" in hourly:
+        figure.add_trace(
+            go.Scatter(
+                x=plotly_local_datetimes(hourly["time"], city.timezone),
+                y=hourly["dewpoint_c"],
+                name="Punto di rugiada",
+                line={"color": "#0f9f9a", "width": 2, "dash": "dash"},
+            ),
+            row=1,
+            col=1,
+        )
     figure.add_trace(
         go.Scatter(
             x=plotly_local_datetimes(hourly["time"], city.timezone),
@@ -3269,6 +3379,7 @@ def _city_hourly_table(hourly: pd.DataFrame) -> pd.DataFrame:
             "Cielo": hourly.get("description"),
             "Temp °C": _numeric_series(hourly, "temp_c").round(1),
             "Percepita °C": _numeric_series(hourly, "feels_like_c").round(1),
+            "Rugiada °C": _numeric_series(hourly, "dewpoint_c").round(1),
             "Pioggia mm": _numeric_series(hourly, "precipitation_mm")
             .clip(lower=0)
             .round(1),
@@ -3312,7 +3423,8 @@ def render_city_dashboard(
         f'<div class="hero-temperature">{_number(current.get("temp_c"), 1, "°")}</div>'
         f'<div><div class="hero-description">{html.escape(description)}</div>'
         f'<div class="hero-secondary">percepita {_number(current.get("feels_like_c"), 1, "°")} · '
-        f"min {_number(city_today.get('temp_min_c'), 0, '°')} · max {_number(city_today.get('temp_max_c'), 0, '°')}</div></div></div>"
+        f"rugiada {_number(current.get('dewpoint_c'), 1, '°')} · min {_number(city_today.get('temp_min_c'), 0, '°')} · "
+        f"max {_number(city_today.get('temp_max_c'), 0, '°')}</div></div></div>"
         f'<div class="hero-secondary">Fonte {html.escape(city.source)} · orari {html.escape(city.timezone)} · nessun dato Ecowitt</div>'
         '</div><div class="hero-brief"><div class="eyebrow">In breve</div>'
         f"<strong>{html.escape(city_briefing.headline)}</strong>"
@@ -3362,6 +3474,13 @@ def render_city_dashboard(
                 _number(current.get("feels_like_c"), 1, " °C"),
                 "sensazione termica",
                 f"Combina temperatura, umidità e vento; temperatura dell’aria {_number(current.get('temp_c'), 1, ' °C')}.",
+            ),
+            (
+                "◉",
+                "Punto di rugiada",
+                _number(current.get("dewpoint_c"), 1, " °C"),
+                "condensa",
+                f"Punto di rugiada previsto da {city.source}; temperatura dell’aria {_number(current.get('temp_c'), 1, ' °C')}.",
             ),
             (
                 "💧",
@@ -3595,7 +3714,7 @@ def combined_chart(
         vertical_spacing=0.08,
         specs=[[{}], [{"secondary_y": True}]],
         subplot_titles=(
-            "Temperatura · ━ misurata · ┄ previsione · ┄· stima buco · fascia = incertezza",
+            "Temperatura · blu aria · arancio percepita · turchese rugiada · ━ misura · ┄ previsione",
             "Pioggia · ▮ misurata/prevista · ━ probabilità · linea arancione = adesso",
         ),
     )
@@ -3613,6 +3732,28 @@ def combined_chart(
             row=1,
             col=1,
         )
+        for column, label, colour in (
+            ("feels_like_c", "Percepita calcolata", "#f59e0b"),
+            ("dewpoint_c", "Punto di rugiada calcolato", "#0f9f9a"),
+        ):
+            if column in observations:
+                figure.add_trace(
+                    go.Scatter(
+                        x=plotly_local_datetimes(
+                            observations["time"], CFG.local_timezone
+                        ),
+                        y=observations[column],
+                        name=label,
+                        mode="lines",
+                        line={"color": colour, "width": 2.1},
+                        connectgaps=False,
+                        hovertemplate=(
+                            f"%{{x|%d/%m %H:%M}}<br>%{{y:.1f}} °C<extra>{label}</extra>"
+                        ),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
     missing_temperature = missing_forecast_segments(
         observations,
@@ -3650,7 +3791,6 @@ def combined_chart(
             row=1,
             col=1,
         )
-
     if not observations.empty and "rain_rate_mm_h" in observations:
         measured_rain = pd.to_numeric(
             observations["rain_rate_mm_h"], errors="coerce"
@@ -3703,6 +3843,28 @@ def combined_chart(
             row=1,
             col=1,
         )
+        for column, label, colour, dash in (
+            ("feels_like_c", "Percepita prevista", "#f59e0b", "dash"),
+            ("dewpoint_c", "Punto di rugiada previsto", "#0f9f9a", "dot"),
+        ):
+            if column in future:
+                figure.add_trace(
+                    go.Scatter(
+                        x=plotly_local_datetimes(
+                            future["valid_time"], CFG.local_timezone
+                        ),
+                        y=future[column],
+                        name=label,
+                        mode="lines",
+                        line={"color": colour, "width": 2.0, "dash": dash},
+                        opacity=0.9,
+                        hovertemplate=(
+                            f"%{{x|%d/%m %H:%M}}<br>%{{y:.1f}} °C<extra>{label}</extra>"
+                        ),
+                    ),
+                    row=1,
+                    col=1,
+                )
         figure.add_trace(
             go.Scatter(
                 x=plotly_local_datetimes(future["valid_time"], CFG.local_timezone),
@@ -4108,23 +4270,33 @@ with st.sidebar:
     elif not station_profiles.empty:
         profile_lookup = station_profiles.set_index("station_id")
         identifiers = station_profiles["station_id"].astype(str).tolist()
-        active_station_id = st.selectbox(
-            "Stazione",
-            options=identifiers,
-            index=(
-                identifiers.index(CFG.station_id)
-                if CFG.station_id in identifiers
-                else 0
-            ),
-            format_func=lambda identifier: str(
-                profile_lookup.loc[identifier, "display_name"]
-            ),
-            disabled=len(identifiers) == 1,
-            help=(
-                "Il registro è già predisposto per più stazioni; le coordinate "
-                "esatte non vengono mostrate nell'interfaccia."
-            ),
-        )
+        if len(identifiers) == 1:
+            active_station_id = identifiers[0]
+            single_name = str(profile_lookup.loc[active_station_id, "display_name"])
+            st.markdown(
+                '<div class="station-active-card" aria-label="Stazione attiva">'
+                '<span class="station-active-dot"></span>'
+                '<span class="station-active-copy"><small>Stazione attiva</small>'
+                f"<strong>{html.escape(single_name)}</strong></span></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            active_station_id = st.selectbox(
+                "Stazione",
+                options=identifiers,
+                index=(
+                    identifiers.index(CFG.station_id)
+                    if CFG.station_id in identifiers
+                    else 0
+                ),
+                format_func=lambda identifier: str(
+                    profile_lookup.loc[identifier, "display_name"]
+                ),
+                help=(
+                    "Le coordinate esatte delle stazioni non vengono mostrate "
+                    "nell'interfaccia."
+                ),
+            )
         profile = profile_lookup.loc[active_station_id]
         active_station_name = str(profile["display_name"])
         active_station_timezone = str(profile["timezone"])
@@ -4266,12 +4438,39 @@ if not station.empty:
         details = current_freshness.get(metric) or {}
         return str(details.get("status") or "offline"), details.get("age_minutes")
 
+    def derived_live_state(*metrics: str) -> tuple[str, Any]:
+        states = [live_state(metric) for metric in metrics]
+        statuses = [state[0] for state in states]
+        status = (
+            "offline"
+            if "offline" in statuses
+            else "delayed"
+            if "delayed" in statuses
+            else "online"
+        )
+        age_values = pd.to_numeric(
+            pd.Series([state[1] for state in states]), errors="coerce"
+        ).dropna()
+        ages = [float(value) for value in age_values if np.isfinite(value)]
+        return status, max(ages) if ages else None
+
     temperature_live = live_state("temperature")
     humidity_live = live_state("humidity")
     pressure_live = live_state("pressure")
     wind_live = live_state("wind")
     rain_live = live_state("rain")
     solar_live = live_state("solar")
+    perceived_live = derived_live_state("temperature", "humidity", "wind")
+    dewpoint_live = derived_live_state("temperature", "humidity")
+    dew_spread_values = pd.to_numeric(
+        pd.Series([current.get("temp_c"), current.get("dewpoint_c")]),
+        errors="coerce",
+    )
+    dew_spread = (
+        float(dew_spread_values.iloc[0] - dew_spread_values.iloc[1])
+        if dew_spread_values.notna().all()
+        else np.nan
+    )
     render_current_grid(
         [
             (
@@ -4281,6 +4480,22 @@ if not station.empty:
                 _delta(current, previous, "temp_c"),
                 f"Misura Ecowitt delle {current_time_label}. Il badge confronta il valore con circa tre ore prima.",
                 *temperature_live,
+            ),
+            (
+                "🧍",
+                "Percepita",
+                _number(current.get("feels_like_c"), 1, " °C"),
+                "stima all’ombra",
+                f"Calcolata da temperatura, umidità e vento Ecowitt delle {current_time_label}; non include il sole diretto o l’abbigliamento.",
+                *perceived_live,
+            ),
+            (
+                "◉",
+                "Punto di rugiada",
+                _number(current.get("dewpoint_c"), 1, " °C"),
+                f"scarto {_number(dew_spread, 1, ' °C')}",
+                f"Calcolo Magnus da temperatura e umidità Ecowitt delle {current_time_label}; più si avvicina alla temperatura, maggiore è il rischio di condensa.",
+                *dewpoint_live,
             ),
             (
                 "💧",
@@ -4462,6 +4677,7 @@ with tab_forecast:
                 "Cielo": hourly.get("description"),
                 "Temp °C": _numeric_series(hourly, "temp_c").round(1),
                 "Percepita °C": _numeric_series(hourly, "feels_like_c").round(1),
+                "Rugiada °C": _numeric_series(hourly, "dewpoint_c").round(1),
                 "Pioggia mm": _numeric_series(hourly, "rain_mm").round(1),
                 "Prob. %": _numeric_series(hourly, "precip_probability").round(0),
                 "Umidità %": _numeric_series(hourly, "humidity").round(0),
@@ -4831,7 +5047,7 @@ with tab_station:
             shared_xaxes=True,
             vertical_spacing=0.065,
             subplot_titles=(
-                "Temperatura · ━ misura Ecowitt",
+                "Temperatura · rosso aria · arancio percepita · turchese rugiada",
                 "Umidità · ━ misura Ecowitt",
                 "Pressione · ━ misura Ecowitt",
                 "Vento · ━ velocità · ┄ raffiche · misure Ecowitt",
@@ -4847,6 +5063,24 @@ with tab_station:
             row=1,
             col=1,
         )
+        for column, label, colour, dash in (
+            ("feels_like_c", "Percepita calcolata", "#f59e0b", "dash"),
+            ("dewpoint_c", "Punto di rugiada calcolato", "#0f9f9a", "dot"),
+        ):
+            if column in recent:
+                figure.add_trace(
+                    go.Scatter(
+                        x=plotly_local_datetimes(
+                            recent["time"], active_station_timezone
+                        ),
+                        y=recent[column],
+                        name=label,
+                        line={"color": colour, "width": 2.0, "dash": dash},
+                        connectgaps=False,
+                    ),
+                    row=1,
+                    col=1,
+                )
         figure.add_trace(
             go.Scatter(
                 x=plotly_local_datetimes(recent["time"], active_station_timezone),
@@ -5413,7 +5647,8 @@ with tab_astro:
         with st.expander("Orizzonte locale · ostacoli"):
             st.caption(
                 "Indica l'altezza apparente di tetti, alberi o rilievi nelle otto "
-                "direzioni. Il planner interpola la maschera senza salvare coordinate terrestri."
+                "direzioni. La maschera manuale resta il riferimento per edifici, "
+                "alberi e antenne vicini."
             )
             direction_labels = {
                 0: "N",
@@ -5440,6 +5675,95 @@ with tab_astro:
                 )
                 horizon_mask[float(direction)] = float(value)
             st.session_state["astro_horizon_mask"] = horizon_mask
+            st.markdown("##### Stima indicativa da terreno satellitare")
+            st.caption(
+                "Su richiesta vengono inviati a Open-Meteo 97 punti attorno alla "
+                "stazione per leggere Copernicus GLO-90. Il risultato resta nella "
+                "sessione e non contiene coordinate; la risoluzione di circa 90 m "
+                "non distingue in modo affidabile il singolo tetto o albero."
+            )
+            terrain_controls = st.columns((2, 3))
+            sensor_height_m = terrain_controls[0].number_input(
+                "Sensore sopra il suolo · m",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(st.session_state.get("astro_sensor_height_m", 2.0)),
+                step=0.5,
+                key="astro_sensor_height_m",
+                help=(
+                    "Altezza del sensore o telescopio sopra la quota del terreno. "
+                    "Serve a non sovrastimare l'orizzonte vicino."
+                ),
+            )
+            calculate_terrain = terrain_controls[1].button(
+                "Stima l’orizzonte dal DEM",
+                type="primary",
+                width="stretch",
+                key="astro_calculate_terrain_horizon",
+            )
+            if calculate_terrain:
+                try:
+                    with st.spinner("Campiono il terreno nelle 16 direzioni…"):
+                        estimate = fetch_terrain_horizon(
+                            CFG.latitude,
+                            CFG.longitude,
+                            CFG.elevation_m,
+                            sensor_height_m=float(sensor_height_m),
+                        )
+                except TerrainHorizonError as exc:
+                    st.warning(
+                        f"Stima DEM non disponibile: {exc}. La maschera manuale "
+                        "continua a funzionare."
+                    )
+                else:
+                    st.session_state["astro_terrain_horizon"] = estimate
+                    st.success(
+                        "Profilo DEM calcolato: il planner può combinarlo con gli "
+                        "ostacoli manuali."
+                    )
+            terrain_estimate = st.session_state.get("astro_terrain_horizon")
+            if isinstance(terrain_estimate, TerrainHorizonEstimate):
+                use_combined_horizon = st.toggle(
+                    "Usa il massimo fra DEM e ostacoli manuali",
+                    value=True,
+                    key="astro_use_terrain_horizon",
+                )
+                combined_horizon = combine_horizon_masks(
+                    horizon_mask, terrain_estimate.mask
+                )
+                st.plotly_chart(
+                    _horizon_profile_figure(
+                        horizon_mask,
+                        terrain_estimate,
+                        combined_horizon,
+                        dark_mode,
+                    ),
+                    width="stretch",
+                    theme=None,
+                    key="astronomy_terrain_horizon",
+                )
+                peak_direction = max(
+                    terrain_estimate.mask, key=terrain_estimate.mask.get
+                )
+                peak_angle = terrain_estimate.mask[peak_direction]
+                peak_distance = terrain_estimate.peak_distances_km[peak_direction]
+                generated = pd.Timestamp(terrain_estimate.generated_at).tz_convert(
+                    CFG.local_timezone
+                )
+                st.caption(
+                    f"Copernicus GLO-90 · risoluzione {terrain_estimate.resolution_m} m · "
+                    f"massimo DEM {peak_angle:.1f}° verso azimut {peak_direction:.0f}° "
+                    f"a circa {peak_distance:g} km · calcolato {generated:%d/%m %H:%M}. "
+                    f"[Fonte]({terrain_estimate.source_url})"
+                )
+                if abs(terrain_estimate.elevation_difference_m) > 35:
+                    st.info(
+                        "La quota configurata e la quota media del tassello DEM "
+                        "differiscono sensibilmente. Il calcolo usa il profilo "
+                        "relativo del terreno, ma conviene verificare la quota della stazione."
+                    )
+                if use_combined_horizon:
+                    horizon_mask = combined_horizon
 
         default_target_names = {"M31", "M42", "M45", "M13"}
         selected_targets = st.multiselect(
@@ -6387,11 +6711,19 @@ with tab_system:
                 lambda value: "—" if pd.isna(value) else f"{value:.0f} min"
             ),
             "Campioni segnalati": sensor_diagnostics["quality_flags"],
+            "Motivo": sensor_diagnostics["quality_note"],
         }
     )
     if not expert_mode:
         diagnostic_table = diagnostic_table[
-            ["Sensore", "Stato", "Ultimo dato", "Valore", "Copertura 24 h"]
+            [
+                "Sensore",
+                "Stato",
+                "Ultimo dato",
+                "Valore",
+                "Copertura 24 h",
+                "Motivo",
+            ]
         ]
     render_styled_table(
         _style_status_table(diagnostic_table, dark_mode, "Stato"), height=390
@@ -6404,24 +6736,39 @@ with tab_system:
     else:
         telemetry_labels = {
             "ok": "Regolare",
-            "warning": "Bassa",
-            "critical": "Critica",
+            "warning": "Da controllare",
+            "critical": "Problema",
             "unknown": "Da interpretare",
         }
+
+        def telemetry_value(row: pd.Series) -> str:
+            if pd.notna(row.get("value")):
+                unit = row.get("unit")
+                rendered_unit = "" if pd.isna(unit) else str(unit)
+                return f"{float(row['value']):.2f} {rendered_unit}".strip()
+            if row.get("metric") == "battery" and row.get("status") == "ok":
+                return "Normale · carica"
+            if row.get("metric") == "battery":
+                return "Stato anomalo"
+            return "—"
+
         telemetry_table = pd.DataFrame(
             {
-                "Dispositivo": device_telemetry["sensor"],
+                "Dispositivo": device_telemetry["sensor"].map(telemetry_sensor_label),
                 "Parametro": device_telemetry["metric"].map(
                     {"battery": "Batteria", "signal": "Segnale"}
                 ),
-                "Valore": device_telemetry.apply(
-                    lambda row: f"{row['value']:.2f} {row['unit']}".strip(), axis=1
-                ),
+                "Valore": device_telemetry.apply(telemetry_value, axis=1),
                 "Stato": device_telemetry["status"].map(telemetry_labels),
                 "Aggiornato": device_telemetry["observed_at"].map(_local_time),
             }
         )
         render_styled_table(_style_status_table(telemetry_table, dark_mode, "Stato"))
+        st.caption(
+            "Per il Sensor Array la risposta Ecowitt “Normal/Normale” significa "
+            "batteria carica ed è verde; qualsiasi altro stato testuale viene "
+            "evidenziato come problema. Le tensioni numeriche usano le soglie del sensore."
+        )
         if not device_telemetry["metric"].eq("signal").any():
             st.caption("Il segnale radio non è esposto dalla risposta cloud corrente.")
 

@@ -141,4 +141,7 @@ def test_quality_check_preserves_existing_flags_when_filtering_range():
     checked = _quality_check(frame)
 
     assert pd.isna(checked.iloc[0]["temp_c"])
-    assert checked.iloc[0]["data_quality"] == "estimated_rain;range_filtered"
+    quality = checked.iloc[0]["data_quality"]
+    assert "estimated_rain" in quality
+    assert "range_filtered_temp_c" in quality
+    assert "range_filtered" in quality

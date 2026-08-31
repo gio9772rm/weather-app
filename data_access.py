@@ -14,6 +14,7 @@ from db import ensure_schema, get_engine
 from forecast_quality import enforce_physical_bounds
 from rain_consistency import reportable_rain_series
 from source_health import configured_sources
+from weather_derived import add_station_derived_values
 
 
 def _read(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -77,7 +78,8 @@ def load_station(hours: int = 240, station_id: str | None = None) -> pd.DataFram
         frame.loc[legacy, "rain_mm"] = np.nan
         if "data_quality" in frame:
             frame.loc[legacy, "data_quality"] = "legacy_unknown_rain"
-    return frame.dropna(subset=["time"]).sort_values("time")
+    frame = frame.dropna(subset=["time"]).sort_values("time")
+    return add_station_derived_values(frame)
 
 
 def load_station_profiles() -> pd.DataFrame:
@@ -132,7 +134,8 @@ def load_station_month(
     ):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    return frame.dropna(subset=["time"]).sort_values("time")
+    frame = frame.dropna(subset=["time"]).sort_values("time")
+    return add_station_derived_values(frame)
 
 
 def available_station_months(station_id: str, timezone: str) -> list[tuple[int, int]]:

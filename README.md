@@ -1,4 +1,4 @@
-# Meteo V4.7.2
+# Meteo V4.8
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -15,6 +15,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - **Calibrazione 2.0** per variabile, orizzonte e regime meteorologico, combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
 - interfaccia responsive con panoramica continua passato→futuro e riquadri meteo/pianificazione espandibili con clic o tastiera;
+- temperatura percepita e punto di rugiada calcolati dalle misure Ecowitt, mostrati nelle card e nei grafici insieme ai corrispondenti valori previsionali;
 - grafici con timestamp `Europe/Rome` espliciti, linea **Adesso** allineata allo stesso asse e due ore di emissioni previsionali archiviate mantenute per il confronto con le misure;
 - nuova home **Oggi** con meteo dinamico, riepilogo in linguaggio naturale, timeline scorrevole, pioggia/vento/fiducia e tendenza settimanale;
 - indici orientativi per passeggiata, pollini, ricambio d'aria e astronomia, con il momento migliore e criteri espliciti;
@@ -39,8 +40,8 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
 - acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
 - scheda **Sistema** con riepilogo immediato del controllo automatico, backup e fonti utilizzabili, seguito da fallback, latenza, errori consecutivi, copertura a 5 minuti e anomalie;
-- diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi, anomalie e telemetria batteria/segnale quando esposta dall'API cloud, senza archiviare MAC o payload completi;
-- pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, massa d'aria, distanza dalla Luna, ostacoli locali, profili ottica/camera, simulatore del campo inquadrato, atlante CDS opzionale, piano notturno multi-target in ora locale, calendario ICS e CSV;
+- diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi e motivazione delle anomalie di temperatura/umidità; il Sensor Array interpreta `Normal/Normale` come batteria carica e colora ogni altro stato testuale come problema, senza archiviare MAC o payload completi;
+- pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, massa d'aria, distanza dalla Luna, ostacoli locali, stima opzionale dell'orizzonte dal terreno Copernicus GLO-90, profili ottica/camera, simulatore del campo inquadrato, atlante CDS opzionale, piano notturno multi-target in ora locale, calendario ICS e CSV;
 - backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
 - controllo salute indipendente a ogni merge e ogni 30 minuti; se GitHub ritarda, la UI distingue per 24 ore l'ultimo esito valido dal controllo continuo Render;
 - issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
@@ -299,7 +300,9 @@ La scheda Astronomia interroga per `LAT` e `LON` il tassello numerico necessario
 
 Il **Pianificatore Astronomia Pro** combina queste condizioni con coordinate celesti del catalogo locale oppure target RA/Dec inseriti dall'utente, altezza/azimut, massa d'aria e separazione angolare dalla Luna. L'utente sceglie data, orario iniziale/finale e passo da 15/30/60 minuti; la notte può attraversare mezzanotte e cambi CET/CEST senza spostare le curve. La magnitudine resta un dato intrinseco del soggetto ed è mostrata in tabella e nei tooltip, non come falsa serie variabile nel tempo.
 
-La maschera dell'orizzonte interpola otto direzioni locali; i profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Il simulatore confronta il rettangolo ruotato del sensore con l'ingombro apparente, quantifica riempimento e margine e indica quando serve un mosaico o un riduttore. Su richiesta è disponibile anche l'atlante fotografico interattivo [CDS Aladin Lite](https://aladin.cds.unistra.fr/AladinLite/doc/), fissato alla release stabile 3.8.1: riceve soltanto RA/Dec celesti, lascia intatti logo e attribuzione CDS e non sostituisce il fallback geometrico. Se WebGL2 o la rete CDS non sono disponibili, il limite viene dichiarato senza bloccare il planner. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), restano indicative.
+La maschera dell'orizzonte interpola otto direzioni locali. Su richiesta, un unico batch dell'[Elevation API Open-Meteo](https://open-meteo.com/en/docs/elevation-api) campiona 96 punti in 16 direzioni usando Copernicus GLO-90: il planner può prendere il massimo fra profilo DEM e ostacoli manuali. Il risultato privo di coordinate resta nella sola sessione. La risoluzione di circa 90 m descrive rilievi e grandi superfici, non certifica il singolo tetto, albero o antenna, che va mantenuto nella maschera manuale.
+
+I profili ottica/camera calcolano campo geometrico, focale effettiva e campionamento. Il simulatore confronta il rettangolo ruotato del sensore con l'ingombro apparente, quantifica riempimento e margine e indica quando serve un mosaico o un riduttore. Su richiesta è disponibile anche l'atlante fotografico interattivo [CDS Aladin Lite](https://aladin.cds.unistra.fr/AladinLite/doc/), fissato alla release stabile 3.8.1: riceve soltanto RA/Dec celesti, lascia intatti logo e attribuzione CDS e non sostituisce il fallback geometrico. Se WebGL2 o la rete CDS non sono disponibili, il limite viene dichiarato senza bloccare il planner. Le dimensioni apparenti, confrontate con [Hubble Messier Catalog](https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/) e [SIMBAD/CDS](https://simbad.cds.unistra.fr/simbad/), restano indicative.
 
 La sessione parte con il preset modificabile **Tripletto 80/480 + 571MC-Pro**, riduttore 0,8×, sensore 23,5 × 15,7 mm e pixel 3,76 µm; il preset non viene scritto nel database e può essere sostituito o esportato dal browser.
 
