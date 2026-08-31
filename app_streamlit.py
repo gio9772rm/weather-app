@@ -132,7 +132,7 @@ st.markdown(
 :root {
   color-scheme:light !important;
   --page-bg:#f6f8fb; --sidebar-bg:#edf6fc; --surface:#ffffff; --surface-soft:#f8fafc;
-  --ink:#10243d; --muted:#64748b; --subtle:#475569; --line:rgba(148,163,184,.28);
+  --ink:#10243d; --muted:#5b687b; --subtle:#475569; --line:rgba(148,163,184,.28);
   --blue:#2563eb; --card-bg:linear-gradient(155deg,rgba(255,255,255,.98),rgba(241,245,249,.9));
   --control-bg:#ffffff; --shadow:0 7px 22px rgba(15,23,42,.055);
   --scrollbar-track:#dbe7f1; --scrollbar-thumb:#267fc0; --scrollbar-hover:#155f96;
