@@ -102,6 +102,34 @@ def ensure_primary_station(
         return identifier
 
 
+def ensure_secondary_station(
+    cfg: Settings,
+    engine: Engine | None = None,
+    *,
+    strict: bool = False,
+) -> str:
+    """Register an enabled secondary Ecowitt without changing the primary role."""
+    identifier = normalise_station_id(cfg.station_id)
+    try:
+        return register_station(
+            station_id=identifier,
+            display_name=cfg.location_name,
+            latitude=cfg.latitude,
+            longitude=cfg.longitude,
+            elevation_m=cfg.elevation_m,
+            timezone=cfg.local_timezone,
+            source="ecowitt",
+            role="secondary",
+            enabled=True,
+            engine=engine,
+        )
+    except Exception as exc:
+        if strict:
+            raise
+        log.warning("Registro stazione secondaria non aggiornato: %s", str(exc)[:300])
+        return identifier
+
+
 def sync_primary_station_history(
     cfg: Settings = settings,
     engine: Engine | None = None,
@@ -114,7 +142,7 @@ def sync_primary_station_history(
     ``station_raw`` remains the authoritative primary-station store. On the first
     synchronization all available history is copied; later runs only inspect a
     rolling lookback window ending at the newest mirrored observation. This keeps
-    five-minute ingestion light while still recovering late/backfilled samples.
+    ten-minute ingestion light while still recovering late/backfilled samples.
     Mirror failures are isolated from live Ecowitt ingestion unless ``strict=True``.
     """
     engine = engine or get_engine()

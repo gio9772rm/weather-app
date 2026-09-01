@@ -59,3 +59,30 @@ def test_all_workflow_actions_are_pinned_to_immutable_commit_shas():
 
     assert references
     assert all(re.fullmatch(r"[0-9a-f]{40}", reference) for reference in references)
+
+
+def test_live_ingestion_uses_one_ten_minute_cadence_and_passes_secondary_station():
+    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/cloud_ingest.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'schedule: "*/10 * * * *"' in render
+    assert 'schedule: "*/5 * * * *"' not in render
+    assert 'value: "10"' in render
+    assert 'STATION_REFRESH_MINUTES: "10"' in workflow
+    assert workflow.count("SECONDARY_ECOWITT_API_KEY:") == 2
+    assert workflow.count("SECONDARY_ECOWITT_MAC:") == 2
+    assert workflow.count("SECONDARY_STATION_LAT:") == 2
+
+
+def test_secondary_location_is_supplied_as_a_secret_to_github_workflows():
+    for name in ("cloud_ingest.yml", "cloud_backfill.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        for variable in (
+            "SECONDARY_STATION_LAT",
+            "SECONDARY_STATION_LON",
+            "SECONDARY_STATION_ELEVATION_M",
+        ):
+            assert f"${{{{ secrets.{variable} }}}}" in workflow
+            assert f"${{{{ vars.{variable} }}}}" not in workflow

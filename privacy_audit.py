@@ -91,18 +91,48 @@ def audit_repository(root: str | Path) -> list[Finding]:
     render_path = base / "render.yaml"
     if render_path.exists():
         render_text = render_path.read_text(encoding="utf-8")
-        for variable in ("LAT", "LON"):
-            block = re.search(
-                rf"- key:\s*{variable}\s*\n(?P<body>(?:\s+[^\n]+\n?){{0,4}})",
-                render_text,
-            )
-            if not block or "sync: false" not in block.group("body"):
-                findings.append(
-                    Finding("render.yaml", f"private-{variable.lower()}-not-external")
+        private_variables = (
+            "DATABASE_URL",
+            "LAT",
+            "LON",
+            "ECOWITT_APPLICATION_KEY",
+            "ECOWITT_API_KEY",
+            "ECOWITT_MAC",
+            "OPENWEATHER_API_KEY",
+            "SECONDARY_STATION_LAT",
+            "SECONDARY_STATION_LON",
+            "SECONDARY_STATION_ELEVATION_M",
+            "SECONDARY_ECOWITT_APPLICATION_KEY",
+            "SECONDARY_ECOWITT_API_KEY",
+            "SECONDARY_ECOWITT_MAC",
+            "SECONDARY_STATION_DAILY_GZIP_B64",
+        )
+        for variable in private_variables:
+            blocks = list(
+                re.finditer(
+                    rf"^\s{{6}}- key:\s*{re.escape(variable)}\s*$\n"
+                    rf"(?P<body>(?:^\s{{8,}}[^\n]+\n?){{0,4}})",
+                    render_text,
+                    re.MULTILINE,
                 )
-            if block and re.search(r"\bvalue:\s*[-+]?\d", block.group("body")):
+            )
+            if not blocks or any(
+                "sync: false" not in block.group("body") for block in blocks
+            ):
                 findings.append(
-                    Finding("render.yaml", f"private-{variable.lower()}-embedded")
+                    Finding(
+                        "render.yaml",
+                        f"private-{variable.casefold().replace('_', '-')}-not-external",
+                    )
+                )
+            if any(
+                re.search(r"\bvalue:\s*\S", block.group("body")) for block in blocks
+            ):
+                findings.append(
+                    Finding(
+                        "render.yaml",
+                        f"private-{variable.casefold().replace('_', '-')}-embedded",
+                    )
                 )
     return sorted(set(findings), key=lambda item: (item.path, item.rule))
 

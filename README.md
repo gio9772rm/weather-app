@@ -32,14 +32,14 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - baseline climatica locale Ecowitt per mese e ora, con mediana, fascia P10–P90 e anomalie correnti dichiarate come confronto con lo storico disponibile;
 - riferimento climatico mensile **1991–2020 ERA5-Land**, esplicitamente dichiarato come rianalisi e distinto dalle normali ufficiali ISPRA/SCIA;
 - bollettini ufficiali DPC e Regione Lazio subito sotto **Pianifica la giornata**, separati dagli avvisi contestuali calcolati dall'app;
-- registro e archivio con chiave stazione, pronti ad accogliere una seconda Ecowitt del Nord senza collisioni e senza cambiare lo storico esistente;
+- seconda Ecowitt indipendente con storico giornaliero, vista live e confronto omogeneo per data; Roma resta il riferimento delle previsioni locali;
 - rapporti climatici mensili scaricabili in **PDF e CSV**, privi delle coordinate esatte;
 - **Astronomia Pro** con trasparenza, stabilità atmosferica, jet a 300 hPa, umidità a 700 hPa, zero termico e rischio condensa presentati come proxy previsionali, mai come seeing misurato;
 - modalità di lettura **Semplice/Esperta**, salvata nell'URL, per aggiungere confronti grezzi e metadati solo quando servono;
 - origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
-- acquisizione Render ogni 5 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
-- scheda **Sistema** con riepilogo immediato del controllo automatico, backup e fonti utilizzabili, seguito da fallback, latenza, errori consecutivi, copertura a 5 minuti e anomalie;
+- acquisizione Render e aggiornamento atomico della pagina ogni 10 minuti, riconciliazione GitHub di 7 giorni e scritture idempotenti;
+- scheda **Sistema** con riepilogo immediato del controllo automatico, backup e fonti utilizzabili, seguito da fallback, latenza, errori consecutivi, copertura a 10 minuti e anomalie;
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi e motivazione delle anomalie di temperatura/umidità; il Sensor Array interpreta `Normal/Normale` come batteria carica e colora ogni altro stato testuale come problema, senza archiviare MAC o payload completi;
 - pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, massa d'aria, distanza dalla Luna, ostacoli locali, stima opzionale dell'orizzonte dal terreno Copernicus GLO-90, profili ottica/camera, simulatore del campo inquadrato, atlante CDS opzionale, piano notturno multi-target in ora locale, calendario ICS e CSV;
 - backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
@@ -53,7 +53,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 
 ```mermaid
 flowchart TD
-  E["Ecowitt Cloud"] --> P["Cron Job Render · ogni 5 min"]
+  E["Ecowitt Roma + Comacchio"] --> P["Cron Job Render · ogni 10 min"]
   ICON["ItaliaMeteo ICON-2I"] --> P
   OM["Open-Meteo"] --> P
   OW["OpenWeather"] --> P
@@ -80,11 +80,25 @@ flowchart TD
   Q --> DB
 ```
 
-Il Cron Job Render gira ogni 5 minuti e recupera sempre almeno le ultime 2 ore. I provider di previsione vengono interrogati una volta l'ora. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
+Il Cron Job Render gira ogni 10 minuti e recupera sempre almeno le ultime 2 ore per entrambe le Ecowitt configurate. Un controllo persistente nel database impedisce inoltre scritture Ecowitt dopo soli 5 minuti anche se la pianificazione di un servizio Render esistente non fosse ancora allineata al Blueprint. La pagina usa un unico ciclo automatico di 10 minuti: tra due cicli le interazioni riutilizzano la stessa fotografia in cache, mentre **Ricarica dati** forza un nuovo ciclo e fa ripartire il conteggio. I provider di previsione mantengono la propria cadenza appropriata (un'ora per i modelli), ma ogni sezione visibile rilegge insieme lo stato disponibile al ciclo successivo. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
 
 Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle CFR dal dataset pubblico `dpcn-lazio` di [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio), con attribuzione e licenza CC BY 4.0 riportate dal catalogo. L'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7) resta integrato come opzione, ma non viene interrogato di default mentre il portale restituisce risposte non affidabili. Tutte le osservazioni esterne sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione remota può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 
-Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno e le previsioni per 15 minuti. La scheda **Aria** usa invece la previsione ambientale CAMS/Open‑Meteo per le coordinate visualizzate e resta separata dai sensori della stazione.
+Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno, mentre previsioni città e qualità dell'aria partecipano allo stesso ciclo pagina di 10 minuti. La scheda **Aria** usa invece la previsione ambientale CAMS/Open‑Meteo per le coordinate visualizzate e resta separata dai sensori della stazione.
+
+### Seconda stazione e storico giornaliero
+
+La seconda Ecowitt viene acquisita nello stesso processo ma scrive soltanto righe associate al proprio `station_id`. Un suo errore rimane visibile nella scheda **Sistema** e non blocca Roma. Nella scheda **Stazione** puoi consultare i campioni live di ciascun sito e confrontare le due serie giornaliere su date comuni. Il confronto è descrittivo: differenze di temperatura, umidità e pioggia tra Roma e un altro microclima non diventano automaticamente una correzione del forecast primario.
+
+Gli export Ecowitt con minime, massime e medie giornaliere vanno conservati come riepiloghi, non ricostruiti artificialmente come osservazioni orarie. Prima dell'importazione configura le variabili `SECONDARY_STATION_*`, quindi verifica il file senza scritture e infine esegui l'importazione idempotente:
+
+```bash
+python import_station_daily.py /percorso/export.xlsx --dry-run
+python import_station_daily.py /percorso/export.xlsx
+```
+
+Il file privato non deve essere aggiunto al repository. Se la differenza tra pressione relativa e assoluta è anomala, le giornate restano consultabili ma vengono marcate per la verifica della calibrazione della console.
+In produzione lo stesso contenuto può essere fornito una sola volta tramite la variabile privata `SECONDARY_STATION_DAILY_GZIP_B64`: il Cron Job ne verifica l'hash, lo importa in modo idempotente e non ripete la scrittura nei cicli successivi.
 
 ## Esperienza V4
 
@@ -150,10 +164,16 @@ Backfill Ecowitt di 7 giorni:
 | `ECOWITT_APPLICATION_KEY` | stazione | application key Ecowitt |
 | `ECOWITT_API_KEY` | stazione | API key Ecowitt |
 | `ECOWITT_MAC` | stazione | MAC della console/gateway |
+| `SECONDARY_STATION_ENABLED` | no | abilita l'acquisizione indipendente della seconda Ecowitt, default `false` |
+| `SECONDARY_STATION_ID`, `SECONDARY_STATION_NAME` | seconda stazione | identificatore stabile ed etichetta mostrata in pagina |
+| `SECONDARY_STATION_LAT`, `SECONDARY_STATION_LON`, `SECONDARY_STATION_ELEVATION_M`, `SECONDARY_STATION_TZ` | seconda stazione | posizione e fuso della seconda stazione; le coordinate esatte vanno conservate nei segreti di deploy |
+| `SECONDARY_ECOWITT_APPLICATION_KEY`, `SECONDARY_ECOWITT_API_KEY`, `SECONDARY_ECOWITT_MAC` | seconda stazione | credenziali separate; l'application key primaria può essere riusata lasciando vuota quella secondaria |
+| `SECONDARY_STATION_DAILY_GZIP_B64` | no | bootstrap privato monouso dello storico giornaliero; non va mai salvato nel repository |
 | `OPENWEATHER_API_KEY` | consigliata | abilita il secondo provider; sono accettati anche i nomi precedenti `OWM_API_KEY` e `OW_API_KEY` |
 | `LAT`, `LON`, `ELEVATION_M` | sì | posizione usata dai modelli e dall'astronomia |
 | `LOCATION_NAME`, `LOCAL_TZ` | sì | intestazione e orari locali |
 | `STATION_ID` | no | identificatore stabile e non geografico della stazione primaria, default `roma-primary` |
+| `STATION_REFRESH_MINUTES` | no | cadenza Ecowitt; minimo e default 10 minuti |
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
 | `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 168 ore (7 giorni) |
@@ -182,7 +202,7 @@ Backfill Ecowitt di 7 giorni:
 | `CFR_API_TOKEN` | no | token soltanto per un eventuale override privato |
 | `CFR_STATION_IDS` | no | codici ammessi soltanto per l'override generico |
 | `DPC_RADAR_ENABLED` | no | osservazione locale SRI/VMI e fulmini DPC, default `true` |
-| `DPC_RADAR_REFRESH_MINUTES` | no | frequenza radar ufficiale, minimo e default 5 minuti |
+| `DPC_RADAR_REFRESH_MINUTES` | no | frequenza radar ufficiale, minimo e default 10 minuti |
 | `DPC_RADAR_CROP_RADIUS` | no | raggio in pixel del piccolo ritaglio locale, default 10 |
 | `REFERENCE_CLIMATOLOGY_ENABLED` | no | riferimento ERA5-Land 1991–2020, default `true` |
 | `REFERENCE_CLIMATOLOGY_REFRESH_DAYS` | no | rinnovo del riferimento, default 30 giorni |
@@ -225,7 +245,7 @@ All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali
 
 L'apertura della dashboard non controlla l'archiviazione: il Cron Job Render interroga Ecowitt e salva direttamente su PostgreSQL anche quando il servizio web o il browser non sono attivi.
 
-- il recupero ordinario parte ogni 5 minuti e rilegge almeno le ultime 2 ore;
+- il recupero ordinario parte ogni 10 minuti e rilegge almeno le ultime 2 ore;
 - se temperatura, umidità, pressione o vento risultano arretrati, la finestra cresce automaticamente fino a 168 ore;
 - ogni giorno alle `03:17 UTC` GitHub rilegge le ultime 168 ore, aggiornando le righe in modo idempotente;
 - il workflow manuale resta disponibile per recuperi straordinari fino a 720 ore.
@@ -267,11 +287,11 @@ La scheda **Sistema** rende visibili, senza mostrare chiavi o URL sensibili:
 - ultimo successo e ultimo dato di Ecowitt, provider, riferimenti ufficiali e combinazione;
 - continuità prevista per ogni componente: archivio valido, provider alternativo o fonte secondaria;
 - latenza, righe ricevute ed errori consecutivi;
-- percentuale di intervalli a 5 minuti presenti nelle ultime 24 ore e buco massimo;
+- percentuale di intervalli a 10 minuti presenti nelle ultime 24 ore e buco massimo;
 - campioni marcati `range_filtered`, `spike_*`, `stuck_*`, `gust_below_mean_wind` o `estimated_rain`;
 - ultime esecuzioni della pipeline, controllo salute e stato separato del backup cloud;
 - badge **LIVE** verde animato sulle misure recenti e **NON LIVE** rosso sui valori fuori soglia, senza usare il solo colore.
-- diagnostica per temperatura, umidità, pressione, vento, pioggia, solare e UV, con copertura a 5 minuti, buco massimo e stato batteria/segnale quando disponibile.
+- diagnostica per temperatura, umidità, pressione, vento, pioggia, solare e UV, con copertura a 10 minuti, buco massimo e stato batteria/segnale quando disponibile.
 
 I valori fisicamente impossibili vengono esclusi solo per il parametro interessato. Salti, sensori apparentemente fermi e incoerenze fra vento e raffica restano archiviati ma sono esplicitamente marcati, così non vengono scambiati per dati pienamente validati.
 

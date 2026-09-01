@@ -10,6 +10,7 @@ from ingest_all import (
     FileLock,
     PipelineLock,
     adaptive_station_backfill_hours,
+    station_ingest_is_due,
     station_source_age_minutes,
 )
 
@@ -119,6 +120,27 @@ def test_station_source_age_detects_stale_and_future_samples():
         "2026-08-21T12:01:00Z", now=now
     ) == 0.0
     assert station_source_age_minutes("invalid", now=now) == float("inf")
+
+
+def test_station_ingest_guard_rejects_five_minute_scheduler_path(monkeypatch):
+    now = pd.Timestamp("2026-08-21T12:10:00Z")
+    monkeypatch.setattr(
+        "ingest_all.get_meta",
+        lambda key: "2026-08-21T12:05:00Z" if key == "last_station_success" else None,
+    )
+
+    assert station_ingest_is_due(_settings(), now=now) is False
+    assert station_ingest_is_due(_settings(), force=True, now=now) is True
+
+
+def test_station_ingest_guard_accepts_the_ten_minute_cycle(monkeypatch):
+    now = pd.Timestamp("2026-08-21T12:10:00Z")
+    monkeypatch.setattr(
+        "ingest_all.get_meta",
+        lambda key: "2026-08-21T12:00:00Z" if key == "last_station_success" else None,
+    )
+
+    assert station_ingest_is_due(_settings(), now=now) is True
 
 
 def test_sqlite_pipeline_lock_prevents_overlapping_local_runs(

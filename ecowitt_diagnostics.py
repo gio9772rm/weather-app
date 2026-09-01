@@ -234,7 +234,7 @@ def diagnose_observations(
 ) -> pd.DataFrame:
     """Evaluate freshness, completeness, gaps and quality flags per sensor."""
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
-    expected = max(1, int(hours) * 12)
+    expected = max(1, int(hours) * 6)
     if frame.empty:
         return pd.DataFrame(
             [
@@ -257,7 +257,7 @@ def diagnose_observations(
     data = frame.copy()
     data["time"] = pd.to_datetime(data.get("time"), utc=True, errors="coerce")
     cutoff = current - pd.Timedelta(hours=hours)
-    data = data[data["time"].between(cutoff, current + pd.Timedelta(minutes=5))]
+    data = data[data["time"].between(cutoff, current + pd.Timedelta(minutes=10))]
     quality = data.get("data_quality", pd.Series("ok", index=data.index)).fillna("ok")
     rows: list[dict[str, Any]] = []
     for label, column, unit in METRIC_DEFINITIONS:
@@ -269,7 +269,7 @@ def diagnose_observations(
         available["value"] = values[values.notna()]
         last_time = available["time"].max() if not available.empty else pd.NaT
         age = _age_minutes(current, last_time)
-        buckets = available["time"].dt.floor("5min").nunique()
+        buckets = available["time"].dt.floor("10min").nunique()
         gaps = available["time"].sort_values().diff().dt.total_seconds().div(60)
         quality_text = quality.astype(str)
         flag_patterns = {
@@ -346,10 +346,28 @@ def load_ecowitt_diagnostics(
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
     cutoff = (current - pd.Timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with target.connect() as connection:
+        station_role = connection.execute(
+            text("SELECT role FROM station_profiles WHERE station_id=:station_id"),
+            {"station_id": _safe_name(station_id)},
+        ).scalar()
+        if station_role == "secondary":
+            observation_query = text(
+                "SELECT * FROM station_observations "
+                "WHERE station_id=:station_id AND time>=:cutoff ORDER BY time"
+            )
+            observation_params = {
+                "station_id": _safe_name(station_id),
+                "cutoff": cutoff,
+            }
+        else:
+            observation_query = text(
+                "SELECT * FROM station_raw WHERE time>=:cutoff ORDER BY time"
+            )
+            observation_params = {"cutoff": cutoff}
         observations = pd.read_sql(
-            text("SELECT * FROM station_raw WHERE time>=:cutoff ORDER BY time"),
+            observation_query,
             connection,
-            params={"cutoff": cutoff},
+            params=observation_params,
         )
         telemetry = pd.read_sql(
             text(

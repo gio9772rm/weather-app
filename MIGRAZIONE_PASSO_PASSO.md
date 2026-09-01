@@ -159,7 +159,7 @@ Il Cron Job Render è l'acquisizione primaria. Il codice usa anche un lock Postg
 4. imposta branch `main` e auto-deploy dopo i check CI;
 5. usa build command `pip install -r requirements-ingest.txt`;
 6. usa command `python ingest_all.py --backfill-hours 2 --max-station-age-minutes 20`;
-7. imposta schedule `*/5 * * * *` (orari cron in UTC);
+7. imposta schedule `*/10 * * * *` (orari cron in UTC);
 8. verifica le variabili `DATABASE_URL`, le tre Ecowitt, `OPENWEATHER_API_KEY`, coordinate e fuso;
 9. scegli **Resume service**, poi **Trigger Run**;
 10. nei log verifica `Stazione: ... righe; ultimo dato ...` e l'assenza di errori.
@@ -186,7 +186,7 @@ Se gestisci Render tramite Blueprint, sincronizza il nuovo `render.yaml`: descri
 
 Nelle prime 24 ore controlla:
 
-- Cron Job Render ogni 5 minuti senza errori ripetuti;
+- Cron Job Render ogni 10 minuti senza errori ripetuti;
 - orario dell'ultimo dato stazione normalmente inferiore a 10 minuti e sempre sotto 20;
 - riconciliazione GitHub giornaliera verde;
 - emissione previsione inferiore a 3 ore;

@@ -34,7 +34,7 @@ def test_primary_history_is_mirrored_without_changing_legacy_rows(sqlite_engine)
             )
         )
 
-    # Normal five-minute cycles inspect only a bounded rolling window.
+    # Normal ten-minute cycles inspect only a bounded rolling window.
     assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 1
     assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
 
@@ -51,15 +51,20 @@ def test_primary_history_is_mirrored_without_changing_legacy_rows(sqlite_engine)
     assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
 
     with sqlite_engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT COUNT(*) FROM station_raw")
-        ).scalar_one() == 3
-        mirrored = connection.execute(
-            text(
-                "SELECT station_id,temp_c FROM station_observations "
-                "WHERE station_id='home-primary' ORDER BY time"
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM station_raw")).scalar_one()
+            == 3
+        )
+        mirrored = (
+            connection.execute(
+                text(
+                    "SELECT station_id,temp_c FROM station_observations "
+                    "WHERE station_id='home-primary' ORDER BY time"
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     assert [row["temp_c"] for row in mirrored] == [24.8, 25.0, 25.2]
 
 
@@ -88,12 +93,16 @@ def test_primary_history_lookback_avoids_rescanning_very_old_backfills(sqlite_en
 
     assert sync_primary_station_history(cfg, sqlite_engine, strict=True) == 0
     with sqlite_engine.connect() as connection:
-        mirrored_times = connection.execute(
-            text(
-                "SELECT time FROM station_observations "
-                "WHERE station_id='home-primary' ORDER BY time"
+        mirrored_times = (
+            connection.execute(
+                text(
+                    "SELECT time FROM station_observations "
+                    "WHERE station_id='home-primary' ORDER BY time"
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert mirrored_times == ["2026-08-27T12:00:00Z"]
 
 

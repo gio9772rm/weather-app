@@ -18,6 +18,14 @@ services:
         value: Stazione meteo Roma
       - key: STATION_ID
         value: roma-primary
+      - key: SECONDARY_STATION_ENABLED
+        value: "true"
+      - key: SECONDARY_STATION_ID
+        value: comacchio-secondary
+      - key: SECONDARY_STATION_NAME
+        value: Stazione Paolo · Comacchio
+      - key: SECONDARY_STATION_TZ
+        value: Europe/Rome
       - key: LAT
         sync: false
       - key: LON
@@ -26,6 +34,8 @@ services:
         value: "20"
       - key: STATION_STALE_MINUTES
         value: "20"
+      - key: STATION_REFRESH_MINUTES
+        value: "10"
       - key: OFFICIAL_OBSERVATIONS_ENABLED
         value: "true"
       - key: ARSIAL_OBSERVATIONS_ENABLED
@@ -46,6 +56,8 @@ services:
         value: Roma Monte Mario
       - key: DPC_RADAR_ENABLED
         value: "true"
+      - key: DPC_RADAR_REFRESH_MINUTES
+        value: "10"
       - key: REFERENCE_CLIMATOLOGY_ENABLED
         value: "true"
       - key: ENSEMBLE_FORECAST_ENABLED
@@ -67,7 +79,7 @@ services:
       - key: FEATURE_EXPERIENCE_MODE_ENABLED
         value: "true"
 
-  # Acquisizione primaria: Render garantisce una sola esecuzione attiva per
+  # Acquisizione delle stazioni: Render garantisce una sola esecuzione attiva per
   # questo Cron Job. Il lock PostgreSQL protegge anche da avvii GitHub/locali.
   - type: cron
     name: weather-app
@@ -76,7 +88,7 @@ services:
     plan: starter
     branch: main
     autoDeployTrigger: checksPass
-    schedule: "*/5 * * * *"
+    schedule: "*/10 * * * *"
     buildCommand: pip install -r requirements-ingest.txt
     startCommand: python ingest_all.py --backfill-hours 2 --max-station-age-minutes 20
     envVars:
@@ -87,6 +99,28 @@ services:
       - key: ECOWITT_API_KEY
         sync: false
       - key: ECOWITT_MAC
+        sync: false
+      - key: SECONDARY_STATION_ENABLED
+        value: "true"
+      - key: SECONDARY_STATION_ID
+        value: comacchio-secondary
+      - key: SECONDARY_STATION_NAME
+        value: Stazione Paolo · Comacchio
+      - key: SECONDARY_STATION_TZ
+        value: Europe/Rome
+      - key: SECONDARY_STATION_LAT
+        sync: false
+      - key: SECONDARY_STATION_LON
+        sync: false
+      - key: SECONDARY_STATION_ELEVATION_M
+        sync: false
+      - key: SECONDARY_ECOWITT_APPLICATION_KEY
+        sync: false
+      - key: SECONDARY_ECOWITT_API_KEY
+        sync: false
+      - key: SECONDARY_ECOWITT_MAC
+        sync: false
+      - key: SECONDARY_STATION_DAILY_GZIP_B64
         sync: false
       - key: OPENWEATHER_API_KEY
         sync: false
@@ -104,6 +138,8 @@ services:
         value: "20"
       - key: STATION_BACKFILL_HOURS
         value: "2"
+      - key: STATION_REFRESH_MINUTES
+        value: "10"
       - key: STATION_AUTO_BACKFILL_MAX_HOURS
         value: "168"
       - key: STATION_MAX_SOURCE_AGE_MINUTES
@@ -143,7 +179,7 @@ services:
       - key: DPC_RADAR_ENABLED
         value: "true"
       - key: DPC_RADAR_REFRESH_MINUTES
-        value: "5"
+        value: "10"
       - key: REFERENCE_CLIMATOLOGY_ENABLED
         value: "true"
       - key: ENSEMBLE_FORECAST_ENABLED

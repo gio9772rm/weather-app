@@ -322,7 +322,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             page.wait_for_selector(".js-plotly-plot", timeout=45_000)
                         elif tab == "astronomy":
                             page.get_by_text(
-                                "Pianificatore Astronomia Pro", exact=True
+                                "Piano della notte", exact=True
                             ).wait_for(state="attached", timeout=45_000)
                         page.wait_for_timeout(500)
                         body = page.locator("body").inner_text()

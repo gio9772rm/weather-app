@@ -10,6 +10,7 @@ from ecowitt_diagnostics import (
     load_ecowitt_diagnostics,
     upsert_telemetry,
 )
+from station_registry import register_station
 
 
 def test_extracts_only_sanitised_battery_and_signal_values():
@@ -60,12 +61,12 @@ def test_sensor_array_normal_means_charged_and_other_text_means_problem():
 
 def test_temperature_and_humidity_diagnostics_explain_suspicious_values():
     now = pd.Timestamp("2026-08-28T12:00:00Z")
-    times = pd.date_range(now - pd.Timedelta(hours=1), now, freq="5min")
+    times = pd.date_range(now - pd.Timedelta(hours=1), now, freq="10min")
     frame = pd.DataFrame(
         {
             "time": times,
-            "temp_c": [20.0] * 12 + [35.0],
-            "humidity": [55.0] * 12 + [120.0],
+            "temp_c": [20.0] * (len(times) - 1) + [35.0],
+            "humidity": [55.0] * (len(times) - 1) + [120.0],
             "pressure_hpa": 1012.0,
             "wind_kmh": 5.0,
             "rain_rate_mm_h": 0.0,
@@ -106,7 +107,7 @@ def test_optional_telemetry_failure_never_raises():
 
 def test_sensor_diagnostics_detects_fresh_coverage_and_stale_metric():
     now = pd.Timestamp("2026-08-28T12:00:00Z")
-    times = pd.date_range(now - pd.Timedelta(hours=1), now, freq="5min")
+    times = pd.date_range(now - pd.Timedelta(hours=1), now, freq="10min")
     frame = pd.DataFrame(
         {
             "time": times,
@@ -120,7 +121,7 @@ def test_sensor_diagnostics_detects_fresh_coverage_and_stale_metric():
             "data_quality": "ok",
         }
     )
-    frame.loc[frame.index[-8:], "humidity"] = None
+    frame.loc[frame.index[-3:], "humidity"] = None
 
     diagnostics = diagnose_observations(frame, now=now, hours=1, stale_minutes=20)
     humidity = diagnostics.set_index("metric").loc["humidity"]
@@ -162,3 +163,45 @@ def test_telemetry_is_archived_and_loaded_without_device_identifier(
     assert telemetry.iloc[0]["metric"] == "battery"
     assert summary.offline == 0
     assert summary.warning >= 4
+
+
+def test_secondary_diagnostics_never_reads_primary_raw_rows(sqlite_engine):
+    now = pd.Timestamp.now(tz="UTC").floor("10min")
+    register_station(
+        station_id="secondary-one",
+        display_name="Secondaria",
+        latitude=44.8,
+        longitude=12.1,
+        elevation_m=-1,
+        timezone="Europe/Rome",
+        source="ecowitt",
+        role="secondary",
+        engine=sqlite_engine,
+    )
+    values = {
+        "time": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "secondary_id": "secondary-one",
+    }
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,temp_c,source,data_quality) "
+                "VALUES (:time,99,'primary','ok')"
+            ),
+            values,
+        )
+        connection.execute(
+            text(
+                "INSERT INTO station_observations "
+                "(station_id,time,temp_c,source,data_quality) "
+                "VALUES (:secondary_id,:time,18.5,'secondary','ok')"
+            ),
+            values,
+        )
+
+    sensors, _, _ = load_ecowitt_diagnostics(
+        station_id="secondary-one", engine=sqlite_engine, now=now
+    )
+
+    temperature = sensors.set_index("metric").loc["temp_c"]
+    assert temperature["last_value"] == 18.5

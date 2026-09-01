@@ -79,6 +79,7 @@ def monthly_summary(
         "uv_max": np.nan,
         "first_sample": None,
         "last_sample": None,
+        "granularity": "samples_10min",
     }
     if data.empty:
         return summary
@@ -87,17 +88,41 @@ def monthly_summary(
     end = start + pd.offsets.MonthBegin(1)
     now = pd.Timestamp.now(tz=timezone)
     covered_end = min(end, now) if start <= now < end else end
-    expected = max(1, int((covered_end - start).total_seconds() // 300))
-    observed = data["time_local"].dt.floor("5min").nunique()
+    daily_mask = (
+        data.get("summary_granularity", pd.Series("", index=data.index))
+        .astype(str)
+        .eq("daily")
+    )
+    if daily_mask.all():
+        expected = max(1, int((covered_end.ceil("D") - start).days))
+        observed = data["time_local"].dt.strftime("%Y-%m-%d").nunique()
+        summary["granularity"] = "daily"
+    else:
+        expected = max(1, int((covered_end - start).total_seconds() // 600))
+        observed = data["time_local"].dt.floor("10min").nunique()
+        if daily_mask.any():
+            summary["granularity"] = "mixed"
     summary["coverage_pct"] = min(100.0, observed / expected * 100.0)
     summary["first_sample"] = data["time_local"].iloc[0]
     summary["last_sample"] = data["time_local"].iloc[-1]
 
     if "temp_c" in data:
         temperature = _number(data["temp_c"])
-        summary["temp_min_c"] = float(temperature.min())
+        minimum = temperature.copy()
+        maximum = temperature.copy()
+        if "temp_daily_min_c" in data:
+            daily_minimum = _number(data["temp_daily_min_c"])
+            minimum.loc[daily_mask] = daily_minimum.loc[daily_mask].fillna(
+                temperature.loc[daily_mask]
+            )
+        if "temp_daily_max_c" in data:
+            daily_maximum = _number(data["temp_daily_max_c"])
+            maximum.loc[daily_mask] = daily_maximum.loc[daily_mask].fillna(
+                temperature.loc[daily_mask]
+            )
+        summary["temp_min_c"] = float(minimum.min())
         summary["temp_mean_c"] = float(temperature.mean())
-        summary["temp_max_c"] = float(temperature.max())
+        summary["temp_max_c"] = float(maximum.max())
     if "rain_mm" in data:
         rain = _number(data["rain_mm"]).clip(lower=0)
         summary["rain_total_mm"] = float(rain.sum(min_count=1))
@@ -123,6 +148,39 @@ def monthly_csv_bytes(
     data = _local_month(frame, year, month, timezone)
     if data.empty:
         return b"time_local,time_utc\n"
+    daily_mask = (
+        data.get("summary_granularity", pd.Series("", index=data.index))
+        .astype(str)
+        .eq("daily")
+    )
+    if daily_mask.all():
+        output = pd.DataFrame(
+            {
+                "local_date": data["time_local"].dt.strftime("%Y-%m-%d"),
+                "temp_mean_c": data.get("temp_c"),
+                "temp_min_c": data.get("temp_daily_min_c"),
+                "temp_max_c": data.get("temp_daily_max_c"),
+                "feels_like_mean_c": data.get("feels_like_c"),
+                "dewpoint_mean_c": data.get("dewpoint_c"),
+                "humidity_mean": data.get("humidity"),
+                "humidity_min": data.get("humidity_daily_min"),
+                "humidity_max": data.get("humidity_daily_max"),
+                "pressure_mean_hpa": data.get("pressure_hpa"),
+                "pressure_min_hpa": data.get("pressure_daily_min_hpa"),
+                "pressure_max_hpa": data.get("pressure_daily_max_hpa"),
+                "wind_mean_kmh": data.get("wind_kmh"),
+                "wind_gust_max_kmh": data.get("windgust_kmh"),
+                "wind_dir_deg": data.get("winddir"),
+                "rain_mm": data.get("rain_mm"),
+                "rain_rate_max_mm_h": data.get("rain_rate_mm_h"),
+                "solar_max_w_m2": data.get("solar_w_m2"),
+                "uv_max": data.get("uv_index"),
+                "sample_count": data.get("summary_sample_count"),
+                "source": data.get("source"),
+                "data_quality": data.get("data_quality"),
+            }
+        )
+        return output.to_csv(index=False, lineterminator="\n").encode("utf-8")
     output = pd.DataFrame(
         {
             "time_local": data["time_local"].dt.strftime("%Y-%m-%d %H:%M:%S%z"),
@@ -232,20 +290,51 @@ def monthly_pdf_bytes(
         textColor=colors.HexColor("#64748b"),
     )
 
+    daily_report = summary["granularity"] == "daily"
     story: list[Any] = [
         Paragraph("Rapporto meteo mensile", title_style),
         Paragraph(
             f"<b>{escape(station_name)}</b> - {escape(summary['period'].title())}<br/>"
-            "Misure locali Ecowitt. Le fonti istituzionali restano riferimenti indipendenti.",
+            + (
+                "Riepiloghi giornalieri Ecowitt. "
+                if daily_report
+                else "Misure locali Ecowitt. "
+            )
+            + "Le fonti istituzionali restano riferimenti indipendenti.",
             subtitle_style,
         ),
     ]
     metrics = [
-        ["Copertura", f"{summary['coverage_pct']:.1f}%", "Campioni", str(summary["samples"])],
-        ["Temperatura min", _fmt(summary["temp_min_c"], 1, " °C"), "Temperatura media", _fmt(summary["temp_mean_c"], 1, " °C")],
-        ["Temperatura max", _fmt(summary["temp_max_c"], 1, " °C"), "Pioggia totale", _fmt(summary["rain_total_mm"], 1, " mm")],
-        ["Vento medio", _fmt(summary["wind_mean_kmh"], 1, " km/h"), "Raffica massima", _fmt(summary["gust_max_kmh"], 1, " km/h")],
-        ["Radiazione max", _fmt(summary["solar_max_w_m2"], 0, " W/m²"), "UV massimo", _fmt(summary["uv_max"], 1)],
+        [
+            "Copertura giornaliera" if daily_report else "Copertura",
+            f"{summary['coverage_pct']:.1f}%",
+            "Giornate" if daily_report else "Campioni",
+            str(summary["samples"]),
+        ],
+        [
+            "Temperatura min",
+            _fmt(summary["temp_min_c"], 1, " °C"),
+            "Temperatura media",
+            _fmt(summary["temp_mean_c"], 1, " °C"),
+        ],
+        [
+            "Temperatura max",
+            _fmt(summary["temp_max_c"], 1, " °C"),
+            "Pioggia totale",
+            _fmt(summary["rain_total_mm"], 1, " mm"),
+        ],
+        [
+            "Vento medio",
+            _fmt(summary["wind_mean_kmh"], 1, " km/h"),
+            "Raffica massima",
+            _fmt(summary["gust_max_kmh"], 1, " km/h"),
+        ],
+        [
+            "Radiazione max",
+            _fmt(summary["solar_max_w_m2"], 0, " W/m²"),
+            "UV massimo",
+            _fmt(summary["uv_max"], 1),
+        ],
     ]
     metric_table = Table(metrics, colWidths=[42 * mm, 40 * mm, 43 * mm, 40 * mm])
     metric_table.setStyle(
@@ -285,7 +374,9 @@ def monthly_pdf_bytes(
     else:
         story.append(Paragraph("Riepilogo giornaliero", heading_style))
         daily_source = data.assign(date=data["time_local"].dt.date)
-        rows: list[list[str]] = [["Data", "T min", "T media", "T max", "Pioggia", "Raffica max"]]
+        rows: list[list[str]] = [
+            ["Data", "T min", "T media", "T max", "Pioggia", "Raffica max"]
+        ]
         for day, group in daily_source.groupby("date", sort=True):
             temperature = _number(group.get("temp_c", pd.Series(dtype=float)))
             rain = _number(group.get("rain_mm", pd.Series(dtype=float))).clip(lower=0)
@@ -311,7 +402,12 @@ def monthly_pdf_bytes(
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1d4ed8")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#f8fafc")],
+                    ),
                     ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
                     ("FONTSIZE", (0, 0), (-1, -1), 8.0),
                     ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
@@ -333,10 +429,14 @@ def monthly_pdf_bytes(
                 [
                     str(getattr(item, "label", getattr(item, "source", "-"))),
                     str(getattr(item, "display_status", "-")),
-                    "-" if pd.isna(succeeded) else succeeded.strftime("%d/%m/%Y %H:%M UTC"),
+                    "-"
+                    if pd.isna(succeeded)
+                    else succeeded.strftime("%d/%m/%Y %H:%M UTC"),
                 ]
             )
-        health_table = Table(health_rows, repeatRows=1, colWidths=[68 * mm, 42 * mm, 58 * mm])
+        health_table = Table(
+            health_rows, repeatRows=1, colWidths=[68 * mm, 42 * mm, 58 * mm]
+        )
         health_table.setStyle(
             TableStyle(
                 [
@@ -346,7 +446,12 @@ def monthly_pdf_bytes(
                     ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
                     ("FONTSIZE", (0, 0), (-1, -1), 8.0),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#f8fafc")],
+                    ),
                     ("TOPPADDING", (0, 0), (-1, -1), 5),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ]
@@ -358,7 +463,7 @@ def monthly_pdf_bytes(
         [
             Spacer(1, 5 * mm),
             Paragraph(
-                "Documento generato da Meteo V4.3. I valori dipendono dalla copertura "
+                "Documento generato da Meteo V4.9. I valori dipendono dalla copertura "
                 "dei sensori e non costituiscono un bollettino ufficiale o un'allerta.",
                 note_style,
             ),
@@ -371,10 +476,8 @@ def monthly_pdf_bytes(
         canvas.line(16 * mm, 12 * mm, A4[0] - 16 * mm, 12 * mm)
         canvas.setFont("Helvetica", 7.5)
         canvas.setFillColor(colors.HexColor("#64748b"))
-        canvas.drawString(16 * mm, 7.5 * mm, "Meteo V4.3 - rapporto mensile")
-        canvas.drawRightString(
-            A4[0] - 16 * mm, 7.5 * mm, f"Pagina {doc.page}"
-        )
+        canvas.drawString(16 * mm, 7.5 * mm, "Meteo V4.9 - rapporto mensile")
+        canvas.drawRightString(A4[0] - 16 * mm, 7.5 * mm, f"Pagina {doc.page}")
         canvas.restoreState()
 
     document.build(story, onFirstPage=footer, onLaterPages=footer)
@@ -382,12 +485,17 @@ def monthly_pdf_bytes(
 
 
 def report_filename(station_id: str, year: int, month: int, extension: str) -> str:
-    safe = "-".join(
-        part
-        for part in "".join(
-            character if character.isalnum() else "-" for character in station_id
-        ).lower().split("-")
-        if part
-    ) or "stazione"
+    safe = (
+        "-".join(
+            part
+            for part in "".join(
+                character if character.isalnum() else "-" for character in station_id
+            )
+            .lower()
+            .split("-")
+            if part
+        )
+        or "stazione"
+    )
     suffix = extension.lower().lstrip(".")
     return f"meteo-{safe}-{int(year):04d}-{int(month):02d}.{suffix}"

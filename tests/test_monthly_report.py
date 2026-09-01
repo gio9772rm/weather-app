@@ -69,4 +69,45 @@ def test_monthly_summary_csv_and_pdf_are_consistent():
     )
     assert pdf_payload.startswith(b"%PDF-")
     assert len(pdf_payload) > 2_000
-    assert report_filename("Nord / Futuro", 2026, 8, "PDF") == "meteo-nord-futuro-2026-08.pdf"
+    assert (
+        report_filename("Nord / Futuro", 2026, 8, "PDF")
+        == "meteo-nord-futuro-2026-08.pdf"
+    )
+
+
+def test_daily_archive_keeps_original_extremes_and_exports_calendar_rows():
+    frame = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                ["2026-08-01T10:00:00Z", "2026-08-02T10:00:00Z"], utc=True
+            ),
+            "temp_c": [24.0, 22.0],
+            "temp_daily_min_c": [17.0, 16.0],
+            "temp_daily_max_c": [31.0, 29.0],
+            "humidity": [60.0, 70.0],
+            "rain_mm": [1.5, 6.0],
+            "summary_granularity": ["daily", "daily"],
+            "source": ["ecowitt_daily_export", "ecowitt_daily_export"],
+            "data_quality": ["historical_daily_summary"] * 2,
+        }
+    )
+
+    summary = monthly_summary(
+        frame,
+        2026,
+        8,
+        timezone="Europe/Rome",
+        station_name="Secondaria",
+    )
+    csv_payload = monthly_csv_bytes(frame, 2026, 8, timezone="Europe/Rome").decode(
+        "utf-8"
+    )
+
+    assert summary["granularity"] == "daily"
+    assert summary["samples"] == 2
+    assert summary["temp_min_c"] == 16.0
+    assert summary["temp_mean_c"] == 23.0
+    assert summary["temp_max_c"] == 31.0
+    assert summary["rain_total_mm"] == 7.5
+    assert csv_payload.startswith("local_date,temp_mean_c,temp_min_c,temp_max_c")
+    assert "time_utc" not in csv_payload

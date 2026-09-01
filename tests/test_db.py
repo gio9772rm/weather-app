@@ -24,6 +24,7 @@ def test_schema_contains_v43_tables_and_columns(sqlite_engine):
         "source_health",
         "station_profiles",
         "station_observations",
+        "station_daily_summaries",
         "ecowitt_telemetry",
         "forecast_regime_scores",
         "climate_reference_normals",
@@ -66,7 +67,7 @@ def test_schema_contains_v43_tables_and_columns(sqlite_engine):
             connection.execute(
                 text("SELECT v FROM meta WHERE k='schema_version'")
             ).scalar_one()
-            == "8"
+            == "9"
         )
 
 

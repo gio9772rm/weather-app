@@ -79,6 +79,7 @@ from data_access import (
     load_regime_scores,
     load_source_health,
     load_station,
+    load_station_daily_summaries,
     load_station_month,
     load_station_profiles,
 )
@@ -521,44 +522,49 @@ div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover { background:var(--s
 )
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def station_data(hours: int, station_id: str) -> pd.DataFrame:
     return load_station(hours, station_id)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def station_profiles_data() -> pd.DataFrame:
     return load_station_profiles()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
+def station_daily_data(days: int = 365) -> pd.DataFrame:
+    return load_station_daily_summaries(days)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def station_months_data(station_id: str, timezone: str) -> list[tuple[int, int]]:
     return available_station_months(station_id, timezone)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def station_month_data(
     station_id: str, year: int, month: int, timezone: str
 ) -> pd.DataFrame:
     return load_station_month(station_id, year, month, timezone)
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def forecast_data() -> pd.DataFrame:
     return load_forecast()
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def forecast_history_data() -> pd.DataFrame:
     return load_forecast_history(hours=48, emissions=2)
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def ensemble_guidance_data() -> pd.DataFrame:
     return load_ensemble()
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def observed_air_data() -> pd.DataFrame:
     return load_observed_air()
 
@@ -578,12 +584,12 @@ def reference_climate_data(station_id: str) -> pd.DataFrame:
     return load_reference_climate_normals(station_id)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def official_alerts_data() -> pd.DataFrame:
     return load_official_alerts()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def health_data() -> dict[str, Any]:
     return health_snapshot(Settings.from_env())
 
@@ -608,17 +614,17 @@ def reliability_data() -> pd.DataFrame:
     return load_forecast_reliability()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def source_status_data() -> pd.DataFrame:
     return load_source_health(Settings.from_env())
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def completeness_data() -> dict[str, Any]:
     return data_completeness_snapshot(24)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def ecowitt_diagnostic_data(station_id: str):
     return load_ecowitt_diagnostics(
         station_id=station_id,
@@ -626,12 +632,12 @@ def ecowitt_diagnostic_data(station_id: str):
     )
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def official_station_data() -> pd.DataFrame:
     return load_official_station_status()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def log_data() -> pd.DataFrame:
     return load_recent_logs()
 
@@ -641,12 +647,12 @@ def city_search_data(query: str) -> list[CityLocation]:
     return search_cities(query)
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def city_forecast_data(location: CityLocation) -> CityForecast:
     return fetch_city_forecast(location)
 
 
-@st.cache_data(ttl=1_800, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def air_quality_data(
     latitude: float, longitude: float, timezone: str
 ) -> AirQualityForecast:
@@ -661,31 +667,31 @@ def light_pollution_data() -> tuple[LightPollutionEstimate | None, str | None]:
         return None, str(exc)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def radar_nowcast_data(latitude: float, longitude: float):
     return fetch_radar_nowcast(latitude, longitude)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def dpc_radar_live_data(cfg: Settings):
     return fetch_dpc_radar_snapshot(cfg)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def dpc_radar_archive_data(station_id: str) -> pd.DataFrame:
     return load_latest_dpc_radar(station_id)
 
 
-@st.fragment(run_every=300)
+@st.fragment(run_every=600)
 def _refresh_controller(enabled: bool) -> None:
-    """Refresh the full app every five minutes without injecting browser script."""
+    """Refresh the full app every ten minutes without injecting browser script."""
     if not enabled:
         return
     now = time.monotonic()
     previous = st.session_state.get("last_full_refresh")
     if previous is None:
         st.session_state["last_full_refresh"] = now
-    elif now - previous >= 295:
+    elif now - previous >= 595:
         st.session_state["last_full_refresh"] = now
         st.cache_data.clear()
         st.rerun()
@@ -883,7 +889,7 @@ def _numeric_series(
 
 
 def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
-    """Keep every Plotly surface and label aligned with the selected app theme."""
+    """Keep plots readable and let Plotly show the real trace colour in legends."""
     if dark_mode:
         paper, plot, ink = "#05070b", "#0b111b", "#f8fafc"
         grid, line = "rgba(148,163,184,.18)", "rgba(226,232,240,.28)"
@@ -894,6 +900,13 @@ def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
         grid, line = "rgba(100,116,139,.16)", "rgba(100,116,139,.3)"
         hover_bg = "#ffffff"
         template = "plotly_white"
+    legend_entries = sum(
+        1
+        for trace in figure.data
+        if trace.showlegend is not False and bool(getattr(trace, "name", None))
+    )
+    legend_rows = max(1, (legend_entries + 2) // 3)
+    current_top = int(figure.layout.margin.t or 0)
     figure.update_layout(
         template=template,
         paper_bgcolor=paper,
@@ -906,11 +919,15 @@ def _style_plotly(figure: go.Figure, dark_mode: bool) -> go.Figure:
             "xanchor": "left",
             "y": 1.02,
             "yanchor": "bottom",
-            "bgcolor": "rgba(0,0,0,0)",
-            "font": {"color": ink},
+            "bgcolor": "rgba(11,17,27,.90)" if dark_mode else "rgba(255,255,255,.94)",
+            "bordercolor": line,
+            "borderwidth": 1,
+            "font": {"color": ink, "size": 13},
             "title": {"font": {"color": ink}},
             "tracegroupgap": 6,
+            "itemsizing": "constant",
         },
+        margin={"t": max(current_top, 58 + legend_rows * 30)},
         modebar={
             "bgcolor": "rgba(0,0,0,0)",
             "color": ink,
@@ -1320,7 +1337,7 @@ def _night_plan_figure(
 
 
 def _use_local_subplot_keys(figure: go.Figure) -> go.Figure:
-    """Keep each visual key beside its subplot instead of in a distant legend."""
+    """Keep subplot titles concise and preserve Plotly's colour-accurate legend."""
     for annotation in figure.layout.annotations or ():
         annotation.update(
             x=0,
@@ -1328,8 +1345,233 @@ def _use_local_subplot_keys(figure: go.Figure) -> go.Figure:
             align="left",
             font={"size": 12},
         )
-    figure.update_layout(showlegend=False)
+    figure.update_layout(showlegend=True)
     return figure
+
+
+def _station_label(profiles: pd.DataFrame, station_id: str) -> str:
+    if profiles.empty:
+        return station_id
+    selected = profiles[profiles["station_id"].astype(str).eq(str(station_id))]
+    return (
+        station_id
+        if selected.empty
+        else str(selected.iloc[0].get("display_name") or station_id)
+    )
+
+
+def _render_daily_station_metric(
+    daily: pd.DataFrame,
+    station_ids: tuple[str, str],
+    profiles: pd.DataFrame,
+    metric: str,
+    title: str,
+    unit: str,
+    dark_mode: bool,
+    *,
+    bars: bool = False,
+) -> None:
+    colours = ("#2563eb", "#f97316")
+    figure = go.Figure()
+    for station_id, colour in zip(station_ids, colours):
+        selected = daily[daily["station_id"].astype(str).eq(station_id)].sort_values(
+            "local_date"
+        )
+        if selected.empty or metric not in selected:
+            continue
+        values = pd.to_numeric(selected[metric], errors="coerce")
+        label = _station_label(profiles, station_id)
+        if bars:
+            figure.add_trace(
+                go.Bar(
+                    x=selected["local_date"],
+                    y=values,
+                    name=label,
+                    marker_color=colour,
+                    opacity=0.82,
+                    hovertemplate=f"%{{x|%d/%m/%Y}}<br>%{{y:.1f}} {unit}<extra>{html.escape(label)}</extra>",
+                )
+            )
+        else:
+            figure.add_trace(
+                go.Scatter(
+                    x=selected["local_date"],
+                    y=values,
+                    name=label,
+                    mode="lines+markers",
+                    line={"color": colour, "width": 2.6},
+                    marker={"color": colour, "size": 4},
+                    connectgaps=False,
+                    hovertemplate=f"%{{x|%d/%m/%Y}}<br>%{{y:.1f}} {unit}<extra>{html.escape(label)}</extra>",
+                )
+            )
+    figure.update_layout(
+        height=310,
+        title={"text": title, "x": 0},
+        hovermode="x unified",
+        barmode="group",
+        margin={"l": 10, "r": 10, "t": 78, "b": 10},
+        legend={
+            "orientation": "h",
+            "x": 0,
+            "y": 1.02,
+            "xanchor": "left",
+            "yanchor": "bottom",
+        },
+    )
+    figure.update_yaxes(title_text=unit, rangemode="nonnegative" if bars else "normal")
+    st.plotly_chart(_style_plotly(figure, dark_mode), width="stretch", theme=None)
+
+
+def render_station_comparison(
+    daily: pd.DataFrame,
+    profiles: pd.DataFrame,
+    primary_station_id: str,
+    dark_mode: bool,
+) -> None:
+    if daily.empty or profiles.empty:
+        st.info("Il confronto comparirà dopo l'importazione dello storico secondario.")
+        return
+    available = [
+        identifier
+        for identifier in profiles["station_id"].astype(str).tolist()
+        if identifier in set(daily["station_id"].astype(str))
+    ]
+    if primary_station_id not in available or len(available) < 2:
+        st.info("Servono almeno due stazioni con riepiloghi giornalieri confrontabili.")
+        return
+    secondary_options = [
+        identifier for identifier in available if identifier != primary_station_id
+    ]
+    controls = st.columns([1.2, 1])
+    secondary_id = controls[0].selectbox(
+        "Confronta Roma con",
+        options=secondary_options,
+        format_func=lambda value: _station_label(profiles, value),
+        key="station_comparison_secondary",
+    )
+    window_days = controls[1].selectbox(
+        "Periodo del confronto",
+        options=(30, 90, 180, 365),
+        index=1,
+        format_func=lambda value: f"Ultimi {value} giorni disponibili",
+        key="station_comparison_days",
+    )
+    selected_ids = (primary_station_id, secondary_id)
+    selected = daily[daily["station_id"].astype(str).isin(selected_ids)].copy()
+    selected["local_date"] = pd.to_datetime(selected["local_date"], errors="coerce")
+    selected = selected.dropna(subset=["local_date"])
+    if selected.empty:
+        st.info("Nessun giorno confrontabile nel periodo scelto.")
+        return
+    end = selected["local_date"].max()
+    selected = selected[
+        selected["local_date"] >= end - pd.Timedelta(days=window_days - 1)
+    ]
+
+    def overlap(metric: str) -> pd.DataFrame:
+        pivot = selected.pivot_table(
+            index="local_date", columns="station_id", values=metric, aggfunc="last"
+        )
+        return pivot.dropna(subset=list(selected_ids)) if not pivot.empty else pivot
+
+    temperature = overlap("temp_mean_c")
+    humidity = overlap("humidity_mean")
+    rain = overlap("rain_mm")
+    metric_columns = st.columns(4)
+    metric_columns[0].metric(
+        "Giorni sovrapposti",
+        str(len(temperature)),
+        "solo date presenti in entrambe",
+        delta_color="off",
+    )
+    temperature_delta = (
+        (temperature[secondary_id] - temperature[primary_station_id]).mean()
+        if not temperature.empty
+        else np.nan
+    )
+    metric_columns[1].metric(
+        "Δ temperatura media",
+        _number(temperature_delta, 1, " °C"),
+        f"{_station_label(profiles, secondary_id)} − Roma",
+        delta_color="off",
+    )
+    humidity_delta = (
+        (humidity[secondary_id] - humidity[primary_station_id]).mean()
+        if not humidity.empty
+        else np.nan
+    )
+    metric_columns[2].metric(
+        "Δ umidità media",
+        _number(humidity_delta, 1, " punti"),
+        f"{_station_label(profiles, secondary_id)} − Roma",
+        delta_color="off",
+    )
+    rain_totals = rain[list(selected_ids)].sum() if not rain.empty else pd.Series()
+    metric_columns[3].metric(
+        "Pioggia su date comuni",
+        (
+            f"{rain_totals.get(primary_station_id, 0):.1f} / "
+            f"{rain_totals.get(secondary_id, 0):.1f} mm"
+        ),
+        "Roma / seconda stazione",
+        delta_color="off",
+    )
+    st.caption(
+        "Confronto descrittivo su giorni omogenei: Comacchio resta una stazione "
+        "indipendente e non applica correzioni automatiche alla previsione calibrata di Roma."
+    )
+    _render_daily_station_metric(
+        selected,
+        selected_ids,
+        profiles,
+        "temp_mean_c",
+        "Temperatura media giornaliera",
+        "°C",
+        dark_mode,
+    )
+    _render_daily_station_metric(
+        selected,
+        selected_ids,
+        profiles,
+        "humidity_mean",
+        "Umidità media giornaliera",
+        "%",
+        dark_mode,
+    )
+    _render_daily_station_metric(
+        selected,
+        selected_ids,
+        profiles,
+        "rain_mm",
+        "Pioggia giornaliera",
+        "mm",
+        dark_mode,
+        bars=True,
+    )
+    _render_daily_station_metric(
+        selected,
+        selected_ids,
+        profiles,
+        "pressure_mean_hpa",
+        "Pressione media giornaliera",
+        "hPa",
+        dark_mode,
+    )
+    secondary_quality = selected[
+        selected["station_id"].astype(str).eq(secondary_id)
+    ].get("data_quality", pd.Series(dtype="object"))
+    if (
+        secondary_quality.astype(str)
+        .str.contains("pressure_calibration_review", regex=False)
+        .any()
+    ):
+        st.warning(
+            "Una parte dello storico della seconda stazione presenta uno scarto anomalo "
+            "tra pressione relativa e assoluta: il grafico resta consultabile, ma la "
+            "pressione non verrà usata per calibrare alcuna previsione finché la console "
+            "non sarà verificata."
+        )
 
 
 def _base_table_style(frame: pd.DataFrame, dark_mode: bool) -> Any:
@@ -2277,8 +2519,8 @@ def render_ensemble_guidance(
         vertical_spacing=0.11,
         row_heights=[0.68, 0.32],
         subplot_titles=(
-            "Temperatura ensemble · fascia P10–P90 · ━ mediana P50",
-            "Pioggia ensemble · ━ probabilità tra i membri",
+            "Temperatura ensemble",
+            "Probabilità di pioggia tra i membri",
         ),
     )
     figure.add_trace(
@@ -2301,7 +2543,7 @@ def render_ensemble_guidance(
             line={"width": 0},
             fill="tonexty",
             fillcolor="rgba(86,180,233,.24)",
-            name="▰ P10–P90",
+            name="Intervallo P10–P90",
             hovertemplate="%{x|%d/%m %H:%M}<br>P10 %{y:.1f} °C<extra>Forchetta ensemble</extra>",
         ),
         row=1,
@@ -2312,7 +2554,7 @@ def render_ensemble_guidance(
             x=plotly_local_datetimes(temperature["valid_time"], CFG.local_timezone),
             y=temperature["p50"],
             mode="lines",
-            name="━ Mediana P50",
+            name="Mediana P50",
             line={"color": "#0072b2", "width": 3},
         ),
         row=1,
@@ -2324,7 +2566,7 @@ def render_ensemble_guidance(
                 x=plotly_local_datetimes(rain["valid_time"], CFG.local_timezone),
                 y=rain["event_probability"],
                 mode="lines",
-                name="━ Membri con pioggia",
+                name="Membri con pioggia",
                 line={"color": "#e69f00", "width": 2.5},
                 fill="tozeroy",
                 fillcolor="rgba(230,159,0,.12)",
@@ -2477,8 +2719,8 @@ def _air_quality_figure(air: AirQualityForecast, dark_mode: bool) -> go.Figure:
         vertical_spacing=0.11,
         row_heights=[0.58, 0.42],
         subplot_titles=(
-            "Qualità dell’aria · ━ AQI europeo · ┄ PM2.5",
-            "Pollini · linee colorate per specie",
+            "Qualità dell’aria",
+            "Pollini per specie",
         ),
     )
     figure.add_trace(
@@ -3088,7 +3330,8 @@ def render_monthly_exports(
     )
     st.caption(
         "Il PDF riassume le sole misure Ecowitt e lo stato delle fonti; non contiene "
-        "le coordinate esatte della stazione. Il CSV conserva i campioni del mese."
+        "le coordinate esatte della stazione. Il CSV conserva i campioni live oppure, "
+        "quando l'archivio è giornaliero, le medie e gli estremi originali del file."
     )
 
 
@@ -3291,8 +3534,8 @@ def _city_hourly_chart(city: CityForecast, dark_mode: bool) -> go.Figure:
         row_heights=[0.64, 0.36],
         specs=[[{}], [{"secondary_y": True}]],
         subplot_titles=(
-            "Temperatura · blu aria · arancio percepita · turchese rugiada",
-            "Pioggia · ▮ quantità · ━ probabilità",
+            "Temperatura prevista",
+            "Pioggia e probabilità",
         ),
     )
     figure.add_trace(
@@ -3714,8 +3957,8 @@ def combined_chart(
         vertical_spacing=0.08,
         specs=[[{}], [{"secondary_y": True}]],
         subplot_titles=(
-            "Temperatura · blu aria · arancio percepita · turchese rugiada · ━ misura · ┄ previsione",
-            "Pioggia · ▮ misurata/prevista · ━ probabilità · linea arancione = adesso",
+            "Temperatura: misure e previsioni",
+            "Pioggia: misure, previsione e probabilità",
         ),
     )
     if not observations.empty and "temp_c" in observations:
@@ -3969,9 +4212,9 @@ def weather_details_chart(
         vertical_spacing=0.08,
         specs=[[{}], [{}], [{"secondary_y": True}]],
         subplot_titles=(
-            "Umidità · ━ misurata · ┄ previsione · ┄· stima buco",
-            "Pressione · ━ misurata · ┄ previsione · ┄· stima buco",
-            "Vento · verde = vento · arancio = raffiche · rosa = direzione · ━ misura · ┄ previsione",
+            "Umidità: misure e previsioni",
+            "Pressione: misure e previsioni",
+            "Vento, raffiche e direzione",
         ),
     )
 
@@ -4270,32 +4513,28 @@ with st.sidebar:
     elif not station_profiles.empty:
         profile_lookup = station_profiles.set_index("station_id")
         identifiers = station_profiles["station_id"].astype(str).tolist()
-        if len(identifiers) == 1:
-            active_station_id = identifiers[0]
-            single_name = str(profile_lookup.loc[active_station_id, "display_name"])
-            st.markdown(
-                '<div class="station-active-card" aria-label="Stazione attiva">'
-                '<span class="station-active-dot"></span>'
-                '<span class="station-active-copy"><small>Stazione attiva</small>'
-                f"<strong>{html.escape(single_name)}</strong></span></div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            active_station_id = st.selectbox(
-                "Stazione",
-                options=identifiers,
-                index=(
-                    identifiers.index(CFG.station_id)
-                    if CFG.station_id in identifiers
-                    else 0
-                ),
-                format_func=lambda identifier: str(
-                    profile_lookup.loc[identifier, "display_name"]
-                ),
-                help=(
-                    "Le coordinate esatte delle stazioni non vengono mostrate "
-                    "nell'interfaccia."
-                ),
+        primary_profiles = station_profiles[
+            station_profiles["role"].astype(str).eq("primary")
+        ]
+        active_station_id = (
+            CFG.station_id
+            if CFG.station_id in identifiers
+            else str(primary_profiles.iloc[0]["station_id"])
+            if not primary_profiles.empty
+            else identifiers[0]
+        )
+        single_name = str(profile_lookup.loc[active_station_id, "display_name"])
+        st.markdown(
+            '<div class="station-active-card" aria-label="Stazione principale">'
+            '<span class="station-active-dot"></span>'
+            '<span class="station-active-copy"><small>Stazione principale</small>'
+            f"<strong>{html.escape(single_name)}</strong></span></div>",
+            unsafe_allow_html=True,
+        )
+        if len(identifiers) > 1:
+            st.caption(
+                f"{len(identifiers)} stazioni disponibili · consultazione e confronto "
+                "nella scheda Stazione. Roma resta il riferimento delle previsioni."
             )
         profile = profile_lookup.loc[active_station_id]
         active_station_name = str(profile["display_name"])
@@ -4325,19 +4564,20 @@ with st.sidebar:
         )
     dark_mode = st.toggle("Tema scuro", key="dark_mode")
     auto_refresh = st.toggle(
-        "Aggiorna la pagina ogni 5 min", value=True, key="auto_refresh"
+        "Aggiorna la pagina ogni 10 min", value=True, key="auto_refresh"
     )
     st.divider()
     if app_section == "Stazione locale":
         st.caption(
-            "I dati vengono acquisiti dal Cron Job Render ogni 5 minuti e riconciliati "
-            "ogni giorno da GitHub. Il pulsante ricarica soltanto la pagina."
+            "I dati vengono acquisiti dal Cron Job Render ogni 10 minuti e riconciliati "
+            "ogni giorno da GitHub. Ricarica dati forza il ciclo e fa ripartire i 10 minuti."
         )
     else:
         st.caption(
-            "Le città vengono aggiornate da internet e conservate in cache per 15 minuti."
+            "Le città visibili partecipano allo stesso aggiornamento automatico ogni 10 minuti."
         )
     if st.button("Ricarica dati", width="stretch"):
+        st.session_state["last_full_refresh"] = time.monotonic()
         st.cache_data.clear()
         st.rerun()
 
@@ -4876,7 +5116,7 @@ with tab_forecast:
                             x=group["mean_probability"] * 100.0,
                             y=group["observed_frequency"] * 100.0,
                             mode="lines+markers",
-                            name=f"━ {provider} · {horizon}",
+                            name=f"{provider} · {horizon}",
                             marker={
                                 "size": 7
                                 + np.sqrt(pd.to_numeric(group["n"], errors="coerce")),
@@ -5035,27 +5275,77 @@ with tab_station:
     st.markdown(
         '<div class="section-kicker">Misure reali</div>', unsafe_allow_html=True
     )
-    st.subheader(f"Ultime {observation_hours} ore")
-    if station.empty:
-        st.info("Nessun dato della stazione disponibile.")
+    station_view_id = active_station_id
+    station_view_name = active_station_name
+    station_view_timezone = active_station_timezone
+    if not station_profiles.empty:
+        station_profile_lookup = station_profiles.set_index("station_id")
+        station_view_options = station_profiles["station_id"].astype(str).tolist()
+        if len(station_view_options) > 1:
+            station_view_id = st.selectbox(
+                "Stazione da consultare",
+                options=station_view_options,
+                index=(
+                    station_view_options.index(active_station_id)
+                    if active_station_id in station_view_options
+                    else 0
+                ),
+                format_func=lambda value: str(
+                    station_profile_lookup.loc[value, "display_name"]
+                ),
+                help=(
+                    "La scelta riguarda misure, storico e diagnostica della scheda "
+                    "Stazione; le previsioni generali restano calibrate su Roma."
+                ),
+                key="station_detail_selector",
+            )
+        selected_profile = station_profile_lookup.loc[station_view_id]
+        station_view_name = str(selected_profile["display_name"])
+        station_view_timezone = str(selected_profile["timezone"])
+    station_view = (
+        station
+        if station_view_id == active_station_id
+        else station_data(max(observation_hours + 24, 240), station_view_id)
+    )
+    daily_station_history = station_daily_data(365)
+    if len(station_profiles) > 1:
+        st.markdown(
+            '<div class="section-kicker">Confronto omogeneo</div>',
+            unsafe_allow_html=True,
+        )
+        st.subheader("Roma e seconda stazione")
+        render_station_comparison(
+            daily_station_history,
+            station_profiles,
+            active_station_id,
+            dark_mode,
+        )
+        st.divider()
+
+    st.subheader(f"{station_view_name} · ultime {observation_hours} ore")
+    if station_view.empty:
+        st.info(
+            "Nessun campione live disponibile per questa stazione. Lo storico "
+            "giornaliero resta consultabile nel confronto qui sopra."
+        )
     else:
         cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=observation_hours)
-        recent = station[station["time"] >= cutoff].copy()
+        recent = station_view[station_view["time"] >= cutoff].copy()
         figure = make_subplots(
             rows=4,
             cols=1,
             shared_xaxes=True,
             vertical_spacing=0.065,
             subplot_titles=(
-                "Temperatura · rosso aria · arancio percepita · turchese rugiada",
-                "Umidità · ━ misura Ecowitt",
-                "Pressione · ━ misura Ecowitt",
-                "Vento · ━ velocità · ┄ raffiche · misure Ecowitt",
+                "Temperatura, percepita e punto di rugiada",
+                "Umidità misurata",
+                "Pressione misurata",
+                "Vento e raffiche misurati",
             ),
         )
         figure.add_trace(
             go.Scatter(
-                x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                x=plotly_local_datetimes(recent["time"], station_view_timezone),
                 y=recent.get("temp_c"),
                 name="Temperatura",
                 line={"color": "#ef4444", "width": 2.5},
@@ -5070,9 +5360,7 @@ with tab_station:
             if column in recent:
                 figure.add_trace(
                     go.Scatter(
-                        x=plotly_local_datetimes(
-                            recent["time"], active_station_timezone
-                        ),
+                        x=plotly_local_datetimes(recent["time"], station_view_timezone),
                         y=recent[column],
                         name=label,
                         line={"color": colour, "width": 2.0, "dash": dash},
@@ -5083,7 +5371,7 @@ with tab_station:
                 )
         figure.add_trace(
             go.Scatter(
-                x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                x=plotly_local_datetimes(recent["time"], station_view_timezone),
                 y=recent.get("humidity"),
                 name="Umidità",
                 line={"color": "#0ea5e9", "width": 2},
@@ -5093,7 +5381,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                x=plotly_local_datetimes(recent["time"], station_view_timezone),
                 y=recent.get("pressure_hpa"),
                 name="Pressione",
                 line={"color": "#8b5cf6", "width": 2.5},
@@ -5103,7 +5391,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                x=plotly_local_datetimes(recent["time"], station_view_timezone),
                 y=recent.get("wind_kmh"),
                 name="Vento",
                 line={"color": "#10b981", "width": 2},
@@ -5113,7 +5401,7 @@ with tab_station:
         )
         figure.add_trace(
             go.Scatter(
-                x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                x=plotly_local_datetimes(recent["time"], station_view_timezone),
                 y=recent.get("windgust_kmh"),
                 name="Raffiche",
                 line={"color": "#f59e0b", "width": 1.8, "dash": "dash"},
@@ -5139,20 +5427,20 @@ with tab_station:
 
         rain_figure = go.Figure(
             go.Bar(
-                x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                x=plotly_local_datetimes(recent["time"], station_view_timezone),
                 y=_numeric_series(recent, "rain_mm", 0).clip(lower=0),
-                name="▮ Quantità misurata per campione",
+                name="Quantità misurata per campione",
                 marker_color="#38bdf8",
             )
         )
         if "rain_rate_mm_h" in recent:
             rain_figure.add_trace(
                 go.Scatter(
-                    x=plotly_local_datetimes(recent["time"], active_station_timezone),
+                    x=plotly_local_datetimes(recent["time"], station_view_timezone),
                     y=pd.to_numeric(recent["rain_rate_mm_h"], errors="coerce").clip(
                         lower=0
                     ),
-                    name="━ Intensità misurata",
+                    name="Intensità misurata",
                     line={"color": "#2563eb", "width": 2.2},
                 )
             )
@@ -5169,21 +5457,25 @@ with tab_station:
         )
 
         render_climate_context(
-            station,
+            station_view,
             climate_normals,
             dark_mode,
             expert_mode=expert_mode,
         )
         render_reference_climate_context(
-            active_station_id,
-            reference_climate_normals,
+            station_view_id,
+            (
+                reference_climate_normals
+                if station_view_id == active_station_id
+                else reference_climate_data(station_view_id)
+            ),
             dark_mode,
-            timezone=active_station_timezone,
+            timezone=station_view_timezone,
         )
         render_monthly_exports(
-            active_station_id,
-            active_station_name,
-            active_station_timezone,
+            station_view_id,
+            station_view_name,
+            station_view_timezone,
         )
 
         quality = recent.get("data_quality", pd.Series(dtype="object")).value_counts(
@@ -6120,7 +6412,7 @@ with tab_astro:
             go.Scatter(
                 x=plotly_local_datetimes(night["local_time"], CFG.local_timezone),
                 y=night["astro_score"],
-                name="▰ Qualità cielo",
+                name="Qualità cielo",
                 fill="tozeroy",
                 line={"color": "#8b5cf6", "width": 3},
             ),
@@ -6664,8 +6956,25 @@ with tab_system:
     )
 
     st.markdown("#### Diagnostica Ecowitt")
+    diagnostic_station_id = active_station_id
+    if len(station_profiles) > 1:
+        diagnostic_station_id = st.selectbox(
+            "Stazione da diagnosticare",
+            options=station_profiles["station_id"].astype(str).tolist(),
+            index=(
+                station_profiles["station_id"]
+                .astype(str)
+                .tolist()
+                .index(active_station_id)
+                if active_station_id
+                in station_profiles["station_id"].astype(str).tolist()
+                else 0
+            ),
+            format_func=lambda value: _station_label(station_profiles, value),
+            key="system_diagnostic_station",
+        )
     sensor_diagnostics, device_telemetry, diagnostic_summary = ecowitt_diagnostic_data(
-        active_station_id
+        diagnostic_station_id
     )
     diagnostic_columns = st.columns(4)
     diagnostic_columns[0].metric(

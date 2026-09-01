@@ -38,8 +38,19 @@ from official_alerts import refresh_official_alerts
 from official_observations import ingest_official_observations
 from reference_climatology import refresh_reference_climatology
 from source_health import record_source_result
-from station_registry import ensure_primary_station, sync_primary_station_history
-from weather_ingest_ecowitt_cloud import run_station_ingest
+from station_daily import (
+    STATION_DAILY_BOOTSTRAP_ENV,
+    import_daily_bootstrap_from_env,
+)
+from station_registry import (
+    ensure_primary_station,
+    ensure_secondary_station,
+    sync_primary_station_history,
+)
+from weather_ingest_ecowitt_cloud import (
+    run_secondary_station_ingest,
+    run_station_ingest,
+)
 
 load_dotenv()
 logging.basicConfig(
@@ -206,9 +217,7 @@ def dpc_radar_is_due(cfg: Settings, force: bool = False) -> bool:
         return False
     if force:
         return True
-    last = pd.to_datetime(
-        get_meta("last_dpc_radar_success"), utc=True, errors="coerce"
-    )
+    last = pd.to_datetime(get_meta("last_dpc_radar_success"), utc=True, errors="coerce")
     return pd.isna(last) or (
         pd.Timestamp.now(tz="UTC") - last
         >= pd.Timedelta(minutes=cfg.dpc_radar_refresh_minutes)
@@ -357,11 +366,7 @@ def prune_derived_history() -> None:
         )
         connection.execute(
             text("DELETE FROM radar_local_snapshots WHERE observed_at < :cutoff"),
-            {
-                "cutoff": (now - pd.Timedelta(days=14)).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
-            },
+            {"cutoff": (now - pd.Timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")},
         )
         connection.execute(
             text("DELETE FROM ingest_log WHERE started_at < :cutoff"),
@@ -440,6 +445,34 @@ def station_source_age_minutes(
     return max(0.0, (current - latest).total_seconds() / 60.0)
 
 
+def station_ingest_is_due(
+    cfg: Settings,
+    force: bool = False,
+    *,
+    now: pd.Timestamp | None = None,
+) -> bool:
+    """Keep Ecowitt writes on the configured cycle even if a scheduler drifts.
+
+    Render is configured for ten-minute invocations, but this database-backed
+    guard also protects an existing service whose Dashboard schedule has not
+    yet been reconciled with the Blueprint.  A small allowance absorbs the
+    time spent completing the previous request without admitting a five-minute
+    acquisition path.
+    """
+    if force:
+        return True
+    last_success = pd.to_datetime(
+        get_meta("last_station_success"), utc=True, errors="coerce"
+    )
+    if pd.isna(last_success):
+        return True
+    current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    interval_seconds = max(1, int(cfg.station_refresh_minutes)) * 60
+    scheduler_allowance_seconds = min(30, interval_seconds // 20)
+    elapsed_seconds = max(0.0, (current - last_success).total_seconds())
+    return elapsed_seconds >= interval_seconds - scheduler_allowance_seconds
+
+
 def run_all(
     *,
     backfill_hours: int | None = None,
@@ -453,13 +486,16 @@ def run_all(
     sync_primary_station_history(cfg)
     result: dict[str, Any] = {
         "station": None,
+        "secondary_station": None,
+        "secondary_history": None,
         "official": None,
         "radar": None,
         "forecast": None,
         "errors": [],
+        "warnings": [],
     }
 
-    if not skip_station:
+    if not skip_station and station_ingest_is_due(cfg, force_forecast):
         identifier, _ = _log_start("station")
         station_started = perf_counter()
         rows_written = 0
@@ -503,6 +539,95 @@ def run_all(
                 latency_ms=(perf_counter() - station_started) * 1000,
                 error=message,
             )
+
+        secondary_cfg = cfg.secondary_station_settings()
+        bootstrap_payload = os.getenv(STATION_DAILY_BOOTSTRAP_ENV, "").strip()
+        if bootstrap_payload and secondary_cfg is not None:
+            try:
+                secondary_id = ensure_secondary_station(
+                    secondary_cfg, get_engine(), strict=True
+                )
+                history = import_daily_bootstrap_from_env(
+                    secondary_id,
+                    get_engine(),
+                    payload=bootstrap_payload,
+                )
+                if history is not None:
+                    result["secondary_history"] = history
+                    log.info(
+                        "Storico stazione secondaria: %s riepiloghi dal %s al %s",
+                        history["rows"],
+                        history["first_date"],
+                        history["last_date"],
+                    )
+            except Exception as exc:  # noqa: BLE001 - history never blocks live data
+                message = f"Storico stazione secondaria non importato: {_safe_message(exc)}"
+                result["warnings"].append(message)
+                log.warning("%s", message)
+        if cfg.secondary_station_enabled and secondary_cfg is None:
+            message = (
+                "Stazione secondaria abilitata ma configurazione incompleta: "
+                "verificare posizione e credenziali dedicate"
+            )
+            result["warnings"].append(message)
+            record_source_result("ecowitt_secondary", success=False, error=message)
+        elif secondary_cfg is not None:
+            identifier, _ = _log_start("station_secondary")
+            secondary_started = perf_counter()
+            secondary_rows = 0
+            try:
+                secondary_backfill = (
+                    cfg.station_backfill_hours
+                    if backfill_hours is None
+                    else max(0, int(backfill_hours))
+                )
+                secondary = run_secondary_station_ingest(
+                    secondary_backfill, secondary_cfg
+                )
+                secondary["backfill_hours"] = secondary_backfill
+                secondary["source_age_minutes"] = station_source_age_minutes(
+                    secondary.get("latest_station_time")
+                )
+                result["secondary_station"] = secondary
+                secondary_rows = int(secondary.get("rows") or 0)
+                if (
+                    max_station_age_minutes is not None
+                    and secondary["source_age_minutes"] > max_station_age_minutes
+                ):
+                    raise RuntimeError(
+                        "Ecowitt secondaria ha risposto, ma il campione più recente ha "
+                        f"{secondary['source_age_minutes']:.1f} minuti "
+                        f"(limite {max_station_age_minutes})"
+                    )
+                _log_finish(
+                    identifier,
+                    "success",
+                    secondary_rows,
+                    "; ".join(secondary["warnings"]),
+                )
+                record_source_result(
+                    "ecowitt_secondary",
+                    success=True,
+                    rows_received=secondary_rows,
+                    last_observation_at=secondary.get("latest_station_time"),
+                    latency_ms=(perf_counter() - secondary_started) * 1000,
+                )
+            except Exception as exc:  # noqa: BLE001 - secondary never blocks primary
+                message = _safe_message(exc)
+                result["warnings"].append(message)
+                _log_finish(identifier, "warning", secondary_rows, message)
+                record_source_result(
+                    "ecowitt_secondary",
+                    success=False,
+                    rows_received=secondary_rows,
+                    latency_ms=(perf_counter() - secondary_started) * 1000,
+                    error=message,
+                )
+
+    elif not skip_station:
+        reason = "ciclo Ecowitt di 10 minuti non ancora dovuto"
+        result["station"] = {"skipped": True, "reason": reason}
+        result["secondary_station"] = {"skipped": True, "reason": reason}
 
     if dpc_radar_is_due(cfg, force_forecast):
         identifier, _ = _log_start("dpc_radar_local")
@@ -628,13 +753,21 @@ def main() -> int:
         lock.release()
 
     station = result.get("station")
+    secondary_station = result.get("secondary_station")
     official = result.get("official")
     forecast = result.get("forecast")
-    if station:
+    if station and not station.get("skipped"):
         log.info(
             "Stazione: %s righe; ultimo dato %s",
             station["rows"],
             station["latest_station_time"],
+        )
+    if secondary_station and not secondary_station.get("skipped"):
+        log.info(
+            "Stazione secondaria %s: %s righe; ultimo dato %s",
+            secondary_station["station_id"],
+            secondary_station["rows"],
+            secondary_station["latest_station_time"],
         )
     if official and not official.get("skipped"):
         log.info(
@@ -651,6 +784,8 @@ def main() -> int:
         )
     for error in result["errors"]:
         log.error("%s", error)
+    for warning in result["warnings"]:
+        log.warning("%s", warning)
     return 1 if result["errors"] else 0
 
 
