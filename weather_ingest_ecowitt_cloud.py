@@ -20,6 +20,7 @@ from config import Settings
 from db import ensure_schema, get_engine, set_meta
 from ecowitt_diagnostics import archive_telemetry_safely, extract_telemetry
 from forecast_providers import build_session
+from station_registry import ensure_secondary_station
 
 load_dotenv()
 LOG_LEVEL = (os.getenv("LOG_LEVEL") or "INFO").upper()
@@ -480,7 +481,12 @@ def _quality_check(frame: pd.DataFrame) -> pd.DataFrame:
     return output
 
 
-def add_rain_increments(frame: pd.DataFrame, engine=None) -> pd.DataFrame:
+def add_rain_increments(
+    frame: pd.DataFrame,
+    engine=None,
+    *,
+    station_id: str | None = None,
+) -> pd.DataFrame:
     """Convert a cumulative rain counter to per-sample millimetres.
 
     When a counter is unavailable, rate × elapsed time is used and the sample is
@@ -495,17 +501,20 @@ def add_rain_increments(frame: pd.DataFrame, engine=None) -> pd.DataFrame:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     with engine.connect() as connection:
-        previous = (
-            connection.execute(
-                text(
-                    "SELECT time,rain_total_mm FROM station_raw WHERE time < :time "
-                    "AND rain_total_mm IS NOT NULL ORDER BY time DESC LIMIT 1"
-                ),
-                {"time": earliest},
+        if station_id:
+            statement = text(
+                "SELECT time,rain_total_mm FROM station_observations "
+                "WHERE station_id=:station_id AND time < :time "
+                "AND rain_total_mm IS NOT NULL ORDER BY time DESC LIMIT 1"
             )
-            .mappings()
-            .first()
-        )
+            params = {"station_id": station_id, "time": earliest}
+        else:
+            statement = text(
+                "SELECT time,rain_total_mm FROM station_raw WHERE time < :time "
+                "AND rain_total_mm IS NOT NULL ORDER BY time DESC LIMIT 1"
+            )
+            params = {"time": earliest}
+        previous = connection.execute(statement, params).mappings().first()
     previous_time = (
         pd.to_datetime(previous["time"], utc=True, errors="coerce")
         if previous
@@ -592,6 +601,35 @@ def upsert_raw(frame: pd.DataFrame, engine=None) -> int:
         for start in range(0, len(records), 2000):
             connection.execute(statement, records[start : start + 2000])
     return len(records)
+
+
+def upsert_station_observations(
+    frame: pd.DataFrame,
+    station_id: str,
+    engine=None,
+) -> int:
+    """Write a non-primary Ecowitt stream without touching ``station_raw``."""
+    if frame is None or frame.empty:
+        return 0
+    engine = engine or get_engine()
+    records = _clean_records(frame)
+    if not records:
+        return 0
+    scoped_records = [{"station_id": station_id, **record} for record in records]
+    columns = ["station_id", *RAW_COLUMNS]
+    update_columns = [column for column in RAW_COLUMNS if column not in {"time"}]
+    statement = text(
+        "INSERT INTO station_observations ("
+        + ",".join(columns)
+        + ") VALUES ("
+        + ",".join(f":{column}" for column in columns)
+        + ") ON CONFLICT (station_id,time) DO UPDATE SET "
+        + ",".join(f"{column}=excluded.{column}" for column in update_columns)
+    )
+    with engine.begin() as connection:
+        for start in range(0, len(scoped_records), 2000):
+            connection.execute(statement, scoped_records[start : start + 2000])
+    return len(scoped_records)
 
 
 def _circular_mean(values: pd.Series) -> float:
@@ -730,21 +768,11 @@ def _history_windows(hours: int) -> list[tuple[datetime, datetime]]:
     return windows
 
 
-def run_station_ingest(
-    backfill_hours: int | None = None,
-    cfg: Settings | None = None,
-) -> dict[str, Any]:
-    cfg = cfg or Settings.from_env()
-    if not cfg.has_station_credentials:
-        raise EcowittError(
-            "Credenziali Ecowitt mancanti: configurare application key, API key e MAC"
-        )
-    ensure_schema()
-    backfill = (
-        cfg.station_backfill_hours
-        if backfill_hours is None
-        else max(0, int(backfill_hours))
-    )
+def _fetch_station_payloads(
+    backfill: int,
+    cfg: Settings,
+) -> tuple[pd.DataFrame, list[dict[str, Any]], list[str]]:
+    """Fetch and parse one Ecowitt device without deciding where it is stored."""
     frames: list[pd.DataFrame] = []
     telemetry: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -806,6 +834,25 @@ def run_station_ingest(
         .drop_duplicates("time", keep="last")
         .sort_values("time")
     )
+    return combined, telemetry, warnings
+
+
+def run_station_ingest(
+    backfill_hours: int | None = None,
+    cfg: Settings | None = None,
+) -> dict[str, Any]:
+    cfg = cfg or Settings.from_env()
+    if not cfg.has_station_credentials:
+        raise EcowittError(
+            "Credenziali Ecowitt mancanti: configurare application key, API key e MAC"
+        )
+    ensure_schema()
+    backfill = (
+        cfg.station_backfill_hours
+        if backfill_hours is None
+        else max(0, int(backfill_hours))
+    )
+    combined, telemetry, warnings = _fetch_station_payloads(backfill, cfg)
     engine = get_engine()
     telemetry_rows, telemetry_warning = archive_telemetry_safely(telemetry, engine)
     if telemetry_warning:
@@ -826,6 +873,49 @@ def run_station_ingest(
     return {
         "rows": rows,
         "buckets_3h": buckets,
+        "latest_station_time": latest,
+        "telemetry_rows": telemetry_rows,
+        "warnings": warnings,
+    }
+
+
+def run_secondary_station_ingest(
+    backfill_hours: int | None = None,
+    cfg: Settings | None = None,
+) -> dict[str, Any]:
+    """Ingest one secondary Ecowitt into the station-scoped table only."""
+    cfg = cfg or Settings.from_env().secondary_station_settings()
+    if cfg is None or not cfg.has_station_credentials:
+        raise EcowittError(
+            "Credenziali della stazione secondaria incomplete: servono application key, API key e MAC"
+        )
+    ensure_schema()
+    engine = get_engine()
+    station_id = ensure_secondary_station(cfg, engine, strict=True)
+    backfill = (
+        cfg.station_backfill_hours
+        if backfill_hours is None
+        else max(0, int(backfill_hours))
+    )
+    combined, telemetry, warnings = _fetch_station_payloads(backfill, cfg)
+    telemetry_rows, telemetry_warning = archive_telemetry_safely(telemetry, engine)
+    if telemetry_warning:
+        warnings.append(telemetry_warning)
+    combined = add_rain_increments(combined, engine, station_id=station_id)
+    rows = upsert_station_observations(combined, station_id, engine)
+    if rows <= 0:
+        raise EcowittError(
+            "Dati Ecowitt secondari ricevuti ma nessuna riga valida salvata"
+        )
+    finished = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+    latest = pd.to_datetime(combined["time"].max(), utc=True).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    set_meta(f"last_station_success_{station_id}", finished)
+    set_meta(f"last_station_time_{station_id}", latest)
+    return {
+        "station_id": station_id,
+        "rows": rows,
         "latest_station_time": latest,
         "telemetry_rows": telemetry_rows,
         "warnings": warnings,

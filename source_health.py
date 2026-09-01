@@ -32,11 +32,19 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
     return (
         SourceDefinition(
             "ecowitt",
-            "Ecowitt",
+            "Ecowitt · stazione primaria",
             cfg.has_station_credentials,
-            5,
+            cfg.station_refresh_minutes,
             "misure",
             continuity="Recupero automatico Ecowitt fino a 7 giorni",
+        ),
+        SourceDefinition(
+            "ecowitt_secondary",
+            f"Ecowitt · {cfg.secondary_station_name}",
+            cfg.secondary_station_enabled,
+            cfg.station_refresh_minutes,
+            "misure",
+            continuity="Flusso indipendente; non modifica la previsione primaria",
         ),
         SourceDefinition(
             "open_meteo",

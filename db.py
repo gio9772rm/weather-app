@@ -46,7 +46,7 @@ def get_engine(echo: bool = False) -> Engine:
     if db_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
     elif db_url.startswith("postgresql"):
-        # Fail quickly on a sleeping/restarting database. The five-minute cron
+        # Fail quickly on a sleeping/restarting database. The ten-minute cron
         # and the idempotent backfill will retry safely on the next execution.
         connect_args["connect_timeout"] = 15
 
@@ -156,7 +156,7 @@ def ensure_schema() -> None:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO meta (k,v) VALUES ('schema_version','8') "
+                "INSERT INTO meta (k,v) VALUES ('schema_version','9') "
                 "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
             )
         )

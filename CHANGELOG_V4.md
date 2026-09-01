@@ -1,5 +1,16 @@
 # Changelog Meteo V4
 
+## V4.9 · seconda Ecowitt e ciclo unico di 10 minuti
+
+- aggiunta una seconda Ecowitt realmente indipendente, con credenziali e contatori pioggia isolati, archivio live per `station_id` e stato fonte non bloccante per Roma;
+- importazione idempotente degli export XLSX giornalieri in una tabella dedicata, senza fingere che minime, massime e medie siano campioni live;
+- bootstrap di deploy privato e monouso per importare lo storico su Render senza pubblicare l'XLSX nel repository;
+- confronto Roma/seconda stazione soltanto su date comuni, con temperatura, umidità, pioggia e pressione; nessuna correzione automatica della previsione romana viene ricavata da un microclima distante;
+- selezione della stazione circoscritta alla scheda **Stazione**, così previsioni, aria, radar e astronomia restano legati al sito primario;
+- legende Plotly ad alto contrasto con campioni colore generati dalle tracce reali, titoli dei pannelli neutri e spazio superiore riservato anche quando la legenda va su più righe;
+- un solo aggiornamento automatico della pagina ogni 10 minuti; cache live, diagnostica, copertura e Cron Job condividono la stessa granularità minima e il comando manuale fa ripartire l'intervallo;
+- schema V9 additivo con `station_daily_summaries`; nessuna coordinata o credenziale della seconda stazione viene salvata nel repository.
+
 ## V4.8 · orizzonte indicativo e diagnostica ambientale
 
 - stima opzionale dell'orizzonte da 96 campioni radiali Copernicus GLO-90 via Open-Meteo, mantenuta nella sessione e combinata con gli ostacoli manuali senza mai abbassarli;

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from dotenv import load_dotenv
 
@@ -30,6 +30,13 @@ def _as_int(value: str, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_float(value: str) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _as_bool(value: str, default: bool) -> bool:
@@ -84,6 +91,17 @@ class Settings:
     station_backfill_hours: int
     station_stale_minutes: int
     admin_token: str
+    secondary_station_enabled: bool = False
+    secondary_station_id: str = "secondary-station"
+    secondary_station_name: str = "Stazione secondaria"
+    secondary_station_latitude: float | None = None
+    secondary_station_longitude: float | None = None
+    secondary_station_elevation_m: float | None = None
+    secondary_station_timezone: str = "Europe/Rome"
+    secondary_ecowitt_application_key: str = ""
+    secondary_ecowitt_api_key: str = ""
+    secondary_ecowitt_mac: str = ""
+    station_refresh_minutes: int = 10
     station_auto_backfill_max_hours: int = 168
     station_max_source_age_minutes: int = 20
     official_observations_enabled: bool = True
@@ -125,7 +143,7 @@ class Settings:
     feature_experience_mode_enabled: bool = True
     station_id: str = "roma-primary"
     dpc_radar_enabled: bool = True
-    dpc_radar_refresh_minutes: int = 5
+    dpc_radar_refresh_minutes: int = 10
     dpc_radar_crop_radius: int = 10
     reference_climatology_enabled: bool = True
     reference_climatology_refresh_days: int = 30
@@ -169,6 +187,39 @@ class Settings:
                 10, _as_int(_first_env("STATION_STALE_MINUTES"), 20)
             ),
             admin_token=_first_env("ADMIN_TOKEN"),
+            secondary_station_enabled=_as_bool(
+                _first_env("SECONDARY_STATION_ENABLED", default="false"), False
+            ),
+            secondary_station_id=_first_env(
+                "SECONDARY_STATION_ID", default="secondary-station"
+            ),
+            secondary_station_name=_first_env(
+                "SECONDARY_STATION_NAME", default="Stazione secondaria"
+            ),
+            secondary_station_latitude=_optional_float(
+                _first_env("SECONDARY_STATION_LAT", "SECONDARY_STATION_LATITUDE")
+            ),
+            secondary_station_longitude=_optional_float(
+                _first_env("SECONDARY_STATION_LON", "SECONDARY_STATION_LONGITUDE")
+            ),
+            secondary_station_elevation_m=_optional_float(
+                _first_env("SECONDARY_STATION_ELEVATION_M")
+            ),
+            secondary_station_timezone=_first_env(
+                "SECONDARY_STATION_TZ",
+                default=_first_env("LOCAL_TZ", default="Europe/Rome"),
+            ),
+            secondary_ecowitt_application_key=_first_env(
+                "SECONDARY_ECOWITT_APPLICATION_KEY",
+                default=_first_env(
+                    "ECOWITT_APPLICATION_KEY", "ECOWITT_APP_KEY", "APPLICATION_KEY"
+                ),
+            ),
+            secondary_ecowitt_api_key=_first_env("SECONDARY_ECOWITT_API_KEY"),
+            secondary_ecowitt_mac=_first_env("SECONDARY_ECOWITT_MAC"),
+            station_refresh_minutes=max(
+                10, _as_int(_first_env("STATION_REFRESH_MINUTES"), 10)
+            ),
             station_max_source_age_minutes=max(
                 10,
                 _as_int(_first_env("STATION_MAX_SOURCE_AGE_MINUTES"), 20),
@@ -278,7 +329,7 @@ class Settings:
                 _first_env("DPC_RADAR_ENABLED", default="true"), True
             ),
             dpc_radar_refresh_minutes=max(
-                5, _as_int(_first_env("DPC_RADAR_REFRESH_MINUTES"), 5)
+                10, _as_int(_first_env("DPC_RADAR_REFRESH_MINUTES"), 10)
             ),
             dpc_radar_crop_radius=max(
                 3,
@@ -295,21 +346,45 @@ class Settings:
                 "CFR_METEOHUB_BASE_URL",
                 default="https://meteohub.agenziaitaliameteo.it",
             ),
-            cfr_station_name=_first_env(
-                "CFR_STATION_NAME", default="Roma Monte Mario"
-            ),
-            cfr_station_latitude=_as_float(
-                _first_env("CFR_STATION_LAT"), 41.94889
-            ),
-            cfr_station_longitude=_as_float(
-                _first_env("CFR_STATION_LON"), 12.44056
-            ),
+            cfr_station_name=_first_env("CFR_STATION_NAME", default="Roma Monte Mario"),
+            cfr_station_latitude=_as_float(_first_env("CFR_STATION_LAT"), 41.94889),
+            cfr_station_longitude=_as_float(_first_env("CFR_STATION_LON"), 12.44056),
         )
 
     @property
     def has_station_credentials(self) -> bool:
         return bool(
             self.ecowitt_application_key and self.ecowitt_api_key and self.ecowitt_mac
+        )
+
+    @property
+    def has_secondary_station_credentials(self) -> bool:
+        return bool(
+            self.secondary_station_enabled
+            and self.secondary_ecowitt_application_key
+            and self.secondary_ecowitt_api_key
+            and self.secondary_ecowitt_mac
+            and self.secondary_station_latitude is not None
+            and self.secondary_station_longitude is not None
+            and self.secondary_station_elevation_m is not None
+        )
+
+    def secondary_station_settings(self) -> Settings | None:
+        """Return an isolated Ecowitt configuration for the second station."""
+        if not self.has_secondary_station_credentials:
+            return None
+        return replace(
+            self,
+            latitude=float(self.secondary_station_latitude),
+            longitude=float(self.secondary_station_longitude),
+            elevation_m=float(self.secondary_station_elevation_m),
+            local_timezone=self.secondary_station_timezone,
+            location_name=self.secondary_station_name,
+            ecowitt_application_key=self.secondary_ecowitt_application_key,
+            ecowitt_api_key=self.secondary_ecowitt_api_key,
+            ecowitt_mac=self.secondary_ecowitt_mac,
+            station_id=self.secondary_station_id,
+            secondary_station_enabled=False,
         )
 
     @property

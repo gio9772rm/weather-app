@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from sqlalchemy import text
 
+from station_registry import register_station
 from weather_ingest_ecowitt_cloud import (
     RAW_COLUMNS,
     _quality_check,
     add_rain_increments,
     parse_payload,
+    upsert_station_observations,
 )
 
 
@@ -51,6 +54,48 @@ def test_rate_fallback_uses_elapsed_time(sqlite_engine):
     result = add_rain_increments(frame, sqlite_engine)
     assert result.iloc[1]["rain_mm"] == pytest.approx(1.0)
     assert result.iloc[1]["data_quality"] == "estimated_rain"
+
+
+def test_secondary_rain_counter_is_isolated_from_primary(sqlite_engine):
+    register_station(
+        station_id="secondary-one",
+        display_name="Secondaria",
+        latitude=44.8,
+        longitude=12.1,
+        elevation_m=-1,
+        timezone="Europe/Rome",
+        source="ecowitt",
+        role="secondary",
+        engine=sqlite_engine,
+    )
+    previous = _frame(
+        [
+            {
+                "time": pd.Timestamp("2026-08-19T10:00:00Z"),
+                "rain_total_mm": 50.0,
+            }
+        ]
+    )
+    assert upsert_station_observations(previous, "secondary-one", sqlite_engine) == 1
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,rain_total_mm,source) "
+                "VALUES ('2026-08-19T10:00:00Z',500.0,'primary-test')"
+            )
+        )
+    current = _frame(
+        [
+            {
+                "time": pd.Timestamp("2026-08-19T10:10:00Z"),
+                "rain_total_mm": 50.7,
+            }
+        ]
+    )
+
+    result = add_rain_increments(current, sqlite_engine, station_id="secondary-one")
+
+    assert result.iloc[0]["rain_mm"] == pytest.approx(0.7)
 
 
 def test_ecowitt_history_sensor_lists_are_aligned_by_timestamp():

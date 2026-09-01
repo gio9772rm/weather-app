@@ -214,13 +214,13 @@ def test_zero_age_archive_is_available_during_provider_outage(sqlite_engine):
     assert health.loc["eea_utd_air", "display_status"] == "cached"
 
 
-def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine):
-    now = pd.Timestamp.now(tz="UTC").floor("5min")
+def test_completeness_counts_ten_minute_buckets_and_quality_flags(sqlite_engine):
+    now = pd.Timestamp.now(tz="UTC").floor("10min")
     rows = []
-    for offset in range(12):
+    for offset in range(6):
         rows.append(
             {
-                "time": (now - pd.Timedelta(minutes=offset * 5)).strftime(
+                "time": (now - pd.Timedelta(minutes=offset * 10)).strftime(
                     "%Y-%m-%dT%H:%M:%SZ"
                 ),
                 "quality": "spike_temp_c" if offset == 3 else "ok",
@@ -235,7 +235,7 @@ def test_completeness_counts_five_minute_buckets_and_quality_flags(sqlite_engine
     snapshot = data_completeness_snapshot(1)
     health = load_source_health()
 
-    assert snapshot["observed"] == 12
+    assert snapshot["observed"] == 6
     assert snapshot["coverage"] == 100.0
     assert snapshot["anomalies"] == 1
     assert "ecowitt" in set(health["source"])

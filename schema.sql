@@ -128,6 +128,41 @@ CREATE TABLE IF NOT EXISTS station_observations (
 CREATE INDEX IF NOT EXISTS idx_station_observations_time
   ON station_observations (station_id, time);
 
+-- Daily Ecowitt exports contain aggregates rather than timestamped samples.
+-- Keeping them separate prevents a daily mean from being presented as a live
+-- observation while still allowing homogeneous station-to-station comparisons.
+CREATE TABLE IF NOT EXISTS station_daily_summaries (
+  station_id TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  temp_mean_c REAL,
+  temp_min_c REAL,
+  temp_max_c REAL,
+  feels_like_mean_c REAL,
+  dewpoint_mean_c REAL,
+  humidity_mean REAL,
+  humidity_min REAL,
+  humidity_max REAL,
+  pressure_mean_hpa REAL,
+  pressure_min_hpa REAL,
+  pressure_max_hpa REAL,
+  wind_mean_kmh REAL,
+  wind_gust_max_kmh REAL,
+  wind_dir_deg REAL,
+  rain_mm REAL,
+  rain_rate_max_mm_h REAL,
+  solar_max_w_m2 REAL,
+  uv_max REAL,
+  sample_count INTEGER,
+  source TEXT NOT NULL,
+  data_quality TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY (station_id, local_date),
+  FOREIGN KEY (station_id) REFERENCES station_profiles(station_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_station_daily_summaries_date
+  ON station_daily_summaries (local_date, station_id);
+
 -- Sanitised Ecowitt device telemetry. Only battery/signal values are kept:
 -- device identifiers, MAC addresses and raw API payloads are never persisted.
 CREATE TABLE IF NOT EXISTS ecowitt_telemetry (

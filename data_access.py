@@ -14,6 +14,7 @@ from db import ensure_schema, get_engine
 from forecast_quality import enforce_physical_bounds
 from rain_consistency import reportable_rain_series
 from source_health import configured_sources
+from station_daily import aggregate_observations_daily, combine_daily_sources
 from weather_derived import add_station_derived_values
 
 
@@ -32,17 +33,12 @@ def load_station(hours: int = 240, station_id: str | None = None) -> pd.DataFram
     cutoff = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
-    if station_id:
+    if station_id and station_id != settings.station_id:
         frame = _read(
             "SELECT * FROM station_observations WHERE station_id=:station_id "
             "AND time >= :cutoff ORDER BY time",
             {"station_id": station_id, "cutoff": cutoff},
         )
-        if frame.empty and station_id == settings.station_id:
-            frame = _read(
-                "SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time",
-                {"cutoff": cutoff},
-            )
     else:
         frame = _read(
             "SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time",
@@ -96,6 +92,123 @@ def load_station_profiles() -> pd.DataFrame:
     return frame
 
 
+def load_station_daily_summaries(days: int = 365) -> pd.DataFrame:
+    """Combine imported daily summaries with aggregates from true live samples."""
+    days = max(7, min(3650, int(days)))
+    cutoff_time = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days + 1)
+    cutoff_date = cutoff_time.strftime("%Y-%m-%d")
+    imported = _read(
+        "SELECT * FROM station_daily_summaries WHERE local_date>=:cutoff "
+        "ORDER BY local_date,station_id",
+        {"cutoff": cutoff_date},
+    )
+    observations = _read(
+        "SELECT * FROM station_observations WHERE time>=:cutoff ORDER BY station_id,time",
+        {"cutoff": cutoff_time.strftime("%Y-%m-%dT%H:%M:%SZ")},
+    )
+    primary_raw = _read(
+        "SELECT * FROM station_raw WHERE time>=:cutoff ORDER BY time",
+        {"cutoff": cutoff_time.strftime("%Y-%m-%dT%H:%M:%SZ")},
+    )
+    profiles = load_station_profiles()
+    live_frames: list[pd.DataFrame] = []
+    if not observations.empty and not profiles.empty:
+        observations["time"] = pd.to_datetime(
+            observations["time"], utc=True, errors="coerce"
+        )
+        for station_id, group in observations.groupby("station_id"):
+            selected = profiles[profiles["station_id"].astype(str).eq(str(station_id))]
+            if selected.empty:
+                continue
+            timezone = str(selected.iloc[0].get("timezone") or settings.local_timezone)
+            derived = add_station_derived_values(group.copy())
+            live_frames.append(
+                aggregate_observations_daily(derived, str(station_id), timezone)
+            )
+    if not primary_raw.empty:
+        primary_profile = profiles[
+            profiles.get("station_id", pd.Series(dtype="object"))
+            .astype(str)
+            .eq(settings.station_id)
+        ]
+        primary_timezone = (
+            str(primary_profile.iloc[0].get("timezone") or settings.local_timezone)
+            if not primary_profile.empty
+            else settings.local_timezone
+        )
+        primary_raw["time"] = pd.to_datetime(
+            primary_raw["time"], utc=True, errors="coerce"
+        )
+        derived_raw = add_station_derived_values(primary_raw)
+        raw_daily = aggregate_observations_daily(
+            derived_raw, settings.station_id, primary_timezone
+        )
+        raw_daily["source"] = "station_raw"
+        live_frames.append(raw_daily)
+    live = pd.concat(live_frames, ignore_index=True) if live_frames else pd.DataFrame()
+    if not live.empty:
+        live = (
+            live.assign(_source_rank=live["source"].eq("station_raw").astype(int))
+            .sort_values(["station_id", "local_date", "_source_rank"])
+            .drop_duplicates(["station_id", "local_date"], keep="last")
+            .drop(columns="_source_rank")
+        )
+    return combine_daily_sources(imported, live)
+
+
+def _daily_summaries_as_observations(
+    station_id: str,
+    start_date: str,
+    end_date: str,
+    timezone: str,
+) -> pd.DataFrame:
+    daily = _read(
+        "SELECT * FROM station_daily_summaries WHERE station_id=:station_id "
+        "AND local_date>=:start_date AND local_date<:end_date ORDER BY local_date",
+        {
+            "station_id": station_id,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
+    if daily.empty:
+        return daily
+    local_noon = pd.to_datetime(
+        daily["local_date"].astype(str) + " 12:00:00", errors="coerce"
+    ).dt.tz_localize(timezone, ambiguous="NaT", nonexistent="shift_forward")
+    return pd.DataFrame(
+        {
+            "station_id": station_id,
+            "time": local_noon.dt.tz_convert("UTC"),
+            "local_date": daily.get("local_date"),
+            "temp_c": daily.get("temp_mean_c"),
+            "temp_daily_min_c": daily.get("temp_min_c"),
+            "temp_daily_max_c": daily.get("temp_max_c"),
+            "feels_like_c": daily.get("feels_like_mean_c"),
+            "dewpoint_c": daily.get("dewpoint_mean_c"),
+            "humidity": daily.get("humidity_mean"),
+            "humidity_daily_min": daily.get("humidity_min"),
+            "humidity_daily_max": daily.get("humidity_max"),
+            "pressure_hpa": daily.get("pressure_mean_hpa"),
+            "pressure_daily_min_hpa": daily.get("pressure_min_hpa"),
+            "pressure_daily_max_hpa": daily.get("pressure_max_hpa"),
+            "wind_kmh": daily.get("wind_mean_kmh"),
+            "windgust_kmh": daily.get("wind_gust_max_kmh"),
+            "winddir": daily.get("wind_dir_deg"),
+            "rain_mm": daily.get("rain_mm"),
+            "wind_ms": pd.to_numeric(daily.get("wind_mean_kmh"), errors="coerce") / 3.6,
+            "rain_rate_mm_h": daily.get("rain_rate_max_mm_h"),
+            "rain_total_mm": np.nan,
+            "solar_w_m2": daily.get("solar_max_w_m2"),
+            "uv_index": daily.get("uv_max"),
+            "summary_sample_count": daily.get("sample_count"),
+            "summary_granularity": "daily",
+            "source": daily.get("source"),
+            "data_quality": daily.get("data_quality"),
+        }
+    ).dropna(subset=["time"])
+
+
 def load_station_month(
     station_id: str, year: int, month: int, timezone: str
 ) -> pd.DataFrame:
@@ -106,15 +219,37 @@ def load_station_month(
         "start": start.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
         "end": end.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    frame = _read(
-        "SELECT * FROM station_observations WHERE station_id=:station_id "
-        "AND time>=:start AND time<:end ORDER BY time",
-        params,
-    )
-    if frame.empty and station_id == settings.station_id:
+    if station_id == settings.station_id:
         frame = _read(
             "SELECT * FROM station_raw WHERE time>=:start AND time<:end ORDER BY time",
             params,
+        )
+    else:
+        frame = _read(
+            "SELECT * FROM station_observations WHERE station_id=:station_id "
+            "AND time>=:start AND time<:end ORDER BY time",
+            params,
+        )
+    daily_frame = _daily_summaries_as_observations(
+        station_id,
+        start.strftime("%Y-%m-%d"),
+        end.strftime("%Y-%m-%d"),
+        timezone,
+    )
+    if frame.empty:
+        frame = daily_frame
+    elif not daily_frame.empty:
+        measured_dates = (
+            pd.to_datetime(frame["time"], utc=True, errors="coerce")
+            .dt.tz_convert(timezone)
+            .dt.strftime("%Y-%m-%d")
+        )
+        daily_dates = (
+            daily_frame["time"].dt.tz_convert(timezone).dt.strftime("%Y-%m-%d")
+        )
+        frame = pd.concat(
+            [frame, daily_frame.loc[~daily_dates.isin(set(measured_dates.dropna()))]],
+            ignore_index=True,
         )
     if frame.empty:
         return frame
@@ -139,19 +274,28 @@ def load_station_month(
 
 
 def available_station_months(station_id: str, timezone: str) -> list[tuple[int, int]]:
-    frame = _read(
-        "SELECT time FROM station_observations WHERE station_id=:station_id ORDER BY time",
+    if station_id == settings.station_id:
+        frame = _read("SELECT time FROM station_raw ORDER BY time")
+    else:
+        frame = _read(
+            "SELECT time FROM station_observations "
+            "WHERE station_id=:station_id ORDER BY time",
+            {"station_id": station_id},
+        )
+    months: set[tuple[int, int]] = set()
+    if not frame.empty:
+        times = pd.to_datetime(frame["time"], utc=True, errors="coerce").dropna()
+        local = times.dt.tz_convert(timezone)
+        months.update(zip(local.dt.year.astype(int), local.dt.month.astype(int)))
+    daily = _read(
+        "SELECT local_date FROM station_daily_summaries "
+        "WHERE station_id=:station_id ORDER BY local_date",
         {"station_id": station_id},
     )
-    if frame.empty and station_id == settings.station_id:
-        frame = _read("SELECT time FROM station_raw ORDER BY time")
-    if frame.empty:
-        return []
-    times = pd.to_datetime(frame["time"], utc=True, errors="coerce").dropna()
-    local = times.dt.tz_convert(timezone)
-    return sorted(
-        set(zip(local.dt.year.astype(int), local.dt.month.astype(int))), reverse=True
-    )
+    if not daily.empty:
+        dates = pd.to_datetime(daily["local_date"], errors="coerce").dropna()
+        months.update(zip(dates.dt.year.astype(int), dates.dt.month.astype(int)))
+    return sorted(months, reverse=True)
 
 
 def _legacy_forecast() -> pd.DataFrame:
@@ -649,14 +793,14 @@ def load_source_health(cfg: Settings = settings) -> pd.DataFrame:
 
 
 def data_completeness_snapshot(hours: int = 24) -> dict[str, Any]:
-    """Calculate five-minute coverage and anomaly counts without DB-specific SQL."""
+    """Calculate ten-minute coverage and anomaly counts without DB-specific SQL."""
     hours = max(1, min(int(hours), 168))
     cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours)
     frame = _read(
         "SELECT time,data_quality FROM station_raw WHERE time >= :cutoff ORDER BY time",
         {"cutoff": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")},
     )
-    expected = hours * 12
+    expected = hours * 6
     if frame.empty:
         return {
             "hours": hours,
@@ -667,7 +811,7 @@ def data_completeness_snapshot(hours: int = 24) -> dict[str, Any]:
             "anomalies": 0,
         }
     times = pd.to_datetime(frame["time"], utc=True, errors="coerce").dropna()
-    buckets = times.dt.floor("5min").drop_duplicates()
+    buckets = times.dt.floor("10min").drop_duplicates()
     gaps = times.sort_values().diff().dt.total_seconds().div(60).dropna()
     quality = frame.get("data_quality", pd.Series(dtype="string")).fillna("ok")
     anomalies = int((~quality.astype(str).isin({"ok", "estimated_rain"})).sum())

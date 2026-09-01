@@ -9,7 +9,7 @@ on:
         type: boolean
         default: true
   schedule:
-    # Rete di sicurezza: Render acquisisce ogni 5 minuti; GitHub rilegge ogni
+    # Rete di sicurezza: Render acquisisce ogni 10 minuti; GitHub rilegge ogni
     # giorno l'intera finestra recuperabile di sette giorni (03:17 UTC).
     - cron: "17 3 * * *"
 
@@ -49,6 +49,16 @@ jobs:
           ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
+          SECONDARY_STATION_ENABLED: ${{ vars.SECONDARY_STATION_ENABLED || 'false' }}
+          SECONDARY_STATION_ID: ${{ vars.SECONDARY_STATION_ID || 'secondary-station' }}
+          SECONDARY_STATION_NAME: ${{ vars.SECONDARY_STATION_NAME || 'Stazione secondaria' }}
+          SECONDARY_STATION_LAT: ${{ secrets.SECONDARY_STATION_LAT }}
+          SECONDARY_STATION_LON: ${{ secrets.SECONDARY_STATION_LON }}
+          SECONDARY_STATION_ELEVATION_M: ${{ secrets.SECONDARY_STATION_ELEVATION_M }}
+          SECONDARY_STATION_TZ: Europe/Rome
+          SECONDARY_ECOWITT_APPLICATION_KEY: ${{ secrets.SECONDARY_ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
+          SECONDARY_ECOWITT_API_KEY: ${{ secrets.SECONDARY_ECOWITT_API_KEY }}
+          SECONDARY_ECOWITT_MAC: ${{ secrets.SECONDARY_ECOWITT_MAC }}
         shell: bash
         run: |
           [ -z "$DATABASE_URL" ] && echo "::error::Manca DATABASE_URL" && exit 2
@@ -66,6 +76,16 @@ jobs:
           ECOWITT_APPLICATION_KEY: ${{ secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
           ECOWITT_API_KEY: ${{ secrets.ECOWITT_API_KEY }}
           ECOWITT_MAC: ${{ secrets.ECOWITT_MAC }}
+          SECONDARY_STATION_ENABLED: ${{ vars.SECONDARY_STATION_ENABLED || 'false' }}
+          SECONDARY_STATION_ID: ${{ vars.SECONDARY_STATION_ID || 'secondary-station' }}
+          SECONDARY_STATION_NAME: ${{ vars.SECONDARY_STATION_NAME || 'Stazione secondaria' }}
+          SECONDARY_STATION_LAT: ${{ secrets.SECONDARY_STATION_LAT }}
+          SECONDARY_STATION_LON: ${{ secrets.SECONDARY_STATION_LON }}
+          SECONDARY_STATION_ELEVATION_M: ${{ secrets.SECONDARY_STATION_ELEVATION_M }}
+          SECONDARY_STATION_TZ: Europe/Rome
+          SECONDARY_ECOWITT_APPLICATION_KEY: ${{ secrets.SECONDARY_ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APPLICATION_KEY || secrets.ECOWITT_APP_KEY }}
+          SECONDARY_ECOWITT_API_KEY: ${{ secrets.SECONDARY_ECOWITT_API_KEY }}
+          SECONDARY_ECOWITT_MAC: ${{ secrets.SECONDARY_ECOWITT_MAC }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           LAT: ${{ vars.LAT || '41.9028' }}
           LON: ${{ vars.LON || '12.4964' }}
@@ -73,6 +93,7 @@ jobs:
           LOCATION_NAME: ${{ vars.LOCATION_NAME || 'Stazione meteo' }}
           LOCAL_TZ: Europe/Rome
           STATION_BACKFILL_HOURS: "2"
+          STATION_REFRESH_MINUTES: "10"
           STATION_AUTO_BACKFILL_MAX_HOURS: "168"
           STATION_MAX_SOURCE_AGE_MINUTES: "20"
           FORECAST_REFRESH_MINUTES: "60"

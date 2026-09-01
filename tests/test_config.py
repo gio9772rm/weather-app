@@ -84,3 +84,38 @@ def test_v42_daily_features_are_enabled_by_default(monkeypatch):
     assert configured.feature_measured_pollen_enabled is True
     assert configured.feature_official_alerts_enabled is True
     assert configured.feature_experience_mode_enabled is True
+
+
+def test_secondary_station_is_opt_in_and_uses_dedicated_credentials(monkeypatch):
+    monkeypatch.setenv("ECOWITT_APPLICATION_KEY", "shared-application")
+    monkeypatch.setenv("SECONDARY_STATION_ENABLED", "true")
+    monkeypatch.setenv("SECONDARY_STATION_ID", "secondary-one")
+    monkeypatch.setenv("SECONDARY_STATION_NAME", "Stazione secondaria")
+    monkeypatch.setenv("SECONDARY_STATION_LAT", "44.8")
+    monkeypatch.setenv("SECONDARY_STATION_LON", "12.1")
+    monkeypatch.setenv("SECONDARY_STATION_ELEVATION_M", "-1")
+    monkeypatch.setenv("SECONDARY_ECOWITT_API_KEY", "secondary-api")
+    monkeypatch.setenv("SECONDARY_ECOWITT_MAC", "00:11:22:33:44:55")
+
+    configured = Settings.from_env()
+    secondary = configured.secondary_station_settings()
+
+    assert configured.has_secondary_station_credentials is True
+    assert secondary is not None
+    assert secondary.station_id == "secondary-one"
+    assert secondary.location_name == "Stazione secondaria"
+    assert secondary.elevation_m == -1
+    assert secondary.ecowitt_application_key == "shared-application"
+    assert secondary.ecowitt_api_key == "secondary-api"
+    assert secondary.ecowitt_mac == "00:11:22:33:44:55"
+    assert secondary.secondary_station_enabled is False
+
+
+def test_refresh_defaults_are_never_faster_than_ten_minutes(monkeypatch):
+    monkeypatch.setenv("STATION_REFRESH_MINUTES", "5")
+    monkeypatch.setenv("DPC_RADAR_REFRESH_MINUTES", "5")
+
+    configured = Settings.from_env()
+
+    assert configured.station_refresh_minutes == 10
+    assert configured.dpc_radar_refresh_minutes == 10
