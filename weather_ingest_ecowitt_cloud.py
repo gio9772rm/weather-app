@@ -6,6 +6,7 @@ import argparse
 import logging
 import math
 import os
+import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -64,6 +65,30 @@ def _first(mapping: Any, names: Iterable[str]) -> Any:
         if name.lower() in lowered:
             return lowered[name.lower()]
     return None
+
+
+def _safe_api_error_detail(payload: dict[str, Any], cfg: Settings) -> str:
+    """Keep Ecowitt's diagnosis while removing every configured identifier."""
+    value = _first(payload, ("msg", "message", "error"))
+    if value is None or isinstance(value, (dict, list, tuple)):
+        return ""
+    detail = " ".join(str(value).split())
+    for secret in (
+        cfg.ecowitt_application_key,
+        cfg.ecowitt_api_key,
+        cfg.ecowitt_mac,
+        cfg.ecowitt_mac.replace("-", ":"),
+    ):
+        if secret:
+            detail = re.sub(
+                re.escape(secret), "[redacted]", detail, flags=re.IGNORECASE
+            )
+    detail = re.sub(
+        r"(?i)\b(application_key|api_key|mac)\s*[:=]\s*[^\s,;]+",
+        r"\1=[redacted]",
+        detail,
+    )
+    return detail[:180]
 
 
 def safe_float(value: Any) -> float | None:
@@ -750,7 +775,9 @@ def ecowitt_get(
         raise EcowittError(f"Ecowitt {path}: risposta non valida")
     code = payload.get("code")
     if code not in (None, 0, "0"):
-        raise EcowittError(f"Ecowitt {path}: API code {code}")
+        detail = _safe_api_error_detail(payload, cfg)
+        suffix = f" ({detail})" if detail else ""
+        raise EcowittError(f"Ecowitt {path}: API code {code}{suffix}")
     return payload
 
 

@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import DateTime, inspect, text
 from sqlalchemy.engine import Engine
 
 from config import Settings, settings
@@ -130,6 +130,26 @@ def ensure_secondary_station(
         return identifier
 
 
+def _raw_station_time_sql(engine: Engine) -> tuple[str, str]:
+    """Return compatible raw-time expressions for the installed target schema.
+
+    Older PostgreSQL deployments can already have ``station_observations.time``
+    as ``TIMESTAMPTZ`` while fresh V4 databases use the portable text schema.
+    SQLite always keeps the ISO-8601 source string unchanged.
+    """
+    if engine.dialect.name != "postgresql":
+        return "r.time", ":cutoff"
+    columns = inspect(engine).get_columns("station_observations")
+    time_column = next(
+        (column for column in columns if str(column.get("name", "")).lower() == "time"),
+        None,
+    )
+    if time_column is not None and isinstance(time_column.get("type"), DateTime):
+        cast = "CAST(r.time AS TIMESTAMP WITH TIME ZONE)"
+        return cast, "CAST(:cutoff AS TIMESTAMP WITH TIME ZONE)"
+    return "r.time", ":cutoff"
+
+
 def sync_primary_station_history(
     cfg: Settings = settings,
     engine: Engine | None = None,
@@ -148,6 +168,7 @@ def sync_primary_station_history(
     engine = engine or get_engine()
     identifier = ensure_primary_station(cfg, engine, strict=strict)
     try:
+        raw_time_sql, cutoff_sql = _raw_station_time_sql(engine)
         with engine.begin() as connection:
             latest_mirrored = connection.execute(
                 text(
@@ -165,18 +186,21 @@ def sync_primary_station_history(
                         latest_ts - pd.Timedelta(hours=max(1, int(lookback_hours)))
                     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+            cutoff_clause = (
+                "" if cutoff is None else f" AND {raw_time_sql} >= {cutoff_sql}"
+            )
             result = connection.execute(
                 text(
                     "INSERT INTO station_observations (station_id,time,temp_c,humidity,"
                     "pressure_hpa,wind_kmh,windgust_kmh,winddir,rain_mm,wind_ms,"
                     "rain_rate_mm_h,rain_total_mm,solar_w_m2,uv_index,source,data_quality) "
-                    "SELECT :station_id,r.time,r.temp_c,r.humidity,r.pressure_hpa,"
+                    f"SELECT :station_id,{raw_time_sql},r.temp_c,r.humidity,r.pressure_hpa,"
                     "r.wind_kmh,r.windgust_kmh,r.winddir,r.rain_mm,r.wind_ms,"
                     "r.rain_rate_mm_h,r.rain_total_mm,r.solar_w_m2,r.uv_index,"
                     "r.source,r.data_quality FROM station_raw r "
-                    "WHERE (:cutoff IS NULL OR r.time >= :cutoff) "
-                    "AND NOT EXISTS (SELECT 1 FROM station_observations s "
-                    "WHERE s.station_id=:station_id AND s.time=r.time)"
+                    "WHERE 1=1"
+                    + cutoff_clause
+                    + " ON CONFLICT (station_id,time) DO NOTHING"
                 ),
                 {"station_id": identifier, "cutoff": cutoff},
             )
