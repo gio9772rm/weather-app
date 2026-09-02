@@ -473,6 +473,37 @@ def station_ingest_is_due(
     return elapsed_seconds >= interval_seconds - scheduler_allowance_seconds
 
 
+def pipeline_cycle_is_due(
+    cfg: Settings,
+    force: bool = False,
+    *,
+    now: pd.Timestamp | None = None,
+) -> bool:
+    """Gate the whole pipeline before any persistent operation.
+
+    The marker records when the previous full cycle started, rather than when
+    it finished, so slow providers cannot stretch a nominal ten-minute cycle
+    to fifteen minutes on a legacy five-minute Render schedule.
+    """
+    if force:
+        return True
+    try:
+        with get_engine().connect() as connection:
+            value = connection.execute(
+                text("SELECT v FROM meta WHERE k='last_pipeline_cycle_started'")
+            ).scalar_one_or_none()
+    except SQLAlchemyError:
+        return True
+    last_started = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(last_started):
+        return True
+    current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    interval_seconds = max(1, int(cfg.station_refresh_minutes)) * 60
+    scheduler_allowance_seconds = min(30, interval_seconds // 20)
+    elapsed_seconds = max(0.0, (current - last_started).total_seconds())
+    return elapsed_seconds >= interval_seconds - scheduler_allowance_seconds
+
+
 def run_all(
     *,
     backfill_hours: int | None = None,
@@ -480,10 +511,8 @@ def run_all(
     force_forecast: bool = False,
     max_station_age_minutes: int | None = None,
 ) -> dict[str, Any]:
-    ensure_schema()
     cfg = Settings.from_env()
-    ensure_primary_station(cfg)
-    sync_primary_station_history(cfg)
+    cycle_started = pd.Timestamp.now(tz="UTC")
     result: dict[str, Any] = {
         "station": None,
         "secondary_station": None,
@@ -494,8 +523,20 @@ def run_all(
         "errors": [],
         "warnings": [],
     }
+    if not pipeline_cycle_is_due(cfg, force_forecast, now=cycle_started):
+        reason = "ciclo completo di 10 minuti non ancora dovuto"
+        for component in ("station", "secondary_station", "official", "radar", "forecast"):
+            result[component] = {"skipped": True, "reason": reason}
+        return result
+
+    ensure_schema()
+    set_meta(
+        "last_pipeline_cycle_started",
+        cycle_started.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
 
     if not skip_station and station_ingest_is_due(cfg, force_forecast):
+        ensure_primary_station(cfg)
         identifier, _ = _log_start("station")
         station_started = perf_counter()
         rows_written = 0

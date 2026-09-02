@@ -10,6 +10,8 @@ from ingest_all import (
     FileLock,
     PipelineLock,
     adaptive_station_backfill_hours,
+    pipeline_cycle_is_due,
+    run_all,
     station_ingest_is_due,
     station_source_age_minutes,
 )
@@ -141,6 +143,44 @@ def test_station_ingest_guard_accepts_the_ten_minute_cycle(monkeypatch):
     )
 
     assert station_ingest_is_due(_settings(), now=now) is True
+
+
+def test_complete_pipeline_guard_uses_cycle_start_not_finish(sqlite_engine):
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO meta (k,v) VALUES "
+                "('last_pipeline_cycle_started','2026-08-21T12:00:00Z') "
+                "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
+            )
+        )
+
+    assert pipeline_cycle_is_due(
+        _settings(), now=pd.Timestamp("2026-08-21T12:05:00Z")
+    ) is False
+    assert pipeline_cycle_is_due(
+        _settings(), now=pd.Timestamp("2026-08-21T12:10:00Z")
+    ) is True
+
+
+def test_early_pipeline_skip_precedes_schema_and_persistent_sources(monkeypatch):
+    monkeypatch.setattr(
+        "ingest_all.pipeline_cycle_is_due",
+        lambda cfg, force, now=None: False,
+    )
+
+    def forbidden_schema_write():
+        raise AssertionError("ensure_schema non deve essere chiamato nel ciclo intermedio")
+
+    monkeypatch.setattr("ingest_all.ensure_schema", forbidden_schema_write)
+
+    result = run_all()
+
+    assert result["station"]["skipped"] is True
+    assert result["secondary_station"]["skipped"] is True
+    assert result["official"]["skipped"] is True
+    assert result["radar"]["skipped"] is True
+    assert result["forecast"]["skipped"] is True
 
 
 def test_sqlite_pipeline_lock_prevents_overlapping_local_runs(
