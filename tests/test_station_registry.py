@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
-from sqlalchemy import text
+from sqlalchemy import DateTime, text
 
 from config import Settings
 from data_access import load_station_profiles
-from station_registry import register_station, sync_primary_station_history
+from station_registry import (
+    _raw_station_time_sql,
+    register_station,
+    sync_primary_station_history,
+)
+
+
+def test_postgres_mirror_casts_legacy_text_for_timestamp_target(monkeypatch):
+    engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    inspector = SimpleNamespace(
+        get_columns=lambda table: [
+            {"name": "station_id", "type": DateTime()},
+            {"name": "time", "type": DateTime(timezone=True)},
+        ]
+    )
+    monkeypatch.setattr("station_registry.inspect", lambda candidate: inspector)
+
+    raw_time, cutoff = _raw_station_time_sql(engine)
+
+    assert raw_time == "CAST(r.time AS TIMESTAMP WITH TIME ZONE)"
+    assert cutoff == "CAST(:cutoff AS TIMESTAMP WITH TIME ZONE)"
 
 
 def test_primary_history_is_mirrored_without_changing_legacy_rows(sqlite_engine):
