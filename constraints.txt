@@ -2,7 +2,7 @@
 #    uv pip compile requirements-dev.txt --python-version 3.11 --universal --output-file constraints.txt
 altair==6.2.2
     # via streamlit
-anyio==4.14.2
+anyio==4.15.0
     # via
     #   starlette
     #   streamlit
@@ -18,7 +18,7 @@ certifi==2026.7.22
     # via requests
 charset-normalizer==3.5.1
     # via requests
-click==8.4.2
+click==8.5.0
     # via
     #   streamlit
     #   uvicorn
@@ -56,7 +56,7 @@ narwhals==2.25.0
     # via
     #   altair
     #   plotly
-numpy==2.3.5
+numpy==2.4.6
     # via
     #   -r requirements.txt
     #   pandas
@@ -82,11 +82,11 @@ playwright==1.62.0
     # via -r requirements-dev.txt
 pluggy==1.6.0
     # via pytest
-protobuf==7.36.0
+protobuf==7.36.1
     # via streamlit
-psycopg==3.3.4
+psycopg==3.3.5
     # via -r requirements.txt
-psycopg-binary==3.3.4 ; implementation_name != 'pypy'
+psycopg-binary==3.3.5 ; implementation_name != 'pypy'
     # via psycopg
 pyarrow==25.0.1
     # via streamlit
@@ -122,7 +122,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-ruff==0.16.4
+ruff==0.16.6
     # via -r requirements-dev.txt
 six==1.17.0
     # via python-dateutil
@@ -130,7 +130,7 @@ sqlalchemy==2.0.52
     # via -r requirements.txt
 starlette==1.6.0
     # via streamlit
-streamlit==1.62.0
+streamlit==1.63.0
     # via -r requirements.txt
 toml==0.10.2
     # via streamlit
