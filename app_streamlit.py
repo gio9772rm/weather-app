@@ -4976,7 +4976,7 @@ with tab_forecast:
         source_labels = {
             "awc_metar": "METAR aeroportuale",
             "arsial_siarl": "ARSIAL / SIARL",
-            "cfr_lazio": "CFR Lazio · MeteoHub",
+            "cfr_lazio": "CFR Lazio · tempo reale non validato",
         }
         active_reference_names = ["Fiumicino e Ciampino"]
         if CFG.arsial_polling_enabled:
@@ -4985,9 +4985,13 @@ with tab_forecast:
                 + (" · verifica automatica" if CFG.arsial_auto_probe else "")
             )
         if CFG.cfr_observations_enabled:
-            active_reference_names.append("CFR Roma Monte Mario via MeteoHub")
+            active_reference_names.append(
+                "CFR Roma Monte Mario · riferimento territoriale via MeteoHub"
+            )
         cfr_status_caption = (
-            " Il CFR usa la raccolta pubblica anonima DPCN-Lazio di MeteoHub (CC BY 4.0)."
+            " Il CFR usa la raccolta pubblica anonima DPCN-Lazio di MeteoHub "
+            "(CC BY 4.0): è un confronto territoriale remoto in tempo reale, "
+            "non una misura locale né un dato già validato per gli Annali idrologici."
             if CFG.cfr_observations_enabled
             else ""
         )

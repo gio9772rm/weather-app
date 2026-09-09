@@ -32,6 +32,7 @@ from official_observations import (
 
 SOURCE_ARSIAL = "arsial_siarl"
 SOURCE_CFR = "cfr_lazio"
+CFR_REALTIME_QUALITY = "official_realtime_unvalidated"
 METEOHUB_LICENSE_GROUP = "CCBY_COMPLIANT"
 METEOHUB_NETWORK = "dpcn-lazio"
 METEOHUB_PRODUCTS = {
@@ -675,6 +676,7 @@ def _table_rows(
     default_metadata: dict[str, Any],
     station_filter: str = "",
     allowed_station_ids: tuple[str, ...] = (),
+    default_quality: str = "official",
 ) -> list[dict[str, Any]]:
     if frame.empty:
         return []
@@ -776,9 +778,9 @@ def _table_rows(
         )
         quality_value = source_row.get(quality_column) if quality_column else None
         quality = (
-            f"official_qc:{str(quality_value).strip()}"
+            f"{default_quality}_qc:{str(quality_value).strip()}"
             if quality_value not in (None, "") and not pd.isna(quality_value)
-            else "official"
+            else default_quality
         )
         raw = json.dumps(
             {str(key): value for key, value in source_row.items()},
@@ -946,7 +948,10 @@ def parse_cfr_frames(
                 source=SOURCE_CFR,
                 cfg=cfg,
                 fetched=fetched,
-                source_timezone=cfg.local_timezone,
+                # The CFR confirms that the AEGIS portal keeps UTC+1 (solar
+                # time) all year. Do not apply Europe/Rome DST to naive CSV
+                # timestamps; timezone-aware overrides remain authoritative.
+                source_timezone=cfg.cfr_timezone,
                 default_metadata={
                     "station_id": "",
                     "station_name": "Stazione CFR Lazio",
@@ -955,6 +960,7 @@ def parse_cfr_frames(
                     "elevation_m": None,
                 },
                 allowed_station_ids=cfg.cfr_station_ids,
+                default_quality=CFR_REALTIME_QUALITY,
             )
         )
     return _combine_rows(rows)
@@ -1034,14 +1040,16 @@ def parse_meteohub_cfr_payload(
                         longitude=longitude,
                         elevation_m=elevation,
                         cfg=cfg,
-                        quality="official_ccby4",
+                        quality=f"{CFR_REALTIME_QUALITY}_ccby4",
                         raw="",
                     ),
                 )
                 target[metric] = converted
                 reliability = _number(item.get("rel"))
                 if reliability not in (None, 1.0):
-                    target["quality_flag"] = f"official_qc:{reliability:g}"
+                    target["quality_flag"] = (
+                        f"{CFR_REALTIME_QUALITY}_qc:{reliability:g}_ccby4"
+                    )
                 target["raw_observation"] = json.dumps(
                     {
                         "product": code,
