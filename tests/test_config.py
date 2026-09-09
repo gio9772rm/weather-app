@@ -23,6 +23,7 @@ def test_rome_official_observation_defaults(monkeypatch):
         "ARSIAL_TZ",
         "CFR_OBSERVATIONS_ENABLED",
         "CFR_OBSERVATIONS_URL",
+        "CFR_TZ",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -40,6 +41,7 @@ def test_rome_official_observation_defaults(monkeypatch):
     assert configured.arsial_timezone == "UTC"
     assert configured.cfr_observations_enabled is True
     assert configured.cfr_observations_url == ""
+    assert configured.cfr_timezone == "Etc/GMT-1"
     assert configured.cfr_meteohub_base_url == "https://meteohub.agenziaitaliameteo.it"
     assert configured.dpc_radar_enabled is True
     assert configured.reference_climatology_enabled is True

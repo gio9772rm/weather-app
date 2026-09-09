@@ -111,12 +111,12 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
         ),
         SourceDefinition(
             "cfr_lazio",
-            "CFR Lazio via MeteoHub",
+            "CFR Lazio · tempo reale non validato",
             official and cfg.cfr_observations_enabled,
             15,
             "riferimenti",
             cache_minutes=6 * 60,
-            continuity="METAR + ultimo dato CFR archiviato",
+            continuity="Monte Mario via MeteoHub + ultimo dato archiviato",
         ),
         SourceDefinition(
             "dpc_radar_local",

@@ -1,5 +1,12 @@
 # Changelog Meteo V4
 
+## V4.9.3 · provenienza e orario CFR verificati
+
+- Roma Monte Mario viene presentata come riferimento territoriale remoto del CFR Lazio e i suoi campioni sono marcati come tempo reale non ancora validato per gli Annali idrologici;
+- gli export diretti AEGIS senza offset vengono interpretati in ora solare italiana fissa (UTC+1) sia d'inverno sia d'estate, secondo la risposta scritta del Centro Funzionale Regionale;
+- l'acquisizione automatica continua a usare il dataset pubblico anonimo `dpcn-lazio` di MeteoHub: il CSV interattivo e non documentato del portale non diventa una dipendenza operativa;
+- nessuna variazione del limite statistico dei riferimenti esterni, dell'archivio Ecowitt o dello schema del database.
+
 ## V4.9 · seconda Ecowitt e ciclo unico di 10 minuti
 
 - aggiunta una seconda Ecowitt realmente indipendente, con credenziali e contatori pioggia isolati, archivio live per `station_id` e stato fonte non bloccante per Roma;

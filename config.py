@@ -131,6 +131,9 @@ class Settings:
     cfr_observations_url: str = ""
     cfr_api_token: str = ""
     cfr_station_ids: tuple[str, ...] = ()
+    # The CFR AEGIS portal declares civil standard time (UTC+1) all year,
+    # including dates that fall inside daylight-saving time in Italy.
+    cfr_timezone: str = "Etc/GMT-1"
     ensemble_forecast_enabled: bool = True
     ensemble_model: str = "icon_seamless"
     radar_nowcast_enabled: bool = True
@@ -297,6 +300,7 @@ class Settings:
             cfr_observations_url=_first_env("CFR_OBSERVATIONS_URL"),
             cfr_api_token=_first_env("CFR_API_TOKEN"),
             cfr_station_ids=_station_ids(_first_env("CFR_STATION_IDS")),
+            cfr_timezone=_first_env("CFR_TZ", default="Etc/GMT-1"),
             ensemble_forecast_enabled=_as_bool(
                 _first_env("ENSEMBLE_FORECAST_ENABLED", default="true"), True
             ),

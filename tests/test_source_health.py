@@ -245,7 +245,7 @@ def test_v43_source_catalog_labels_official_radar_and_climate_roles():
     catalog = {item.source: item for item in configured_sources(Settings.from_env())}
 
     assert catalog["open_meteo_icon2i"].label.startswith("ItaliaMeteo ICON-2I")
-    assert catalog["cfr_lazio"].label == "CFR Lazio via MeteoHub"
+    assert catalog["cfr_lazio"].label == "CFR Lazio · tempo reale non validato"
     assert catalog["dpc_radar_local"].category == "misure"
     assert catalog["dpc_lightning_local"].category == "sicurezza"
     assert "1991–2020" in catalog["climatology_era5_land"].label

@@ -54,6 +54,8 @@ services:
         value: "true"
       - key: CFR_STATION_NAME
         value: Roma Monte Mario
+      - key: CFR_TZ
+        value: Etc/GMT-1
       - key: DPC_RADAR_ENABLED
         value: "true"
       - key: DPC_RADAR_REFRESH_MINUTES
@@ -176,6 +178,8 @@ services:
         value: "true"
       - key: CFR_STATION_NAME
         value: Roma Monte Mario
+      - key: CFR_TZ
+        value: Etc/GMT-1
       - key: DPC_RADAR_ENABLED
         value: "true"
       - key: DPC_RADAR_REFRESH_MINUTES

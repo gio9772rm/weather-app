@@ -312,6 +312,40 @@ def test_cfr_future_json_or_csv_contract_is_already_supported():
     assert row["pressure_hpa"] == 1013.2
     assert row["wind_kmh"] == 7.4
     assert row["rain_mm"] == 0
+    assert row["quality_flag"] == "official_realtime_unvalidated"
+
+
+def test_cfr_naive_portal_times_stay_on_solar_time_all_year():
+    cfg = replace(
+        _settings(),
+        cfr_observations_enabled=True,
+        cfr_station_ids=("479700",),
+        cfr_timezone="Etc/GMT-1",
+    )
+    table = pd.DataFrame(
+        [
+            {
+                "station_id": "479700",
+                "Stazione": "Roma Monte Mario",
+                "timestamp": "2026-01-15 12:00",
+                "Temperatura": 11.2,
+            },
+            {
+                "station_id": "479700",
+                "Stazione": "Roma Monte Mario",
+                "timestamp": "2026-07-15 12:00",
+                "Temperatura": 31.4,
+            },
+        ]
+    )
+
+    frame = parse_cfr_frames([table], cfg)
+
+    assert frame["time"].tolist() == [
+        pd.Timestamp("2026-01-15T11:00:00Z"),
+        pd.Timestamp("2026-07-15T11:00:00Z"),
+    ]
+    assert set(frame["quality_flag"]) == {"official_realtime_unvalidated"}
 
 
 def _meteohub_payload() -> dict[str, Any]:
@@ -369,7 +403,7 @@ def test_public_meteohub_cfr_contract_converts_units_and_keeps_source_separate()
     assert row["wind_kmh"] == 9.0
     assert row["wind_dir"] == 225.0
     assert row["rain_mm"] == 0.6
-    assert row["quality_flag"] == "official_ccby4"
+    assert row["quality_flag"] == "official_realtime_unvalidated_ccby4"
 
 
 class MeteoHubSession:

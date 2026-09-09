@@ -1,4 +1,4 @@
-# Meteo V4.8
+# Meteo V4.9.3
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -10,7 +10,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - controlli avanzati su intervalli fisici, salti anomali, sensori fermi e coerenza tra vento medio e raffica;
 - previsione esplicita **ItaliaMeteo/ARPAE ICON-2I a 2,2 km** per le prime 72 ore e Open‑Meteo best-match per completare l'orizzonte fino a 7 giorni, senza contare due volte le ore dipendenti dallo stesso modello;
 - secondo modello OpenWeather a 3 ore, quando è presente la relativa chiave;
-- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e **CFR Lazio via MeteoHub**, archiviate separatamente e usate come controlli statistici secondari; ARSIAL/SIARL viene verificata automaticamente ogni sei ore e inizia ad archiviare appena l'export pubblico torna valido;
+- osservazioni ufficiali METAR di Roma Fiumicino e Ciampino e **CFR Lazio in tempo reale non ancora validato**, archiviate separatamente e usate come controlli statistici secondari; ARSIAL/SIARL viene verificata automaticamente ogni sei ore e inizia ad archiviare appena l'export pubblico torna valido;
 - archivio di ogni emissione, confronto con la stazione, validazione temporale recente, baseline di persistenza e affidabilità della probabilità di pioggia;
 - **Calibrazione 2.0** per variabile, orizzonte e regime meteorologico, combinazione pesata dei provider, correzione iniziale sulla misura locale e decadimento in 12 ore;
 - indicatore di fiducia e fascia d'incertezza;
@@ -60,7 +60,7 @@ flowchart TD
   ENS["ICON-EPS · ensemble"] --> P
   METAR["METAR ufficiali · LIRF/LIRA"] --> P
   ARSIAL["ARSIAL/SIARL · recupero ogni 6 h"] -.-> P
-  CFR["CFR Lazio · MeteoHub"] --> P
+  CFR["CFR Lazio · tempo reale non validato"] --> P
   RAD["DPC · radar e fulmini locali"] --> P
   ERA["ERA5-Land · 1991–2020"] --> P
   EEA["EEA UTD · aria osservata"] --> P
@@ -82,7 +82,7 @@ flowchart TD
 
 Il Cron Job Render gira ogni 10 minuti e recupera sempre almeno le ultime 2 ore per entrambe le Ecowitt configurate. Un controllo persistente sull'ora d'inizio del ciclo impedisce inoltre all'intera pipeline di modificare database o fonti dopo soli 5 minuti, anche se la pianificazione di un servizio Render esistente non fosse ancora allineata al Blueprint. La pagina usa un unico ciclo automatico di 10 minuti: tra due cicli le interazioni riutilizzano la stessa fotografia in cache, mentre **Ricarica dati** forza un nuovo ciclo e fa ripartire il conteggio. I provider di previsione mantengono la propria cadenza appropriata (un'ora per i modelli), ma ogni sezione visibile rilegge insieme lo stato disponibile al ciclo successivo. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
 
-Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle CFR dal dataset pubblico `dpcn-lazio` di [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio), con attribuzione e licenza CC BY 4.0 riportate dal catalogo. L'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7) resta integrato come opzione, ma non viene interrogato di default mentre il portale restituisce risposte non affidabili. Tutte le osservazioni esterne sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione remota può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
+Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle CFR dal dataset pubblico `dpcn-lazio` di [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio), con attribuzione e licenza CC BY 4.0 riportate dal catalogo. Il Centro Funzionale Regionale ha confermato per iscritto che non possiede una stazione meteorologica nell'esatta zona della Ecowitt romana: Roma Monte Mario è quindi soltanto un riferimento territoriale remoto. Ha inoltre precisato che i dati del portale `tempo reale` non sono correggibili né certificati come validi prima della pubblicazione negli Annali idrologici e che gli orari sono registrati in ora solare per tutto l'anno. L'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7) resta integrato come opzione, ma non viene interrogato di default mentre il portale restituisce risposte non affidabili. Tutte le osservazioni esterne sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione remota può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 
 Dal menu laterale puoi passare da **Stazione locale** a **Meteo città**. La ricerca usa la geocodifica mondiale e la previsione internet Open‑Meteo, con fallback automatico MET Norway se il provider principale non è raggiungibile; nessun valore Ecowitt o correzione locale viene applicato alle altre città. I risultati geografici restano in cache per un giorno, mentre previsioni città e qualità dell'aria partecipano allo stesso ciclo pagina di 10 minuti. La scheda **Aria** usa invece la previsione ambientale CAMS/Open‑Meteo per le coordinate visualizzate e resta separata dai sensori della stazione.
 
@@ -201,6 +201,7 @@ Backfill Ecowitt di 7 giorni:
 | `CFR_OBSERVATIONS_URL` | no | override HTTPS CSV/JSON opzionale; normalmente vuoto |
 | `CFR_API_TOKEN` | no | token soltanto per un eventuale override privato |
 | `CFR_STATION_IDS` | no | codici ammessi soltanto per l'override generico |
+| `CFR_TZ` | no | fuso degli export AEGIS privi di offset: ora solare italiana fissa UTC+1, default `Etc/GMT-1` |
 | `DPC_RADAR_ENABLED` | no | osservazione locale SRI/VMI e fulmini DPC, default `true` |
 | `DPC_RADAR_REFRESH_MINUTES` | no | frequenza radar ufficiale, minimo e default 10 minuti |
 | `DPC_RADAR_CROP_RADIUS` | no | raggio in pixel del piccolo ritaglio locale, default 10 |
@@ -227,7 +228,7 @@ Il risultato combina otto livelli:
 3. peso inversamente proporzionale al MAE, con prior iniziali 0,65 ICON-2I, 0,55 Open‑Meteo e 0,40 OpenWeather;
 4. eliminazione della doppia ponderazione fra ICON-2I esplicito e le ore Open‑Meteo best-match dipendenti dallo stesso modello, conservando best-match come riempimento e per l'orizzonte più lungo;
 5. correzione dell'anomalia attuale della stazione, che si riduce gradualmente a zero in 12 ore;
-6. controllo secondario LIRF/LIRA e CFR Lazio, con ARSIAL Roma-Lanciani disponibile come opt-in: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi i dati ufficiali possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
+6. controllo secondario LIRF/LIRA e CFR Lazio, con ARSIAL Roma-Lanciani disponibile come opt-in: prima viene imparata per ogni fonte la differenza persistente rispetto alla Ecowitt, poi questi riferimenti possono regolarizzare complessivamente al massimo il 20% di bias e MAE;
 7. validazione sulla coda temporale più recente, confronto con la persistenza e guida ICON-EPS separata dai provider deterministici;
 8. fiducia basata su accordo tra provider, quantità di provider e distanza temporale.
 
@@ -237,7 +238,7 @@ Ecowitt resta sempre primaria quando è disponibile. Temperatura, punto di rugia
 
 ARSIAL usa esclusivamente gli export pubblici SIARL e il registro stazioni pubblicato sul portale open data regionale, con attribuzione della fonte. Poiché l'export Superset è attualmente instabile, `ARSIAL_OBSERVATIONS_MODE=auto` esegue un solo sondaggio ogni `ARSIAL_PROBE_HOURS`: al primo campione orario valido il connettore archivia automaticamente, mentre CFR Lazio resta sempre il riferimento regionale operativo. La pagina Sistema distingue **Verifica automatica**, **Fonte esterna indisponibile** e **Archivio disponibile**, senza presentare il disservizio SIARL come guasto della pipeline. Il connettore prova prima le API e gli export dei grafici salvati, quindi la pagina dashboard. Se ogni percorso ufficiale fallisce, l'ultimo archivio valido resta consultabile per `ARSIAL_CACHE_HOURS` e non viene mai dichiarato live. Gli orari della dashboard sono trattati come UTC e convertiti in `Europe/Rome` soltanto in visualizzazione, così il cambio CET/CEST non introduce scarti stagionali.
 
-CFR Lazio è attivo tramite l'endpoint anonimo MeteoHub e il network `dpcn-lazio`: temperatura Kelvin, vento m/s, pressione Pa e precipitazione kg/m² vengono convertiti esplicitamente nelle unità interne. La fonte conserva il flag `official_ccby4` e resta una stazione remota di confronto. L'URL/token generico rimane disponibile soltanto come override; una risposta MeteoHub non valida è isolata e non blocca Ecowitt o il blend.
+CFR Lazio è attivo tramite l'endpoint anonimo MeteoHub e il network `dpcn-lazio`: temperatura Kelvin, vento m/s, pressione Pa e precipitazione kg/m² vengono convertiti esplicitamente nelle unità interne. Roma Monte Mario resta una stazione remota di confronto e la fonte conserva il flag esplicito `official_realtime_unvalidated_ccby4`; può contribuire al blend soltanto dopo che la differenza persistente rispetto alla Ecowitt è stata appresa, entro il tetto complessivo del 20% riservato ai riferimenti esterni. Gli export diretti AEGIS privi di offset vengono interpretati in UTC+1 fisso anche d'estate, come dichiarato dal CFR, mentre timestamp già dotati di offset restano autorevoli. L'URL/token generico rimane disponibile soltanto come override: il flusso automatico usa MeteoHub e non dipende dall'export CSV interattivo e non documentato del portale. Una risposta non valida è isolata e non blocca Ecowitt o il blend.
 
 All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali. La calibrazione inizia automaticamente appena previsioni archiviate e osservazioni si sovrappongono.
 
