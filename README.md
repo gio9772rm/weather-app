@@ -1,4 +1,4 @@
-# Meteo V4.9.6
+# Meteo V4.9.7
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 

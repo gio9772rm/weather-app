@@ -1,5 +1,11 @@
 # Changelog Meteo V4
 
+## V4.9.7 · fusione fonti ufficiali pronta per Pandas futuro
+
+- le colonne interamente vuote di una singola fonte ufficiale vengono escluse soltanto durante la fusione e poi ripristinate nello schema canonico, eliminando l'avviso di deprecazione Pandas senza perdere valori;
+- un test rende bloccante il precedente `FutureWarning` e verifica ordine, schema e valori mancanti di METAR/CFR;
+- nessuna variazione a Ecowitt, recupero storico, scoring, cadenza di 10 minuti o isolamento di Comacchio.
+
 ## V4.9.6 · recupero storico progressivo
 
 - i ritentativi del recupero profondo di Roma partono dal giorno più vecchio, evitando di consumare ripetutamente il limite Ecowitt sugli stessi giorni recenti;
