@@ -61,6 +61,19 @@ class OfficialObservationError(RuntimeError):
     """An official feed failed without exposing request details."""
 
 
+def _combine_observation_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Combine sources without relying on deprecated all-NA dtype inference."""
+    valid = [
+        frame.dropna(axis="columns", how="all")
+        for frame in frames
+        if not frame.empty
+    ]
+    valid = [frame for frame in valid if not frame.empty]
+    if not valid:
+        return pd.DataFrame(columns=OBSERVATION_COLUMNS)
+    return pd.concat(valid, ignore_index=True).reindex(columns=OBSERVATION_COLUMNS)
+
+
 def _number(value: Any) -> float | None:
     try:
         number = float(value)
@@ -459,12 +472,7 @@ def ingest_official_observations(
                 error=message,
                 engine=engine,
             )
-    valid = [frame for frame in frames if not frame.empty]
-    combined = (
-        pd.concat(valid, ignore_index=True)
-        if valid
-        else pd.DataFrame(columns=OBSERVATION_COLUMNS)
-    )
+    combined = _combine_observation_frames(frames)
     rows = archive_official_observations(combined, engine)
     stations = sorted(
         set(combined.get("station_id", pd.Series(dtype="string")).dropna().astype(str))

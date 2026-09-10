@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 
 import pandas as pd
@@ -14,6 +15,7 @@ from forecast_blend import (
 from official_observations import (
     OBSERVATION_COLUMNS,
     OfficialObservationError,
+    _combine_observation_frames,
     _source_attempt_due,
     archive_official_observations,
     ingest_official_observations,
@@ -30,6 +32,33 @@ def _settings() -> Settings:
         longitude=12.45,
         metar_station_ids=("LIRF", "LIRA"),
     )
+
+
+def test_official_source_merge_avoids_deprecated_all_na_inference():
+    frames = [
+        pd.DataFrame(
+            {
+                "source": ["awc_metar"],
+                "station_id": ["LIRF"],
+                "rain_mm": [None],
+            }
+        ),
+        pd.DataFrame(
+            {
+                "source": ["cfr_lazio"],
+                "station_id": ["CFR-ROMA-MONTE-MARIO"],
+                "rain_mm": [0.4],
+            }
+        ),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        combined = _combine_observation_frames(frames)
+
+    assert list(combined.columns) == OBSERVATION_COLUMNS
+    assert combined["station_id"].tolist() == ["LIRF", "CFR-ROMA-MONTE-MARIO"]
+    assert combined["rain_mm"].isna().tolist() == [True, False]
 
 
 def test_parse_metar_normalises_official_weather_values():
