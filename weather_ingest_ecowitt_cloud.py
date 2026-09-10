@@ -50,6 +50,9 @@ RAW_COLUMNS = [
     "data_quality",
 ]
 
+DEEP_HISTORY_THRESHOLD_HOURS = 168
+MAX_CONSECUTIVE_DEEP_HISTORY_ERRORS = 3
+
 
 class EcowittError(RuntimeError):
     """A safe error that never contains credentials or a query string."""
@@ -830,7 +833,15 @@ def _fetch_station_payloads(
             warnings.append(str(exc))
 
         if backfill > 0:
-            for start, end in _history_windows(backfill):
+            history_windows = _history_windows(backfill)
+            deep_recovery = backfill > DEEP_HISTORY_THRESHOLD_HOURS
+            if deep_recovery:
+                # Start from the newest days so a partial recovery still fills the
+                # most useful part of the chart.  Stop after repeated provider
+                # failures instead of letting a 90-day scan stall the live cycle.
+                history_windows.reverse()
+            consecutive_errors = 0
+            for start, end in history_windows:
                 try:
                     payload = ecowitt_get(
                         "device/history",
@@ -846,8 +857,20 @@ def _fetch_station_payloads(
                     history = parse_payload(payload)
                     if not history.empty:
                         frames.append(history)
+                    consecutive_errors = 0
                 except EcowittError as exc:
                     warnings.append(str(exc))
+                    consecutive_errors += 1
+                    if (
+                        deep_recovery
+                        and consecutive_errors
+                        >= MAX_CONSECUTIVE_DEEP_HISTORY_ERRORS
+                    ):
+                        warnings.append(
+                            "Ecowitt device/history: recupero profondo interrotto "
+                            "dopo tre errori consecutivi"
+                        )
+                        break
     finally:
         session.close()
 
@@ -900,6 +923,7 @@ def run_station_ingest(
     return {
         "rows": rows,
         "buckets_3h": buckets,
+        "earliest_station_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "latest_station_time": latest,
         "telemetry_rows": telemetry_rows,
         "warnings": warnings,

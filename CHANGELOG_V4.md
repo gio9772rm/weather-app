@@ -1,5 +1,13 @@
 # Changelog Meteo V4
 
+## V4.9.4 · recupero e trasparenza dello storico Roma
+
+- diagnosticato il vuoto reale dell'archivio romano: i campioni moderni validi iniziano il 15 agosto 2026, mentre i record precedenti non attribuiti contengono valori Fahrenheit nella vecchia colonna Celsius e non vengono più inclusi nel confronto;
+- aggiunto un recupero profondo, idempotente e una tantum degli ultimi 90 giorni dalla sola Ecowitt primaria, con marker PostgreSQL e attesa di sei ore prima di un eventuale nuovo tentativo;
+- il mirror multi-stazione usa la stessa finestra del recupero profondo, così i campioni ripristinati restano disponibili anche nell'archivio per `station_id`;
+- il confronto mostra copertura temporale e numero di giorni di ogni stazione; le date mancanti interrompono le linee e non sono interpolate;
+- restano invariati il ciclo automatico di 10 minuti, lo storico importato di Comacchio e la separazione statistica fra i due microclimi.
+
 ## V4.9.3 · provenienza e orario CFR verificati
 
 - Roma Monte Mario viene presentata come riferimento territoriale remoto del CFR Lazio e i suoi campioni sono marcati come tempo reale non ancora validato per gli Annali idrologici;

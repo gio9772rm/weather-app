@@ -1373,12 +1373,26 @@ def _render_daily_station_metric(
 ) -> None:
     colours = ("#2563eb", "#f97316")
     figure = go.Figure()
+    calendar_values = pd.to_datetime(daily.get("local_date"), errors="coerce").dropna()
+    calendar = (
+        pd.date_range(calendar_values.min(), calendar_values.max(), freq="D")
+        if not calendar_values.empty
+        else pd.DatetimeIndex([])
+    )
     for station_id, colour in zip(station_ids, colours):
         selected = daily[daily["station_id"].astype(str).eq(station_id)].sort_values(
             "local_date"
         )
         if selected.empty or metric not in selected:
             continue
+        if not calendar.empty:
+            selected = (
+                selected.drop_duplicates("local_date", keep="last")
+                .set_index("local_date")
+                .reindex(calendar)
+                .rename_axis("local_date")
+                .reset_index()
+            )
         values = pd.to_numeric(selected[metric], errors="coerce")
         label = _station_label(profiles, station_id)
         if bars:
@@ -1465,9 +1479,46 @@ def render_station_comparison(
         st.info("Nessun giorno confrontabile nel periodo scelto.")
         return
     end = selected["local_date"].max()
+    period_start = end - pd.Timedelta(days=window_days - 1)
     selected = selected[
-        selected["local_date"] >= end - pd.Timedelta(days=window_days - 1)
+        selected["local_date"] >= period_start
     ]
+
+    coverage_metrics = ["temp_mean_c", "humidity_mean", "rain_mm"]
+    coverage_parts: list[str] = []
+    station_dates: dict[str, pd.Series] = {}
+    for station_id in selected_ids:
+        scoped = selected[selected["station_id"].astype(str).eq(station_id)]
+        usable_columns = [column for column in coverage_metrics if column in scoped]
+        if usable_columns:
+            usable = scoped[usable_columns].notna().any(axis=1)
+            dates = scoped.loc[usable, "local_date"].drop_duplicates().sort_values()
+        else:
+            dates = pd.Series(dtype="datetime64[ns]")
+        station_dates[station_id] = dates
+        label = _station_label(profiles, station_id)
+        if dates.empty:
+            coverage_parts.append(f"{label}: nessun giorno")
+        else:
+            coverage_parts.append(
+                f"{label}: {dates.iloc[0]:%d/%m/%Y}–{dates.iloc[-1]:%d/%m/%Y} "
+                f"({len(dates)} giorni)"
+            )
+    st.caption(
+        "Copertura nel periodo · "
+        + " · ".join(coverage_parts)
+        + ". I giorni assenti restano vuoti e non vengono interpolati."
+    )
+    primary_dates = station_dates.get(
+        primary_station_id, pd.Series(dtype="datetime64[ns]")
+    )
+    if not primary_dates.empty and primary_dates.iloc[0] > period_start.normalize():
+        st.info(
+            f"Lo storico valido di {_station_label(profiles, primary_station_id)} "
+            f"inizia il {primary_dates.iloc[0]:%d/%m/%Y} nel periodo selezionato; "
+            "il tratto precedente non è presente nell’archivio e non viene ricostruito "
+            "artificialmente."
+        )
 
     def overlap(metric: str) -> pd.DataFrame:
         pivot = selected.pivot_table(

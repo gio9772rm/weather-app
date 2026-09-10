@@ -103,6 +103,9 @@ class Settings:
     secondary_ecowitt_mac: str = ""
     station_refresh_minutes: int = 10
     station_auto_backfill_max_hours: int = 168
+    # Optional one-time deep recovery for recent primary-station history.
+    # A persistent database marker prevents repeating the expensive scan.
+    station_history_recovery_days: int = 0
     station_max_source_age_minutes: int = 20
     official_observations_enabled: bool = True
     metar_station_ids: tuple[str, ...] = ("LIRF", "LIRA")
@@ -184,6 +187,13 @@ class Settings:
                 min(
                     168,
                     _as_int(_first_env("STATION_AUTO_BACKFILL_MAX_HOURS"), 168),
+                ),
+            ),
+            station_history_recovery_days=max(
+                0,
+                min(
+                    365,
+                    _as_int(_first_env("STATION_HISTORY_RECOVERY_DAYS"), 0),
                 ),
             ),
             station_stale_minutes=max(

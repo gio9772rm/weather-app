@@ -186,6 +186,8 @@ def test_station_comparison_legend_matches_the_two_trace_colours(
     ]
     assert temperature["layout"]["legend"]["itemsizing"] == "constant"
     assert temperature["layout"]["legend"]["font"]["size"] == 13
+    assert any("Copertura nel periodo" in item.value for item in app.caption)
+    assert any("non viene ricostruito artificialmente" in item.value for item in app.info)
 
 
 def test_app_opens_local_dashboard_and_city_search(

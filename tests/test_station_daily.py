@@ -211,3 +211,48 @@ def test_primary_daily_comparison_falls_back_to_authoritative_raw_archive(
     assert primary.iloc[0]["source"] == "station_raw"
     assert primary.iloc[0]["temp_mean_c"] == 21.5
     assert primary.iloc[0]["rain_mm"] == 0.4
+
+
+def test_daily_comparison_excludes_unattributed_legacy_primary_rows(sqlite_engine):
+    register_station(
+        station_id=settings.station_id,
+        display_name="Primaria",
+        latitude=41.9,
+        longitude=12.5,
+        elevation_m=20,
+        timezone="Europe/Rome",
+        source="ecowitt",
+        role="primary",
+        engine=sqlite_engine,
+    )
+    now = pd.Timestamp.now(tz="UTC").floor("10min")
+    legacy = now - pd.Timedelta(days=2)
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO station_raw (time,temp_c,humidity,source,data_quality) "
+                "VALUES (:legacy,77,59,NULL,NULL),(:current,21,62,'ecowitt_cloud','ok')"
+            ),
+            {
+                "legacy": legacy.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "current": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO station_observations "
+                "(station_id,time,temp_c,humidity,source,data_quality) "
+                "VALUES (:station_id,:legacy,77,59,NULL,NULL)"
+            ),
+            {
+                "station_id": settings.station_id,
+                "legacy": legacy.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
+
+    daily = load_station_daily_summaries(30)
+    primary = daily[daily["station_id"].eq(settings.station_id)]
+
+    assert len(primary) == 1
+    assert primary.iloc[0]["temp_mean_c"] == 21.0
+    assert primary.iloc[0]["source"] == "station_raw"
