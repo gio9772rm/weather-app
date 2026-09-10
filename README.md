@@ -1,4 +1,4 @@
-# Meteo V4.9.5
+# Meteo V4.9.6
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -179,7 +179,7 @@ Backfill Ecowitt di 7 giorni:
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
 | `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 168 ore (7 giorni) |
-| `STATION_HISTORY_RECOVERY_DAYS` | no | recupero profondo della primaria eseguito una sola volta e marcato nel database; `0` lo disattiva, produzione impostata a 90 giorni |
+| `STATION_HISTORY_RECOVERY_DAYS` | no | recupero profondo progressivo della primaria, verificato e marcato nel database; `0` lo disattiva, produzione impostata a 90 giorni |
 | `STATION_STALE_MINUTES` | no | soglia stato stazione, default 20 |
 | `STATION_MAX_SOURCE_AGE_MINUTES` | no | fa fallire l'ingest se l'ultimo campione Ecowitt è troppo vecchio; default 20 |
 | `SCORE_LOOKBACK_DAYS` | no | storico usato per valutare i provider, default 60 |
@@ -249,7 +249,7 @@ All'inizio non esistono ancora verifiche storiche: vengono usati i pesi iniziali
 
 L'apertura della dashboard non controlla l'archiviazione: il Cron Job Render interroga Ecowitt e salva direttamente su PostgreSQL anche quando il servizio web o il browser non sono attivi.
 
-Quando `STATION_HISTORY_RECOVERY_DAYS` è maggiore di zero, il primo ciclo utile prova una sola rilettura profonda della Ecowitt primaria. L'esito viene registrato in PostgreSQL: un successo non viene ripetuto, mentre un errore può essere ritentato soltanto dopo sei ore. Il recupero è idempotente, non interroga la stazione secondaria e non inventa campioni se Ecowitt Cloud non li conserva più.
+Quando `STATION_HISTORY_RECOVERY_DAYS` è maggiore di zero, il primo ciclo utile rilegge la Ecowitt primaria dai giorni recenti verso il passato. Se il limite di accessi Ecowitt interrompe la scansione, dopo almeno sei ore il tentativo successivo parte invece dal bordo più vecchio: non consuma nuovamente tutta la quota sugli stessi giorni. L'esito viene registrato in PostgreSQL e la chiusura richiede una copertura verificata di estremi e buchi, una scansione completa del provider oppure al massimo tre tentativi con i vuoti residui dichiarati. Il recupero è idempotente, non interroga la stazione secondaria e non inventa campioni se Ecowitt Cloud non li conserva più.
 
 - il recupero ordinario parte ogni 10 minuti e rilegge almeno le ultime 2 ore;
 - se temperatura, umidità, pressione o vento risultano arretrati, la finestra cresce automaticamente fino a 168 ore;

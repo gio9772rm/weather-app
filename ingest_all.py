@@ -18,7 +18,7 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import text
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from climatology import refresh_climatology
@@ -62,6 +62,9 @@ log = logging.getLogger("ingest_all")
 
 PRIMARY_HISTORY_RECOVERY_VERSION = "v1"
 PRIMARY_HISTORY_RECOVERY_RETRY_HOURS = 6
+PRIMARY_HISTORY_RECOVERY_MAX_ATTEMPTS = 3
+PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS = 24
+PRIMARY_HISTORY_RECOVERY_MAX_GAP_HOURS = 36
 
 
 class FileLock:
@@ -456,12 +459,42 @@ def primary_history_recovery_meta_keys(days: int) -> tuple[str, str]:
     )
 
 
+def primary_history_recovery_attempt_state(
+    value: Any,
+) -> tuple[pd.Timestamp | None, int]:
+    """Read both the legacy timestamp marker and the progressive JSON marker."""
+    if value is None or str(value).strip() == "":
+        return None, 0
+
+    attempted_at: Any = value
+    attempts = 1
+    decoded: Any = None
+    if isinstance(value, dict):
+        decoded = value
+    elif isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            decoded = None
+    if isinstance(decoded, dict):
+        attempted_at = decoded.get("attempted_at")
+        try:
+            attempts = max(0, int(decoded.get("attempts") or 0))
+        except (TypeError, ValueError):
+            attempts = 0
+
+    timestamp = pd.to_datetime(attempted_at, utc=True, errors="coerce")
+    if pd.isna(timestamp):
+        return None, attempts
+    return timestamp, max(1, attempts)
+
+
 def pending_primary_history_recovery_hours(
     cfg: Settings,
     *,
     now: pd.Timestamp | None = None,
 ) -> int:
-    """Schedule one deep primary backfill, with a six-hour failure cooldown."""
+    """Schedule progressive deep backfills with a six-hour failure cooldown."""
     days = max(0, int(cfg.station_history_recovery_days))
     if days <= 0:
         return 0
@@ -477,14 +510,87 @@ def pending_primary_history_recovery_hours(
         )
         return 0
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
-    last_attempt = pd.to_datetime(last_attempt_value, utc=True, errors="coerce")
-    if not pd.isna(last_attempt):
+    last_attempt, _ = primary_history_recovery_attempt_state(last_attempt_value)
+    if last_attempt is not None:
         retry_after = last_attempt + pd.Timedelta(
             hours=PRIMARY_HISTORY_RECOVERY_RETRY_HOURS
         )
         if current < retry_after:
             return 0
     return days * 24
+
+
+def primary_history_recovery_coverage(
+    days: int,
+    *,
+    now: pd.Timestamp | None = None,
+    engine: Engine | None = None,
+) -> dict[str, Any]:
+    """Measure whether attributed primary samples span a recovered window."""
+    requested_days = max(0, int(days))
+    current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    current = pd.to_datetime(current, utc=True)
+    cutoff = current - pd.Timedelta(days=requested_days)
+    engine = engine or get_engine()
+    with engine.connect() as connection:
+        frame = pd.read_sql(
+            text(
+                "SELECT time FROM station_raw WHERE time >= :cutoff "
+                "AND source IS NOT NULL AND TRIM(source) <> '' ORDER BY time"
+            ),
+            connection,
+            params={"cutoff": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")},
+        )
+    frame.columns = [str(column).lower() for column in frame.columns]
+
+    if frame.empty:
+        return {
+            "rows": 0,
+            "earliest": None,
+            "latest": None,
+            "max_gap_hours": None,
+            "complete": False,
+        }
+    timestamps = (
+        pd.to_datetime(frame["time"], utc=True, errors="coerce")
+        .dropna()
+        .drop_duplicates()
+        .sort_values()
+    )
+    if timestamps.empty:
+        return {
+            "rows": 0,
+            "earliest": None,
+            "latest": None,
+            "max_gap_hours": None,
+            "complete": False,
+        }
+
+    earliest = timestamps.iloc[0]
+    latest = timestamps.iloc[-1]
+    gaps = timestamps.diff().dt.total_seconds().div(3600).dropna()
+    max_gap_hours = float(gaps.max()) if not gaps.empty else None
+    boundaries_covered = (
+        earliest
+        <= cutoff
+        + pd.Timedelta(hours=PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS)
+        and latest
+        >= current
+        - pd.Timedelta(hours=PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS)
+    )
+    gaps_covered = (
+        max_gap_hours is not None
+        and max_gap_hours <= PRIMARY_HISTORY_RECOVERY_MAX_GAP_HOURS
+    )
+    return {
+        "rows": len(timestamps),
+        "earliest": earliest.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "latest": latest.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "max_gap_hours": (
+            round(max_gap_hours, 2) if max_gap_hours is not None else None
+        ),
+        "complete": bool(boundaries_covered and gaps_covered),
+    }
 
 
 def station_source_age_minutes(
@@ -598,6 +704,8 @@ def run_all(
         recovery_hours = 0
         recovery_attempt_key = ""
         recovery_completed_key = ""
+        recovery_attempt_number = 0
+        history_newest_first = True
         try:
             recovery_hours = pending_primary_history_recovery_hours(
                 cfg, now=cycle_started
@@ -609,9 +717,28 @@ def run_all(
                     )
                 )
                 try:
+                    _, previous_attempts = primary_history_recovery_attempt_state(
+                        get_meta(recovery_attempt_key)
+                    )
+                    recovery_attempt_number = previous_attempts + 1
+                    history_newest_first = previous_attempts == 0
                     set_meta(
                         recovery_attempt_key,
-                        cycle_started.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        json.dumps(
+                            {
+                                "attempted_at": cycle_started.strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ"
+                                ),
+                                "attempts": recovery_attempt_number,
+                                "direction": (
+                                    "newest_first"
+                                    if history_newest_first
+                                    else "oldest_first"
+                                ),
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 - optional recovery metadata
                     log.warning(
@@ -621,12 +748,22 @@ def run_all(
                     recovery_hours = 0
                 else:
                     log.info(
-                        "Recupero profondo Ecowitt Roma: ultimi %s giorni, una tantum",
+                        "Recupero profondo Ecowitt Roma: ultimi %s giorni, "
+                        "tentativo %s/%s, ordine %s",
                         cfg.station_history_recovery_days,
+                        recovery_attempt_number,
+                        PRIMARY_HISTORY_RECOVERY_MAX_ATTEMPTS,
+                        "recente→passato"
+                        if history_newest_first
+                        else "passato→recente",
                     )
             effective_backfill = adaptive_station_backfill_hours(cfg, backfill_hours)
             effective_backfill = max(effective_backfill, recovery_hours)
-            station = run_station_ingest(effective_backfill, cfg)
+            station = run_station_ingest(
+                effective_backfill,
+                cfg,
+                history_newest_first=history_newest_first,
+            )
             station["station_rows_synced"] = sync_primary_station_history(
                 cfg,
                 lookback_hours=max(
@@ -641,14 +778,54 @@ def run_all(
                     for warning in station.get("warnings", [])
                     if "device/history" in str(warning).lower()
                 ]
+                try:
+                    coverage = primary_history_recovery_coverage(
+                        cfg.station_history_recovery_days,
+                        now=cycle_started,
+                    )
+                except Exception as exc:  # noqa: BLE001 - diagnostic only
+                    coverage = {
+                        "rows": 0,
+                        "earliest": None,
+                        "latest": None,
+                        "max_gap_hours": None,
+                        "complete": False,
+                        "error": _safe_message(exc),
+                    }
+                    station["warnings"].append(
+                        "Copertura del recupero storico non verificabile: "
+                        + _safe_message(exc)
+                    )
+                attempts_exhausted = (
+                    recovery_attempt_number >= PRIMARY_HISTORY_RECOVERY_MAX_ATTEMPTS
+                )
+                provider_scan_complete = not history_errors
+                if coverage["complete"]:
+                    recovery_status = "completed"
+                elif provider_scan_complete or attempts_exhausted:
+                    recovery_status = "completed_with_known_gaps"
+                else:
+                    recovery_status = "partial"
                 recovery = {
                     "requested_days": cfg.station_history_recovery_days,
+                    "attempt": recovery_attempt_number,
+                    "direction": (
+                        "newest_first"
+                        if history_newest_first
+                        else "oldest_first"
+                    ),
                     "earliest_received": station.get("earliest_station_time"),
-                    "status": "partial" if history_errors else "completed",
+                    "status": recovery_status,
                     "history_errors": len(history_errors),
+                    "coverage": coverage,
                 }
+                if recovery_status == "partial":
+                    recovery["retry_after"] = (
+                        cycle_started
+                        + pd.Timedelta(hours=PRIMARY_HISTORY_RECOVERY_RETRY_HOURS)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
                 station["history_recovery"] = recovery
-                if not history_errors:
+                if recovery_status != "partial":
                     try:
                         set_meta(
                             recovery_completed_key,
