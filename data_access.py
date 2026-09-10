@@ -92,6 +92,14 @@ def load_station_profiles() -> pd.DataFrame:
     return frame
 
 
+def _attributed_station_samples(frame: pd.DataFrame) -> pd.DataFrame:
+    """Exclude ambiguous V1/V2 rows that have no station/source provenance."""
+    if frame.empty or "source" not in frame:
+        return frame.iloc[0:0].copy()
+    source = frame["source"].astype("string").fillna("").str.strip()
+    return frame[source.ne("")].copy()
+
+
 def load_station_daily_summaries(days: int = 365) -> pd.DataFrame:
     """Combine imported daily summaries with aggregates from true live samples."""
     days = max(7, min(3650, int(days)))
@@ -117,6 +125,9 @@ def load_station_daily_summaries(days: int = 365) -> pd.DataFrame:
             observations["time"], utc=True, errors="coerce"
         )
         for station_id, group in observations.groupby("station_id"):
+            group = _attributed_station_samples(group)
+            if group.empty:
+                continue
             selected = profiles[profiles["station_id"].astype(str).eq(str(station_id))]
             if selected.empty:
                 continue
@@ -125,6 +136,8 @@ def load_station_daily_summaries(days: int = 365) -> pd.DataFrame:
             live_frames.append(
                 aggregate_observations_daily(derived, str(station_id), timezone)
             )
+    if not primary_raw.empty:
+        primary_raw = _attributed_station_samples(primary_raw)
     if not primary_raw.empty:
         primary_profile = profiles[
             profiles.get("station_id", pd.Series(dtype="object"))

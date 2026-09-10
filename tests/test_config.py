@@ -116,8 +116,16 @@ def test_secondary_station_is_opt_in_and_uses_dedicated_credentials(monkeypatch)
 def test_refresh_defaults_are_never_faster_than_ten_minutes(monkeypatch):
     monkeypatch.setenv("STATION_REFRESH_MINUTES", "5")
     monkeypatch.setenv("DPC_RADAR_REFRESH_MINUTES", "5")
+    monkeypatch.delenv("STATION_HISTORY_RECOVERY_DAYS", raising=False)
 
     configured = Settings.from_env()
 
     assert configured.station_refresh_minutes == 10
     assert configured.dpc_radar_refresh_minutes == 10
+    assert configured.station_history_recovery_days == 0
+
+
+def test_history_recovery_window_is_bounded(monkeypatch):
+    monkeypatch.setenv("STATION_HISTORY_RECOVERY_DAYS", "900")
+
+    assert Settings.from_env().station_history_recovery_days == 365

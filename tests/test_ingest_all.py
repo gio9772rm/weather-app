@@ -10,7 +10,9 @@ from ingest_all import (
     FileLock,
     PipelineLock,
     adaptive_station_backfill_hours,
+    pending_primary_history_recovery_hours,
     pipeline_cycle_is_due,
+    primary_history_recovery_meta_keys,
     run_all,
     station_ingest_is_due,
     station_source_age_minutes,
@@ -110,6 +112,25 @@ def test_default_automatic_recovery_window_is_seven_days(monkeypatch):
     monkeypatch.delenv("STATION_AUTO_BACKFILL_MAX_HOURS", raising=False)
 
     assert Settings.from_env().station_auto_backfill_max_hours == 168
+
+
+def test_deep_history_recovery_runs_once_and_observes_retry_cooldown(monkeypatch):
+    now = pd.Timestamp("2026-09-10T08:00:00Z")
+    cfg = replace(_settings(), station_history_recovery_days=90)
+    attempt_key, completed_key = primary_history_recovery_meta_keys(90)
+    state: dict[str, str] = {}
+    monkeypatch.setattr("ingest_all.get_meta", lambda key: state.get(key))
+
+    assert pending_primary_history_recovery_hours(cfg, now=now) == 90 * 24
+
+    state[attempt_key] = "2026-09-10T07:00:00Z"
+    assert pending_primary_history_recovery_hours(cfg, now=now) == 0
+
+    state[attempt_key] = "2026-09-10T01:59:59Z"
+    assert pending_primary_history_recovery_hours(cfg, now=now) == 90 * 24
+
+    state[completed_key] = '{"status":"completed"}'
+    assert pending_primary_history_recovery_hours(cfg, now=now) == 0
 
 
 def test_station_source_age_detects_stale_and_future_samples():

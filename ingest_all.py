@@ -59,6 +59,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("ingest_all")
 
+PRIMARY_HISTORY_RECOVERY_VERSION = "v1"
+PRIMARY_HISTORY_RECOVERY_RETRY_HOURS = 6
+
 
 class FileLock:
     def __init__(self, stale_seconds: int = 1800, path: Path | None = None):
@@ -432,6 +435,46 @@ def adaptive_station_backfill_hours(
     return expanded
 
 
+def primary_history_recovery_meta_keys(days: int) -> tuple[str, str]:
+    """Return stable attempt/completion keys for an opt-in deep recovery."""
+    suffix = f"{PRIMARY_HISTORY_RECOVERY_VERSION}_{max(0, int(days))}d"
+    return (
+        f"primary_history_recovery_attempt_{suffix}",
+        f"primary_history_recovery_completed_{suffix}",
+    )
+
+
+def pending_primary_history_recovery_hours(
+    cfg: Settings,
+    *,
+    now: pd.Timestamp | None = None,
+) -> int:
+    """Schedule one deep primary backfill, with a six-hour failure cooldown."""
+    days = max(0, int(cfg.station_history_recovery_days))
+    if days <= 0:
+        return 0
+    attempt_key, completed_key = primary_history_recovery_meta_keys(days)
+    try:
+        if get_meta(completed_key):
+            return 0
+        last_attempt_value = get_meta(attempt_key)
+    except Exception as exc:  # noqa: BLE001 - recovery never blocks live ingestion
+        log.warning(
+            "Stato recupero storico non leggibile, salto il tentativo: %s",
+            _safe_message(exc),
+        )
+        return 0
+    current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    last_attempt = pd.to_datetime(last_attempt_value, utc=True, errors="coerce")
+    if not pd.isna(last_attempt):
+        retry_after = last_attempt + pd.Timedelta(
+            hours=PRIMARY_HISTORY_RECOVERY_RETRY_HOURS
+        )
+        if current < retry_after:
+            return 0
+    return days * 24
+
+
 def station_source_age_minutes(
     latest_station_time: Any,
     *,
@@ -540,11 +583,79 @@ def run_all(
         identifier, _ = _log_start("station")
         station_started = perf_counter()
         rows_written = 0
+        recovery_hours = 0
+        recovery_attempt_key = ""
+        recovery_completed_key = ""
         try:
+            recovery_hours = pending_primary_history_recovery_hours(
+                cfg, now=cycle_started
+            )
+            if recovery_hours:
+                recovery_attempt_key, recovery_completed_key = (
+                    primary_history_recovery_meta_keys(
+                        cfg.station_history_recovery_days
+                    )
+                )
+                try:
+                    set_meta(
+                        recovery_attempt_key,
+                        cycle_started.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    )
+                except Exception as exc:  # noqa: BLE001 - optional recovery metadata
+                    log.warning(
+                        "Recupero storico rinviato: marker non scrivibile: %s",
+                        _safe_message(exc),
+                    )
+                    recovery_hours = 0
+                else:
+                    log.info(
+                        "Recupero profondo Ecowitt Roma: ultimi %s giorni, una tantum",
+                        cfg.station_history_recovery_days,
+                    )
             effective_backfill = adaptive_station_backfill_hours(cfg, backfill_hours)
+            effective_backfill = max(effective_backfill, recovery_hours)
             station = run_station_ingest(effective_backfill, cfg)
-            station["station_rows_synced"] = sync_primary_station_history(cfg)
+            station["station_rows_synced"] = sync_primary_station_history(
+                cfg,
+                lookback_hours=max(
+                    cfg.station_auto_backfill_max_hours,
+                    effective_backfill,
+                ),
+            )
             station["backfill_hours"] = effective_backfill
+            if recovery_hours:
+                history_errors = [
+                    warning
+                    for warning in station.get("warnings", [])
+                    if "device/history" in str(warning).lower()
+                ]
+                recovery = {
+                    "requested_days": cfg.station_history_recovery_days,
+                    "earliest_received": station.get("earliest_station_time"),
+                    "status": "partial" if history_errors else "completed",
+                    "history_errors": len(history_errors),
+                }
+                station["history_recovery"] = recovery
+                if not history_errors:
+                    try:
+                        set_meta(
+                            recovery_completed_key,
+                            json.dumps(
+                                {
+                                    **recovery,
+                                    "completed_at": cycle_started.strftime(
+                                        "%Y-%m-%dT%H:%M:%SZ"
+                                    ),
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - data is already safe
+                        station["warnings"].append(
+                            "Recupero storico completato, ma marker non salvato: "
+                            + _safe_message(exc)
+                        )
             station["source_age_minutes"] = station_source_age_minutes(
                 station.get("latest_station_time")
             )
