@@ -12,6 +12,8 @@ from ingest_all import (
     adaptive_station_backfill_hours,
     pending_primary_history_recovery_hours,
     pipeline_cycle_is_due,
+    primary_history_recovery_attempt_state,
+    primary_history_recovery_coverage,
     primary_history_recovery_meta_keys,
     run_all,
     station_ingest_is_due,
@@ -131,6 +133,76 @@ def test_deep_history_recovery_runs_once_and_observes_retry_cooldown(monkeypatch
 
     state[completed_key] = '{"status":"completed"}'
     assert pending_primary_history_recovery_hours(cfg, now=now) == 0
+
+
+def test_deep_history_recovery_reads_progressive_json_attempt_marker(monkeypatch):
+    now = pd.Timestamp("2026-09-10T08:00:00Z")
+    cfg = replace(_settings(), station_history_recovery_days=90)
+    attempt_key, _ = primary_history_recovery_meta_keys(90)
+    state = {
+        attempt_key: (
+            '{"attempted_at":"2026-09-10T07:00:00Z",'
+            '"attempts":2,"direction":"oldest_first"}'
+        )
+    }
+    monkeypatch.setattr("ingest_all.get_meta", lambda key: state.get(key))
+
+    attempted_at, attempts = primary_history_recovery_attempt_state(
+        state[attempt_key]
+    )
+
+    assert attempted_at == pd.Timestamp("2026-09-10T07:00:00Z")
+    assert attempts == 2
+    assert pending_primary_history_recovery_hours(cfg, now=now) == 0
+
+
+def test_history_recovery_coverage_requires_both_edges_and_no_long_gaps(
+    sqlite_engine,
+):
+    now = pd.Timestamp("2026-09-10T12:00:00Z")
+    cutoff = now - pd.Timedelta(days=90)
+    for hour in range(0, (90 * 24) + 1, 24):
+        _insert_station_row(
+            sqlite_engine,
+            cutoff + pd.Timedelta(hours=hour),
+            temp_c=20,
+            source="ecowitt_cloud_history",
+        )
+
+    coverage = primary_history_recovery_coverage(
+        90,
+        now=now,
+        engine=sqlite_engine,
+    )
+
+    assert coverage == {
+        "rows": 91,
+        "earliest": "2026-06-12T12:00:00Z",
+        "latest": "2026-09-10T12:00:00Z",
+        "max_gap_hours": 24.0,
+        "complete": True,
+    }
+
+
+def test_history_recovery_coverage_rejects_an_internal_two_day_gap(sqlite_engine):
+    now = pd.Timestamp("2026-09-10T12:00:00Z")
+    cutoff = now - pd.Timedelta(days=90)
+    for hour in range(0, (90 * 24) + 1, 24):
+        _insert_station_row(
+            sqlite_engine,
+            cutoff + pd.Timedelta(hours=hour),
+            temp_c=20,
+            source=None if hour == 48 else "ecowitt_cloud_history",
+        )
+
+    coverage = primary_history_recovery_coverage(
+        90,
+        now=now,
+        engine=sqlite_engine,
+    )
+
+    assert coverage["max_gap_hours"] > 36
+    assert coverage["complete"] is False
 
 
 def test_station_source_age_detects_stale_and_future_samples():

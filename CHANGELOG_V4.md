@@ -1,5 +1,12 @@
 # Changelog Meteo V4
 
+## V4.9.6 · recupero storico progressivo
+
+- i ritentativi del recupero profondo di Roma partono dal giorno più vecchio, evitando di consumare ripetutamente il limite Ecowitt sugli stessi giorni recenti;
+- il marker PostgreSQL conserva numero del tentativo, direzione e prossimo intervallo utile, leggendo senza migrazioni anche il precedente marker a timestamp semplice;
+- la chiusura verifica che l'archivio attribuito raggiunga entrambi gli estremi dei 90 giorni e non contenga buchi superiori a 36 ore; dopo tre tentativi eventuali vuoti non recuperabili vengono dichiarati senza creare un ciclo infinito;
+- restano invariati ciclo unico di 10 minuti, isolamento di Comacchio e dati meteorologici già archiviati.
+
 ## V4.9.5 · stabilità memoria del cron
 
 - ridotta la memoria del punteggio previsionale caricando da PostgreSQL soltanto le colonne realmente usate, invece delle tabelle complete ripetute nei confronti locali e ufficiali;

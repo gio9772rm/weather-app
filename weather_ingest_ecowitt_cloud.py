@@ -801,6 +801,8 @@ def _history_windows(hours: int) -> list[tuple[datetime, datetime]]:
 def _fetch_station_payloads(
     backfill: int,
     cfg: Settings,
+    *,
+    history_newest_first: bool = True,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], list[str]]:
     """Fetch and parse one Ecowitt device without deciding where it is stored."""
     frames: list[pd.DataFrame] = []
@@ -835,10 +837,9 @@ def _fetch_station_payloads(
         if backfill > 0:
             history_windows = _history_windows(backfill)
             deep_recovery = backfill > DEEP_HISTORY_THRESHOLD_HOURS
-            if deep_recovery:
-                # Start from the newest days so a partial recovery still fills the
-                # most useful part of the chart.  Stop after repeated provider
-                # failures instead of letting a 90-day scan stall the live cycle.
+            if deep_recovery and history_newest_first:
+                # The first pass starts from recent days; a progressive retry can
+                # keep this chronological so it reaches the oldest missing edge.
                 history_windows.reverse()
             consecutive_errors = 0
             for start, end in history_windows:
@@ -890,6 +891,8 @@ def _fetch_station_payloads(
 def run_station_ingest(
     backfill_hours: int | None = None,
     cfg: Settings | None = None,
+    *,
+    history_newest_first: bool = True,
 ) -> dict[str, Any]:
     cfg = cfg or Settings.from_env()
     if not cfg.has_station_credentials:
@@ -902,7 +905,11 @@ def run_station_ingest(
         if backfill_hours is None
         else max(0, int(backfill_hours))
     )
-    combined, telemetry, warnings = _fetch_station_payloads(backfill, cfg)
+    combined, telemetry, warnings = _fetch_station_payloads(
+        backfill,
+        cfg,
+        history_newest_first=history_newest_first,
+    )
     engine = get_engine()
     telemetry_rows, telemetry_warning = archive_telemetry_safely(telemetry, engine)
     if telemetry_warning:
