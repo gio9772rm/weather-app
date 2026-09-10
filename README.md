@@ -1,4 +1,4 @@
-# Meteo V4.9.4
+# Meteo V4.9.5
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -81,6 +81,8 @@ flowchart TD
 ```
 
 Il Cron Job Render gira ogni 10 minuti e recupera sempre almeno le ultime 2 ore per entrambe le Ecowitt configurate. Un controllo persistente sull'ora d'inizio del ciclo impedisce inoltre all'intera pipeline di modificare database o fonti dopo soli 5 minuti, anche se la pianificazione di un servizio Render esistente non fosse ancora allineata al Blueprint. La pagina usa un unico ciclo automatico di 10 minuti: tra due cicli le interazioni riutilizzano la stessa fotografia in cache, mentre **Ricarica dati** forza un nuovo ciclo e fa ripartire il conteggio. I provider di previsione mantengono la propria cadenza appropriata (un'ora per i modelli), ma ogni sezione visibile rilegge insieme lo stato disponibile al ciclo successivo. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
+
+Il punteggio dei forecast usa query PostgreSQL a colonne strette e rilascia i frame temporanei fra le fasi locale, ufficiale e blend. In questo modo l'archivio può crescere senza caricare ripetutamente campi inutilizzati nel cron Render da 512 MiB.
 
 Le osservazioni METAR vengono lette dall'[API ufficiale Aviation Weather](https://aviationweather.gov/data/api/) e quelle CFR dal dataset pubblico `dpcn-lazio` di [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio), con attribuzione e licenza CC BY 4.0 riportate dal catalogo. Il Centro Funzionale Regionale ha confermato per iscritto che non possiede una stazione meteorologica nell'esatta zona della Ecowitt romana: Roma Monte Mario è quindi soltanto un riferimento territoriale remoto. Ha inoltre precisato che i dati del portale `tempo reale` non sono correggibili né certificati come validi prima della pubblicazione negli Annali idrologici e che gli orari sono registrati in ora solare per tutto l'anno. L'[export pubblico SIARL](https://siarl.arsial.it/bi/superset/dashboard/7) resta integrato come opzione, ma non viene interrogato di default mentre il portale restituisce risposte non affidabili. Tutte le osservazioni esterne sono conservate nella tabella `official_observations`, mai in `station_raw`: nessuna stazione remota può quindi essere mostrata come misura effettuata dalla Ecowitt. Ogni fonte è indipendente e un suo errore non blocca né Ecowitt né le previsioni.
 

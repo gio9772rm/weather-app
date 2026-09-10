@@ -85,6 +85,55 @@ REFERENCE_OBSERVATION_VARIABLES = (
     "visibility_m",
 )
 
+# Scoring is the heaviest cron phase. Keep the SQL projection deliberately
+# narrow: wide ``SELECT *`` frames are merged several times and can exceed the
+# 512 MiB Render worker even though most forecast columns are never scored.
+SCORE_FORECAST_COLUMNS = (
+    "provider",
+    "model",
+    "issued_at",
+    "valid_time",
+    "interval_hours",
+    "temp_c",
+    "dewpoint_c",
+    "humidity",
+    "pressure_hpa",
+    "wind_kmh",
+    "wind_gust_kmh",
+    "wind_dir",
+    "rain_mm",
+    "precip_probability",
+    "clouds",
+    "visibility_m",
+)
+LOCAL_SCORE_OBSERVATION_COLUMNS = (
+    "time",
+    "temp_c",
+    "humidity",
+    "pressure_hpa",
+    "wind_kmh",
+    "windgust_kmh",
+    "winddir",
+    "rain_mm",
+)
+REFERENCE_SCORE_OBSERVATION_COLUMNS = (
+    "source",
+    "station_id",
+    "time",
+    "distance_km",
+    "temp_c",
+    "dewpoint_c",
+    "humidity",
+    "pressure_hpa",
+    "wind_kmh",
+    "wind_gust_kmh",
+    "wind_dir",
+    "rain_mm",
+    "precip_observed",
+    "clouds",
+    "visibility_m",
+)
+
 
 def _bias_correct_forecast_value(variable: str, value: float, bias: float) -> float:
     """Apply additive bias without turning a dry forecast into rain."""
@@ -298,7 +347,8 @@ def score_forecasts(
     with engine.connect() as connection:
         forecasts = pd.read_sql(
             text(
-                "SELECT * FROM forecast_runs WHERE valid_time >= :cutoff "
+                f"SELECT {','.join(SCORE_FORECAST_COLUMNS)} FROM forecast_runs "
+                "WHERE valid_time >= :cutoff "
                 "AND valid_time <= :now ORDER BY valid_time"
             ),
             connection,
@@ -306,8 +356,9 @@ def score_forecasts(
         )
         observations = pd.read_sql(
             text(
-                "SELECT * FROM station_raw WHERE time >= :cutoff "
-                "AND source IS NOT NULL ORDER BY time"
+                f"SELECT {','.join(LOCAL_SCORE_OBSERVATION_COLUMNS)} "
+                "FROM station_raw WHERE time >= :cutoff "
+                "AND source IS NOT NULL AND source <> '' ORDER BY time"
             ),
             connection,
             params={"cutoff": cutoff},
@@ -656,7 +707,8 @@ def score_forecasts_against_references(
     with engine.connect() as connection:
         forecasts = pd.read_sql(
             text(
-                "SELECT * FROM forecast_runs WHERE valid_time >= :cutoff "
+                f"SELECT {','.join(SCORE_FORECAST_COLUMNS)} FROM forecast_runs "
+                "WHERE valid_time >= :cutoff "
                 "AND valid_time <= :now ORDER BY valid_time"
             ),
             connection,
@@ -664,14 +716,19 @@ def score_forecasts_against_references(
         )
         references = pd.read_sql(
             text(
-                "SELECT * FROM official_observations WHERE time >= :cutoff "
+                f"SELECT {','.join(REFERENCE_SCORE_OBSERVATION_COLUMNS)} "
+                "FROM official_observations WHERE time >= :cutoff "
                 "ORDER BY source,station_id,time"
             ),
             connection,
             params={"cutoff": cutoff},
         )
         local = pd.read_sql(
-            text("SELECT * FROM station_raw WHERE time >= :cutoff ORDER BY time"),
+            text(
+                f"SELECT {','.join(LOCAL_SCORE_OBSERVATION_COLUMNS)} "
+                "FROM station_raw WHERE time >= :cutoff "
+                "AND source IS NOT NULL AND source <> '' ORDER BY time"
+            ),
             connection,
             params={"cutoff": cutoff},
         )

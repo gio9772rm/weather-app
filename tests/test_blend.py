@@ -12,6 +12,7 @@ from forecast_blend import (
     archive_forecast,
     build_blend,
     score_forecasts,
+    score_forecasts_against_references,
 )
 from forecast_providers import FORECAST_COLUMNS
 from forecast_quality import enforce_physical_bounds
@@ -194,3 +195,24 @@ def test_explicit_icon_collapses_overlapping_best_match_but_keeps_fallbacks():
     assert first_row["temp_c"] == 20.0
     assert first_row["visibility_m"] == 25_000
     assert set(collapsed["valid_time"]) == {first, second}
+
+
+def test_scoring_queries_do_not_load_unused_wide_columns(
+    sqlite_engine, monkeypatch
+):
+    queries: list[str] = []
+
+    def empty_read_sql(statement, connection, params=None):
+        del connection, params
+        queries.append(str(statement))
+        return pd.DataFrame()
+
+    monkeypatch.setattr("forecast_blend.pd.read_sql", empty_read_sql)
+
+    assert score_forecasts(engine=sqlite_engine).empty
+    assert score_forecasts_against_references(engine=sqlite_engine).empty
+
+    assert len(queries) == 5
+    assert all("SELECT *" not in query.upper() for query in queries)
+    assert all("description" not in query.lower() for query in queries)
+    assert all("raw_observation" not in query.lower() for query in queries)

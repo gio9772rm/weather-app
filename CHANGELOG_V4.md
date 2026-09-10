@@ -1,5 +1,12 @@
 # Changelog Meteo V4
 
+## V4.9.5 · stabilità memoria del cron
+
+- ridotta la memoria del punteggio previsionale caricando da PostgreSQL soltanto le colonne realmente usate, invece delle tabelle complete ripetute nei confronti locali e ufficiali;
+- i campioni legacy senza provenienza certa sono esclusi coerentemente anche dal trasferimento statistico verso le stazioni ufficiali;
+- i frame temporanei delle fasi forecast, ensemble, scoring e blend vengono rilasciati tra un passaggio e il successivo, evitando i picchi che superavano i 512 MiB del cron Render;
+- nessuna variazione alla cadenza unica di 10 minuti, ai pesi statistici o ai valori meteorologici calcolati.
+
 ## V4.9.4 · recupero e trasparenza dello storico Roma
 
 - diagnosticato il vuoto reale dell'archivio romano: i campioni moderni validi iniziano il 15 agosto 2026, mentre i record precedenti non attribuiti contengono valori Fahrenheit nella vecchia colonna Celsius e non vengono più inclusi nel confronto;

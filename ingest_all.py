@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import logging
 import math
@@ -231,7 +232,10 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     frames, warnings = fetch_all_forecasts(cfg)
     if not frames:
         raise RuntimeError("Nessun provider di previsione ha restituito dati")
+    provider_names = sorted({str(frame.iloc[0]["provider"]) for frame in frames})
     archived = sum(archive_forecast(frame) for frame in frames)
+    del frames
+    gc.collect()
     try:
         ensemble, ensemble_warning = refresh_ensemble(cfg)
     except Exception as exc:  # noqa: BLE001 - optional guidance cannot stop forecasts
@@ -241,28 +245,36 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         warnings.append(
             f"Guida probabilistica rinviata: {_safe_message(ensemble_warning)}"
         )
+    ensemble_rows = len(ensemble)
+    del ensemble
+    gc.collect()
     try:
         scores = score_forecasts(cfg)
         local_score_rows = len(scores)
+        del scores
     except Exception as exc:  # noqa: BLE001 - scoring must not discard a valid forecast
         warnings.append(f"Verifica errori rinviata: {_safe_message(exc)}")
         local_score_rows = 0
+    gc.collect()
     try:
         reference_scores = score_forecasts_against_references(cfg)
         reference_score_rows = len(reference_scores)
+        del reference_scores
     except Exception as exc:  # noqa: BLE001 - the official network is secondary
         warnings.append(f"Verifica rete ufficiale rinviata: {_safe_message(exc)}")
         reference_score_rows = 0
+    gc.collect()
     blend = build_blend(cfg=cfg)
     if blend.empty:
         raise RuntimeError("Previsioni archiviate ma combinazione finale vuota")
+    blend_rows = len(blend)
+    latest_issued_at = blend["issued_at"].max()
     now = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     set_meta("last_forecast_success", now)
-    set_meta("last_forecast_issued_at", blend["issued_at"].max())
-    set_meta(
-        "forecast_providers",
-        json.dumps(sorted({str(frame.iloc[0]["provider"]) for frame in frames})),
-    )
+    set_meta("last_forecast_issued_at", latest_issued_at)
+    set_meta("forecast_providers", json.dumps(provider_names))
+    del blend
+    gc.collect()
     try:
         observed_air, air_warning = refresh_observed_air(cfg)
     except Exception as exc:  # noqa: BLE001 - optional environment feed is isolated
@@ -309,11 +321,11 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         )
     return {
         "archived": archived,
-        "blend_rows": len(blend),
+        "blend_rows": blend_rows,
         "score_rows": local_score_rows + reference_score_rows,
         "local_score_rows": local_score_rows,
         "reference_score_rows": reference_score_rows,
-        "ensemble_rows": len(ensemble),
+        "ensemble_rows": ensemble_rows,
         "observed_air_rows": len(observed_air),
         "measured_pollen_rows": len(measured_pollen),
         "official_alert_rows": len(official_alerts),
