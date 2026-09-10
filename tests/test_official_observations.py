@@ -186,7 +186,10 @@ def test_official_score_learns_site_offset_before_evaluating_forecast(sqlite_eng
         )
     with sqlite_engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO station_raw (time,temp_c) VALUES (:time,:temp)"),
+            text(
+                "INSERT INTO station_raw (time,temp_c,source) "
+                "VALUES (:time,:temp,'test')"
+            ),
             station_rows,
         )
         connection.execute(
