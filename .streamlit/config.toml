@@ -3,6 +3,10 @@ port = 8501
 headless = true
 enableCORS = true
 enableXsrfProtection = true
+# Serve i file nella cartella "static/" (manifest PWA, service worker,
+# icone) su /app/static/<file> - Streamlit non serve file nuovi messi
+# nella propria cartella static interna, solo quelli che possiede già.
+enableStaticServing = true
 
 [browser]
 serverAddress = "localhost"

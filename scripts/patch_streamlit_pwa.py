@@ -1,11 +1,21 @@
 """Aggiunge favicon, anteprima social (Open Graph) e un manifest PWA minimo
 all'interfaccia di Streamlit, che di norma non permette di personalizzare
 questi elementi. Va eseguito una volta dopo `pip install`, prima di avviare
-l'app (vedi buildCommand in render.yaml).
+l'app (vedi buildCommand in render.yaml) e viene comunque ri-applicato a
+ogni avvio dello script principale (vedi app_streamlit.py) perche' alcuni
+host non rieseguono il comando di build quando cambia solo render.yaml su
+un servizio gia' esistente.
 
-Non tocca il comportamento dell'app: modifica solo l'HTML statico servito
-da Streamlit e aggiunge alcuni file (icone, manifest, service worker) nella
-stessa cartella "static" già usata da Streamlit per i propri asset.
+Nota importante: Streamlit (>=1.31) NON serve file arbitrari messi nella
+cartella "static" del proprio package - le uniche eccezioni sono i file
+che Streamlit stesso gia' possiede (es. favicon.png), che possiamo
+sovrascrivere in-place. I file NUOVI (manifest, service worker, icone)
+sono invece committati direttamente nella cartella "static/" accanto ad
+app_streamlit.py e serviti da Streamlit su "/app/static/<file>" grazie a
+`server.enableStaticServing = true` (vedi .streamlit/config.toml) - questa
+cartella deve esistere GIA' quando il server parte (Streamlit controlla la
+sua presenza all'avvio del processo, non ad ogni richiesta), per questo
+non puo' essere generata qui a runtime: va committata nel repository.
 """
 
 from __future__ import annotations
@@ -16,55 +26,27 @@ import sys
 
 MARKER = "<!-- meteo-v4-pwa-patch -->"
 
-MANIFEST_JSON = """{
-  "name": "Meteo V4 \\u00b7 Stazione meteo",
-  "short_name": "Meteo V4",
-  "description": "Stazione meteo in tempo reale: previsioni, radar, qualit\\u00e0 dell'aria e astronomia.",
-  "start_url": "./?src=pwa",
-  "scope": "./",
-  "display": "standalone",
-  "background_color": "#0f3d78",
-  "theme_color": "#0b76b7",
-  "orientation": "portrait-primary",
-  "icons": [
-    {"src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-    {"src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-    {"src": "./icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
-  ]
-}
-"""
-
-SERVICE_WORKER_JS = """// Service worker minimo: serve solo a rendere l'app installabile
-// (PWA / TWA Android). Nessuna cache di dati live: rete sempre in prima
-// battuta, per non mostrare mai meteo non aggiornato.
-self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
-self.addEventListener("fetch", (event) => {
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
-});
-"""
-
 HEAD_INJECTION = """{marker}
 <meta name="theme-color" content="#0b76b7" />
 <meta name="description" content="Stazione meteo in tempo reale: previsioni, radar, qualit\u00e0 dell'aria e astronomia." />
 <meta property="og:title" content="Meteo V4 \u00b7 Stazione meteo in tempo reale" />
 <meta property="og:description" content="Previsioni, radar, qualit\u00e0 dell'aria e astronomia aggiornati in tempo reale dalla stazione locale." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="./og-image.png" />
+<meta property="og:image" content="app/static/og-image.png" />
 <meta name="twitter:card" content="summary_large_image" />
-<link rel="apple-touch-icon" href="./apple-touch-icon-180.png" />
-<link rel="manifest" href="./pwa-manifest.json" />
+<link rel="apple-touch-icon" href="app/static/apple-touch-icon-180.png" />
+<link rel="manifest" href="app/static/pwa-manifest.json" />
 <script>
   if ("serviceWorker" in navigator) {{
     window.addEventListener("load", function () {{
-      navigator.serviceWorker.register("./sw.js").catch(function () {{}});
+      navigator.serviceWorker.register("app/static/sw.js").catch(function () {{}});
     }});
   }}
 </script>
 """.format(marker=MARKER)
 
 
-def find_static_dir() -> str:
+def find_streamlit_static_dir() -> str:
     import streamlit
 
     return os.path.join(os.path.dirname(streamlit.__file__), "static")
@@ -94,49 +76,31 @@ def apply_patch() -> int:
 
 
 def main() -> int:
-    static_dir = find_static_dir()
-    if not os.path.isdir(static_dir):
-        print(f"[patch_streamlit_pwa] cartella static non trovata: {static_dir}")
-        return 1
-
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     assets_dir = os.path.join(repo_root, "assets", "pwa")
+    streamlit_static_dir = find_streamlit_static_dir()
 
-    icon_files = [
-        "favicon-32.png",
-        "apple-touch-icon-180.png",
-        "icon-192.png",
-        "icon-512.png",
-        "icon-512-maskable.png",
-        "og-image.png",
-    ]
-    for name in icon_files:
-        src = os.path.join(assets_dir, name)
-        if os.path.isfile(src):
-            shutil.copy(src, os.path.join(static_dir, name))
-
-    # Il favicon esistente ("favicon.png", 32x32) e' quello referenziato
-    # dall'HTML di Streamlit: lo sovrascriviamo con la nostra versione,
-    # cosi' non serve modificare il tag <link rel="shortcut icon">.
+    # Favicon: Streamlit serve gia' "favicon.png" dalla propria cartella
+    # static interna (e' uno dei pochi file "conosciuti" che sovrascrive
+    # con successo anche se non e' nella cartella app/static). Lo
+    # sovrascriviamo con la nostra versione, cosi' non serve modificare il
+    # tag <link rel="shortcut icon"> di Streamlit.
     favicon_src = os.path.join(assets_dir, "favicon-32.png")
-    if os.path.isfile(favicon_src):
-        shutil.copy(favicon_src, os.path.join(static_dir, "favicon.png"))
+    if os.path.isdir(streamlit_static_dir) and os.path.isfile(favicon_src):
+        shutil.copy(favicon_src, os.path.join(streamlit_static_dir, "favicon.png"))
 
-    with open(os.path.join(static_dir, "pwa-manifest.json"), "w", encoding="utf-8") as f:
-        f.write(MANIFEST_JSON)
-    with open(os.path.join(static_dir, "sw.js"), "w", encoding="utf-8") as f:
-        f.write(SERVICE_WORKER_JS)
+    # HTML: titolo pagina + meta/manifest/service worker nel <head>.
+    index_path = os.path.join(streamlit_static_dir, "index.html")
+    if os.path.isfile(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
+            html = f.read()
 
-    index_path = os.path.join(static_dir, "index.html")
-    with open(index_path, "r", encoding="utf-8") as f:
-        html = f.read()
+        if MARKER not in html:
+            html = html.replace("</head>", HEAD_INJECTION + "  </head>", 1)
+        html = html.replace("<title>Streamlit</title>", "<title>Meteo V4</title>", 1)
 
-    if MARKER not in html:
-        html = html.replace("</head>", HEAD_INJECTION + "  </head>", 1)
-    html = html.replace("<title>Streamlit</title>", "<title>Meteo V4</title>", 1)
-
-    with open(index_path, "w", encoding="utf-8") as f:
-        f.write(html)
+        with open(index_path, "w", encoding="utf-8") as f:
+            f.write(html)
 
     print("[patch_streamlit_pwa] favicon, meta anteprima social e manifest PWA applicati.")
     return 0
