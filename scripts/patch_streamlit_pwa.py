@@ -26,7 +26,7 @@ import sys
 
 MARKER = "<!-- meteo-v4-pwa-patch -->"
 
-HEAD_INJECTION = """{marker}
+HEAD_INJECTION = f"""{MARKER}
 <meta name="theme-color" content="#0b76b7" />
 <meta name="description" content="Stazione meteo in tempo reale: previsioni, radar, qualit\u00e0 dell'aria e astronomia." />
 <meta property="og:title" content="Meteo V4 \u00b7 Stazione meteo in tempo reale" />
@@ -95,7 +95,7 @@ HEAD_INJECTION = """{marker}
     }} catch (e) {{}}
   }});
 </script>
-""".format(marker=MARKER)
+"""
 
 
 def find_streamlit_static_dir() -> str:
@@ -120,7 +120,7 @@ def apply_patch() -> int:
         return 0
     try:
         result = main()
-    except Exception as exc:  # pragma: no cover - never break the app for this
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover
         print(f"[patch_streamlit_pwa] patch non applicata: {exc}")
         result = 1
     _PATCH_APPLIED = True

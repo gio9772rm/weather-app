@@ -1,5 +1,12 @@
 # Changelog Meteo V4
 
+## V4.9.8 · finestre Ecowitt allineate al fuso della stazione
+
+- le date delle richieste `device/history` vengono convertite dal riferimento UTC al fuso configurato per ciascuna stazione prima dell'invio, eliminando il ritardo di due ore osservato durante l'ora legale;
+- la conversione usa automaticamente CET/CEST e torna in modo sicuro a UTC se il nome del fuso non è valido, senza modificare gli epoch restituiti da Ecowitt;
+- i test coprono estate, inverno, fallback e ordine del recupero profondo;
+- restano invariati ciclo unico di 10 minuti, contatori pioggia e isolamento tra Roma e Comacchio.
+
 ## V4.9.7 · fusione fonti ufficiali pronta per Pandas futuro
 
 - le colonne interamente vuote di una singola fonte ufficiale vengono escluse soltanto durante la fusione e poi ripristinate nello schema canonico, eliminando l'avviso di deprecazione Pandas senza perdere valori;

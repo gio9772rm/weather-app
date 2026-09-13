@@ -10,6 +10,7 @@ import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
 import pandas as pd
@@ -798,6 +799,17 @@ def _history_windows(hours: int) -> list[tuple[datetime, datetime]]:
     return windows
 
 
+def _history_request_time(value: datetime, timezone_name: str) -> str:
+    """Format a UTC boundary in the local time expected by Ecowitt history."""
+    try:
+        station_timezone = ZoneInfo(str(timezone_name or "UTC"))
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        station_timezone = timezone.utc
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(station_timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _fetch_station_payloads(
     backfill: int,
     cfg: Settings,
@@ -848,8 +860,10 @@ def _fetch_station_payloads(
                         "device/history",
                         {
                             "mac": cfg.ecowitt_mac.replace("-", ":").lower(),
-                            "start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
-                            "end_date": end.strftime("%Y-%m-%d %H:%M:%S"),
+                            "start_date": _history_request_time(
+                                start, cfg.local_timezone
+                            ),
+                            "end_date": _history_request_time(end, cfg.local_timezone),
                             "call_back": weather_callback,
                         },
                         cfg,

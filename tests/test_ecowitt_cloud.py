@@ -10,6 +10,7 @@ from config import Settings
 from weather_ingest_ecowitt_cloud import (
     EcowittError,
     _fetch_station_payloads,
+    _history_request_time,
     ecowitt_get,
 )
 
@@ -37,6 +38,7 @@ def test_ecowitt_api_error_keeps_diagnosis_but_redacts_identifiers():
         ecowitt_application_key="application-secret",
         ecowitt_api_key="api-secret",
         ecowitt_mac="AA:BB:CC:DD:EE:FF",
+        local_timezone="Europe/Rome",
     )
 
     with pytest.raises(EcowittError) as raised:
@@ -86,6 +88,7 @@ def test_progressive_history_retry_starts_from_oldest_window(monkeypatch):
         ecowitt_application_key="application-secret",
         ecowitt_api_key="api-secret",
         ecowitt_mac="AA:BB:CC:DD:EE:FF",
+        local_timezone="Europe/Rome",
     )
     windows = [
         (
@@ -119,7 +122,16 @@ def test_progressive_history_retry_starts_from_oldest_window(monkeypatch):
     _fetch_station_payloads(90 * 24, cfg, history_newest_first=False)
 
     assert starts == [
-        "2026-06-12 00:00:00",
-        "2026-06-13 00:00:00",
-        "2026-06-14 00:00:00",
+        "2026-06-12 02:00:00",
+        "2026-06-13 02:00:00",
+        "2026-06-14 02:00:00",
     ]
+
+
+def test_history_request_time_follows_station_dst_and_has_safe_fallback():
+    summer = datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc)
+    winter = datetime(2026, 12, 12, 12, 0, tzinfo=timezone.utc)
+
+    assert _history_request_time(summer, "Europe/Rome") == "2026-06-12 14:00:00"
+    assert _history_request_time(winter, "Europe/Rome") == "2026-12-12 13:00:00"
+    assert _history_request_time(summer, "Invalid/Timezone") == "2026-06-12 12:00:00"
