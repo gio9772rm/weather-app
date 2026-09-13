@@ -70,6 +70,29 @@ def find_static_dir() -> str:
     return os.path.join(os.path.dirname(streamlit.__file__), "static")
 
 
+_PATCH_APPLIED = False
+
+
+def apply_patch() -> int:
+    """Idempotent, in-process variant of `main()`. Safe to import and call
+    from the app itself on every rerun: after the first successful call in
+    a given Python process it short-circuits immediately, so it does not
+    depend on the hosting platform actually running this file as a build
+    step (some platforms ignore a repo's build-command changes once a
+    service already exists).
+    """
+    global _PATCH_APPLIED
+    if _PATCH_APPLIED:
+        return 0
+    try:
+        result = main()
+    except Exception as exc:  # pragma: no cover - never break the app for this
+        print(f"[patch_streamlit_pwa] patch non applicata: {exc}")
+        result = 1
+    _PATCH_APPLIED = True
+    return result
+
+
 def main() -> int:
     static_dir = find_static_dir()
     if not os.path.isdir(static_dir):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import os
+import sys
 import time
 from dataclasses import replace
 from typing import Any
@@ -14,6 +15,22 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
+
+# Applica favicon, anteprima social e manifest PWA all'interfaccia di Streamlit.
+# Fatto qui (e non solo nel buildCommand di render.yaml) perche' alcuni host non
+# rieseguono il comando di build quando cambia solo render.yaml su un servizio
+# gia' esistente: chiamarlo a ogni avvio dello script e' sicuro perche'
+# `apply_patch` si applica una sola volta per processo e non interrompe mai
+# l'app in caso di errore.
+_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+try:
+    import patch_streamlit_pwa as _pwa_patch
+
+    _pwa_patch.apply_patch()
+except Exception:
+    pass
 
 from air_quality import AirQualityError, AirQualityForecast, fetch_air_quality
 from astro_weather import (
