@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 import time
 from dataclasses import replace
 from typing import Any
@@ -120,7 +121,7 @@ from weather_experience import (
 
 st.set_page_config(
     page_title="Meteo V4",
-    page_icon="🌦️",
+    page_icon="assets/pwa/icon-192.png",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -136,6 +137,7 @@ TAB_SLUGS = {
     "Aria": "air",
     "Astronomia": "astronomy",
     "Radar": "radar",
+    "Informazioni": "info",
     "Sistema": "system",
 }
 
@@ -4459,6 +4461,18 @@ def _remember_selected_tab() -> None:
     _set_query_value("tab", TAB_SLUGS.get(label, "today"))
 
 
+def _is_admin_session() -> bool:
+    """La diagnostica interna (scheda Sistema) resta visibile solo a chi ha
+    il token amministrativo, anche mentre il sito non è ancora pubblico.
+    Imposta la variabile d'ambiente ADMIN_ACCESS_TOKEN su Render e apri il
+    sito con ?admin=<token> per vederla."""
+    token = os.environ.get("ADMIN_ACCESS_TOKEN", "").strip()
+    if not token:
+        return False
+    provided = _query_value("admin", "")
+    return bool(provided) and provided == token
+
+
 query_mode = _query_value("mode", "local")
 if "app_section" not in st.session_state:
     st.session_state["app_section"] = (
@@ -4677,16 +4691,17 @@ if app_section == "Meteo città":
     )
     st.stop()
 
-station = station_data(max(observation_hours + 24, 240), active_station_id)
-forecast = forecast_data()
-forecast_history = forecast_history_data()
-ensemble_guidance = ensemble_guidance_data()
-official_air_observed = observed_air_data()
-official_pollen_observed = measured_pollen_data()
-climate_normals = climate_normals_data()
-reference_climate_normals = reference_climate_data(active_station_id)
-official_alerts = official_alerts_data()
-health = health_data()
+with st.spinner("Carico i dati meteo aggiornati…"):
+    station = station_data(max(observation_hours + 24, 240), active_station_id)
+    forecast = forecast_data()
+    forecast_history = forecast_history_data()
+    ensemble_guidance = ensemble_guidance_data()
+    official_air_observed = observed_air_data()
+    official_pollen_observed = measured_pollen_data()
+    climate_normals = climate_normals_data()
+    reference_climate_normals = reference_climate_data(active_station_id)
+    official_alerts = official_alerts_data()
+    health = health_data()
 theme = "plotly_dark" if dark_mode else "plotly_white"
 
 render_v4_hero(station, forecast, health)
@@ -4856,6 +4871,7 @@ requested_tab = next(
     tab_air,
     tab_astro,
     tab_radar,
+    tab_info,
     tab_system,
 ) = st.tabs(
     tab_labels,
@@ -6770,7 +6786,47 @@ with tab_radar:
         "Il radar sopra mostra invece precipitazioni realmente osservate."
     )
 
-with tab_system:
+with tab_info:
+    st.markdown(
+        '<div class="section-kicker">Cos\'è e da dove arrivano i dati</div>',
+        unsafe_allow_html=True,
+    )
+    st.subheader("Informazioni")
+    st.markdown(
+        "Meteo V4 è una dashboard personale che raccoglie le misure di una stazione "
+        "Ecowitt privata e le confronta con previsioni e osservazioni ufficiali. "
+        "È un progetto in fase di test: i dati sono reali, ma l'app può cambiare senza preavviso."
+    )
+
+    st.markdown("#### Fonti dei dati")
+    st.markdown(
+        """
+- **Previsioni**: [Open‑Meteo](https://open-meteo.com/) (multi‑modello, incluso ICON‑2I ItaliaMeteo/ARPAE) e, quando configurato, [OpenWeather](https://openweathermap.org/api).
+- **Radar e fulmini**: [Dipartimento della Protezione Civile](https://www.protezionecivile.gov.it/) (SRI/VMI) e nowcast [RainViewer](https://www.rainviewer.com/).
+- **Osservazioni ufficiali**: METAR [Aviation Weather](https://aviationweather.gov/data/api/) per Fiumicino/Ciampino; CFR Lazio in tempo reale (non ancora validato) e dataset pubblico [MeteoHub](https://meteohub.agenziaitaliameteo.it/api/datasets/dpcn-lazio) (licenza CC BY 4.0); ARSIAL/SIARL dal relativo [export pubblico](https://siarl.arsial.it/bi/superset/dashboard/7).
+- **Qualità dell'aria**: rete europea [EEA](https://www.eea.europa.eu/) e modelli [CAMS](https://atmosphere.copernicus.eu/); pollini misurati dalla rete ufficiale POLLnet/ISPRA.
+- **Climatologia**: rianalisi [ERA5‑Land](https://cds.climate.copernicus.eu/) 1991–2020, distinta dalle normali ufficiali ISPRA/SCIA.
+- **Astronomia**: modello del terreno [Copernicus GLO‑90](https://spacedata.copernicus.eu/) per l'orizzonte locale.
+"""
+    )
+
+    st.markdown("#### Privacy")
+    st.markdown(
+        "La dashboard non richiede account né raccoglie dati personali dei visitatori: "
+        "non ci sono cookie di tracciamento o analytics di terze parti. Le coordinate esatte "
+        "della stazione non vengono mostrate: la posizione indicata in pagina è arrotondata."
+    )
+
+    st.markdown("#### Licenza e utilizzo")
+    st.markdown(
+        "Codice e contenuti sono un progetto personale, condiviso pubblicamente su "
+        "[GitHub](https://github.com/gio9772rm/weather-app) a scopo informativo. I dati di "
+        "terze parti restano soggetti alle rispettive licenze citate sopra; questa pagina non "
+        "sostituisce i bollettini ufficiali della Protezione Civile per decisioni di sicurezza."
+    )
+
+
+def _render_system_tab_content() -> None:
     st.markdown(
         '<div class="section-kicker">Affidabilità e continuità</div>',
         unsafe_allow_html=True,
@@ -7201,6 +7257,15 @@ with tab_system:
         )
         render_styled_table(
             _style_status_table(safe_logs, dark_mode, "Stato"),
+        )
+
+
+with tab_system:
+    if _is_admin_session():
+        _render_system_tab_content()
+    else:
+        st.info(
+            "Sezione riservata alla diagnostica interna. Non disponibile in questa modalità."
         )
 
 reference_attribution = " · riferimenti: Aviation Weather"
