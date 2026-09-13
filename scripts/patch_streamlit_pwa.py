@@ -43,6 +43,58 @@ HEAD_INJECTION = """{marker}
     }});
   }}
 </script>
+<script>
+  // Controllo aggiornamenti del guscio nativo Android (TWA). L'app privata
+  // apre sempre questa pagina live, quindi contenuti/funzionalita' del sito
+  // sono gia' sempre aggiornati da soli. Solo il guscio nativo (icona, nome,
+  // splash screen, colori di sistema) e' incorporato nell'APK e non puo'
+  // aggiornarsi da solo senza passare dal Play Store: qui verifichiamo se la
+  // versione del guscio installata (parametro "shell" nell'URL di avvio,
+  // impostato dentro twa-manifest.json) e' inferiore all'ultima disponibile
+  // e mostriamo un banner con un link diretto per scaricare e installare il
+  // nuovo APK (richiede comunque una conferma dell'utente: e' un limite di
+  // sicurezza di Android per le app non distribuite tramite store).
+  document.addEventListener("DOMContentLoaded", function () {{
+    try {{
+      var params = new URLSearchParams(window.location.search);
+      var isTwa = params.get("src") === "twa" || document.referrer.indexOf("android-app://") === 0;
+      var installedShell = parseInt(params.get("shell") || "0", 10);
+      if (!isTwa || !installedShell) return;
+      fetch("app/static/android-version.json", {{cache: "no-store"}})
+        .then(function (r) {{ return r.json(); }})
+        .then(function (info) {{
+          if (!info || !info.shellVersion || info.shellVersion <= installedShell) return;
+          if (localStorage.getItem("meteov4_shell_dismissed") === String(info.shellVersion)) return;
+          var bar = document.createElement("div");
+          bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:999999;background:#0b76b7;color:#fff;"
+            + "padding:10px 14px;font-family:sans-serif;font-size:14px;display:flex;align-items:center;"
+            + "justify-content:space-between;gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.25);";
+          var label = document.createElement("span");
+          label.textContent = "Nuova versione dell'app disponibile";
+          var actions = document.createElement("div");
+          actions.style.cssText = "display:flex;align-items:center;gap:16px;flex-shrink:0;";
+          var link = document.createElement("a");
+          link.href = info.apkUrl;
+          link.textContent = "Aggiorna";
+          link.style.cssText = "color:#fff;font-weight:bold;text-decoration:underline;";
+          var close = document.createElement("button");
+          close.textContent = "\u2715";
+          close.setAttribute("aria-label", "Chiudi");
+          close.style.cssText = "background:transparent;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;";
+          close.onclick = function () {{
+            localStorage.setItem("meteov4_shell_dismissed", String(info.shellVersion));
+            bar.remove();
+          }};
+          actions.appendChild(link);
+          actions.appendChild(close);
+          bar.appendChild(label);
+          bar.appendChild(actions);
+          document.body.appendChild(bar);
+        }})
+        .catch(function () {{}});
+    }} catch (e) {{}}
+  }});
+</script>
 """.format(marker=MARKER)
 
 

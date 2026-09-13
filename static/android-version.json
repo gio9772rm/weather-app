@@ -1,0 +1,5 @@
+{
+  "shellVersion": 1,
+  "apkUrl": "app/static/MeteoV4.apk",
+  "notes": "Versione iniziale del guscio nativo con controllo automatico degli aggiornamenti."
+}
