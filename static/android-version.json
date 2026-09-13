@@ -1,5 +1,5 @@
 {
-  "shellVersion": 1,
+  "shellVersion": 2,
   "apkUrl": "app/static/MeteoV4.apk",
-  "notes": "Versione iniziale del guscio nativo con controllo automatico degli aggiornamenti."
+  "notes": "Rinominata l'app in \"Meteo Pro\"."
 }
