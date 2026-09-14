@@ -1,10 +1,10 @@
 -c constraints.txt
-streamlit>=1.50,<2
+streamlit>=1.63.0,<2
 pandas>=2.2,<3
-numpy>=1.26,<2.4
+numpy>=2.4.6,<2.5
 requests>=2.32,<3
 SQLAlchemy>=2.0,<3
-psycopg[binary]>=3.1,<4
+psycopg[binary]>=3.3.5,<4
 python-dotenv>=1.0,<2
 pydeck>=0.9,<1
 plotly>=5.22,<7
