@@ -6,7 +6,7 @@
 - trasparenza, stabilità, jet e rischio condensa possono ridurre lo score meteo di base, ma non trasformare nuvole, pioggia, vento o scarsa visibilità in una finestra favorevole;
 - la tabella chiarisce che le ore favorevoli sono intervalli con score almeno 65 e distingue la nuvolosità media dalla singola ora migliore;
 - aggiunti test di regressione per il caso reale di copertura totale 75%, strati bassi/medi assenti e nubi alte al 100%;
-- verificato in produzione che il canale storico Ecowitt pubblica i campioni recenti con circa due ore di ritardo ma con lo stesso timestamp del realtime; il canale realtime continua a coprire la finestra più recente.
+- verificato in produzione che, dopo l'allineamento delle finestre, storico e realtime Ecowitt usano gli stessi timestamp e il canale storico arriva fino all'ultimo intervallo disponibile; il realtime continua a coprire la coda più recente.
 
 ## V4.9.8 · finestre Ecowitt allineate al fuso della stazione
 
