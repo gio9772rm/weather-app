@@ -5,11 +5,12 @@
 - lo score usa la copertura nuvolosa totale come limite minimo di penalità, conservando il peso maggiore delle nubi basse senza sottostimare un cielo coperto da nubi alte;
 - trasparenza, stabilità, jet e rischio condensa possono ridurre lo score meteo di base, ma non trasformare nuvole, pioggia, vento o scarsa visibilità in una finestra favorevole;
 - la tabella chiarisce che le ore favorevoli sono intervalli con score almeno 65 e distingue la nuvolosità media dalla singola ora migliore;
-- aggiunti test di regressione per il caso reale di copertura totale 75%, strati bassi/medi assenti e nubi alte al 100%.
+- aggiunti test di regressione per il caso reale di copertura totale 75%, strati bassi/medi assenti e nubi alte al 100%;
+- verificato in produzione che il canale storico Ecowitt pubblica i campioni recenti con circa due ore di ritardo ma con lo stesso timestamp del realtime; il canale realtime continua a coprire la finestra più recente.
 
 ## V4.9.8 · finestre Ecowitt allineate al fuso della stazione
 
-- le date delle richieste `device/history` vengono convertite dal riferimento UTC al fuso configurato per ciascuna stazione prima dell'invio, eliminando il ritardo di due ore osservato durante l'ora legale;
+- le date delle richieste `device/history` vengono convertite dal riferimento UTC al fuso configurato per ciascuna stazione prima dell'invio, allineando correttamente i limiti della finestra richiesta durante CET e CEST;
 - la conversione usa automaticamente CET/CEST e torna in modo sicuro a UTC se il nome del fuso non è valido, senza modificare gli epoch restituiti da Ecowitt;
 - i test coprono estate, inverno, fallback e ordine del recupero profondo;
 - restano invariati ciclo unico di 10 minuti, contatori pioggia e isolamento tra Roma e Comacchio.
