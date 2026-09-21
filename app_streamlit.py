@@ -1806,7 +1806,7 @@ def _style_astronomy_table(table: pd.DataFrame, dark_mode: bool) -> Any:
         "Bortle ≈": "bortle",
         "Qualità media": "confidence",
         "Qualità migliore": "confidence",
-        "Nuvole notte %": "clouds",
+        "Nuvole medie notte %": "clouds",
         "Vento notte km/h": "wind",
     }
     for column, metric in metrics.items():
@@ -1819,7 +1819,7 @@ def _style_astronomy_table(table: pd.DataFrame, dark_mode: bool) -> Any:
         "SQM stimato": "{:.2f}",
         "Qualità media": "{:.0f}",
         "Qualità migliore": "{:.0f}",
-        "Nuvole notte %": "{:.0f}",
+        "Nuvole medie notte %": "{:.0f}",
         "Vento notte km/h": "{:.1f}",
         "Luna illuminata %": "{:.0f}",
     }
@@ -5649,8 +5649,8 @@ with tab_astro:
                         "Zona LP": daily_astro["lp_zone"],
                         "Qualità media": daily_astro["weather_score_mean"],
                         "Qualità migliore": daily_astro["weather_score_best"],
-                        "Ore buone": daily_astro["good_hours"],
-                        "Nuvole notte %": daily_astro["clouds_mean"],
+                        "Ore favorevoli (≥65)": daily_astro["good_hours"],
+                        "Nuvole medie notte %": daily_astro["clouds_mean"],
                         "Vento notte km/h": daily_astro["wind_mean"],
                         "Trasparenza proxy": _numeric_series(
                             daily_astro, "transparency_proxy"
@@ -5672,6 +5672,12 @@ with tab_astro:
                 render_color_legend("astronomy")
                 render_styled_table(
                     _style_astronomy_table(daily_table, dark_mode),
+                )
+                st.caption(
+                    "Le ore favorevoli sono intervalli orari con score astronomico ≥65. "
+                    "La nuvolosità è la media dell'intera notte, mentre la qualità migliore "
+                    "descrive la singola ora più favorevole; gli indicatori Pro possono "
+                    "ridurre, ma non superare, il limite imposto da nuvole e meteo di base."
                 )
             st.caption(
                 f"SQM e zona LP sono stime zenitali geolocalizzate dell'Atlante {light_pollution.year} "
