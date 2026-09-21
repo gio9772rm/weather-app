@@ -4,12 +4,14 @@ import base64
 import gzip
 
 import pandas as pd
+import pytest
 from sqlalchemy import text
 
 from config import settings
 from data_access import load_station_daily_summaries
 from station_daily import (
     aggregate_observations_daily,
+    canonicalize_observations,
     combine_daily_sources,
     import_daily_bootstrap_from_env,
     parse_ecowitt_daily_export,
@@ -178,6 +180,58 @@ def test_live_daily_aggregate_overrides_import_for_same_day():
     assert combined.iloc[0]["temp_mean_c"] == 25.0
     assert combined.iloc[0]["rain_mm"] == 0.5
     assert combined.iloc[0]["wind_dir_deg"] in {0.0, 360.0}
+
+
+def test_live_daily_aggregate_prefers_history_and_counts_rain_counter_once():
+    observations = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                [
+                    "2026-09-18T10:00:00Z",
+                    "2026-09-18T10:00:35Z",
+                    "2026-09-18T10:05:00Z",
+                ],
+                utc=True,
+            ),
+            "temp_c": [20.0, 40.0, 22.0],
+            "humidity": [80, 20, 78],
+            "rain_mm": [0.0, 9.0, 0.5],
+            "rain_total_mm": [100.0, 100.0, 100.5],
+            "source": [
+                "ecowitt_cloud_history",
+                "ecowitt_cloud",
+                "ecowitt_cloud_history",
+            ],
+        }
+    )
+
+    live = aggregate_observations_daily(
+        observations, "secondary-one", "Europe/Rome"
+    )
+
+    assert live.iloc[0]["sample_count"] == 2
+    assert live.iloc[0]["temp_mean_c"] == 21.0
+    assert live.iloc[0]["humidity_mean"] == 79.0
+    assert live.iloc[0]["rain_mm"] == 0.5
+
+
+def test_canonical_observations_keep_realtime_tail_until_history_arrives():
+    observations = pd.DataFrame(
+        {
+            "time": pd.to_datetime(
+                ["2026-09-18T10:00:00Z", "2026-09-18T10:10:35Z"], utc=True
+            ),
+            "rain_mm": [0.0, 12.0],
+            "rain_total_mm": [100.0, 100.4],
+            "source": ["ecowitt_cloud_history", "ecowitt_cloud"],
+        }
+    )
+
+    canonical = canonicalize_observations(observations)
+
+    assert len(canonical) == 2
+    assert canonical.iloc[-1]["source"] == "ecowitt_cloud"
+    assert canonical.iloc[-1]["rain_mm"] == pytest.approx(0.4)
 
 
 def test_primary_daily_comparison_falls_back_to_authoritative_raw_archive(

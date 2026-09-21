@@ -32,7 +32,7 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - baseline climatica locale Ecowitt per mese e ora, con mediana, fascia P10–P90 e anomalie correnti dichiarate come confronto con lo storico disponibile;
 - riferimento climatico mensile **1991–2020 ERA5-Land**, esplicitamente dichiarato come rianalisi e distinto dalle normali ufficiali ISPRA/SCIA;
 - bollettini ufficiali DPC e Regione Lazio subito sotto **Pianifica la giornata**, separati dagli avvisi contestuali calcolati dall'app;
-- seconda Ecowitt indipendente con storico giornaliero, vista live e confronto omogeneo per data; Roma resta il riferimento delle previsioni locali;
+- seconda Ecowitt indipendente con storico giornaliero, vista live e confronto omogeneo per data; la sovrapposizione history/realtime viene ricondotta a un solo campione fisico e Roma resta il riferimento delle previsioni locali;
 - rapporti climatici mensili scaricabili in **PDF e CSV**, privi delle coordinate esatte;
 - **Astronomia Pro** con trasparenza, stabilità atmosferica, jet a 300 hPa, umidità a 700 hPa, zero termico e rischio condensa presentati come proxy previsionali, mai come seeing misurato; la copertura nuvolosa totale resta un limite conservativo che i proxy favorevoli non possono scavalcare;
 - modalità di lettura **Semplice/Esperta**, salvata nell'URL, per aggiungere confronti grezzi e metadati solo quando servono;

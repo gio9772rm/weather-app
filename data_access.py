@@ -14,7 +14,11 @@ from db import ensure_schema, get_engine
 from forecast_quality import enforce_physical_bounds
 from rain_consistency import reportable_rain_series
 from source_health import configured_sources
-from station_daily import aggregate_observations_daily, combine_daily_sources
+from station_daily import (
+    aggregate_observations_daily,
+    canonicalize_observations,
+    combine_daily_sources,
+)
 from weather_derived import add_station_derived_values
 
 
@@ -74,7 +78,7 @@ def load_station(hours: int = 240, station_id: str | None = None) -> pd.DataFram
         frame.loc[legacy, "rain_mm"] = np.nan
         if "data_quality" in frame:
             frame.loc[legacy, "data_quality"] = "legacy_unknown_rain"
-    frame = frame.dropna(subset=["time"]).sort_values("time")
+    frame = canonicalize_observations(frame.dropna(subset=["time"]).sort_values("time"))
     return add_station_derived_values(frame)
 
 
@@ -249,6 +253,8 @@ def load_station_month(
         end.strftime("%Y-%m-%d"),
         timezone,
     )
+    if not frame.empty:
+        frame = canonicalize_observations(frame)
     if frame.empty:
         frame = daily_frame
     elif not daily_frame.empty:
