@@ -50,6 +50,7 @@ STATION_DAILY_BOOTSTRAP_ENV = "SECONDARY_STATION_DAILY_GZIP_B64"
 MAX_BOOTSTRAP_ENCODED_BYTES = 300_000
 MAX_BOOTSTRAP_CSV_BYTES = 2_000_000
 MAX_BOOTSTRAP_ROWS = 5_000
+OBSERVATION_BUCKET_MINUTES = 5
 
 
 ECOWITT_DAILY_MAPPING = {
@@ -357,6 +358,101 @@ def _circular_mean(values: pd.Series) -> float:
     )
 
 
+def _canonical_rain_increments(observations: pd.DataFrame) -> pd.Series:
+    """Rebuild rain amounts from the cumulative counter on a canonical timeline.
+
+    Ecowitt realtime samples can arrive between the five-minute history samples.
+    Summing the precomputed amount from both feeds can count the same counter
+    increase more than once, especially while the history endpoint is catching
+    up.  Prefer counter deltas; keep the stored amount only when no counter is
+    available at all for that sample.
+    """
+    stored = pd.to_numeric(
+        observations.get("rain_mm", pd.Series(np.nan, index=observations.index)),
+        errors="coerce",
+    ).clip(lower=0, upper=500)
+    totals = pd.to_numeric(
+        observations.get(
+            "rain_total_mm", pd.Series(np.nan, index=observations.index)
+        ),
+        errors="coerce",
+    )
+    rates = pd.to_numeric(
+        observations.get(
+            "rain_rate_mm_h", pd.Series(np.nan, index=observations.index)
+        ),
+        errors="coerce",
+    ).clip(lower=0, upper=500)
+    times = pd.to_datetime(observations["time"], utc=True, errors="coerce")
+
+    amounts: list[float] = []
+    previous_total: float | None = None
+    previous_time = pd.NaT
+    for position, current_time in enumerate(times):
+        current_total = totals.iloc[position]
+        amount = np.nan
+        if pd.notna(current_total):
+            current_total = float(current_total)
+            if previous_total is not None:
+                delta = current_total - previous_total
+                if 0 <= delta <= 500:
+                    amount = delta
+                elif delta < 0 and current_total <= 100:
+                    # Daily/yearly counter reset.
+                    amount = current_total
+            # The first counter value is a baseline, not rain in this frame.
+            if pd.isna(amount) and previous_total is None:
+                amount = 0.0
+            previous_total = current_total
+        else:
+            amount = stored.iloc[position]
+
+        if pd.isna(amount) and pd.notna(rates.iloc[position]) and pd.notna(previous_time):
+            elapsed_hours = max(
+                0.0,
+                min((current_time - previous_time).total_seconds() / 3600.0, 1.0),
+            )
+            amount = float(rates.iloc[position]) * elapsed_hours
+        amounts.append(0.0 if pd.isna(amount) else max(0.0, float(amount)))
+        previous_time = current_time
+    return pd.Series(amounts, index=observations.index, dtype=float)
+
+
+def canonicalize_observations(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return one physical sample per five-minute slot, preferring history.
+
+    The realtime and history endpoints describe the same sensor stream but their
+    timestamps are not always byte-identical.  A five-minute slot prevents the
+    overlap from double-weighting daily means and rain totals while retaining a
+    realtime tail until the finalized history sample becomes available.
+    """
+    if frame is None or frame.empty:
+        return frame.copy() if frame is not None else pd.DataFrame()
+    observations = frame.copy()
+    observations["time"] = pd.to_datetime(
+        observations["time"], utc=True, errors="coerce"
+    )
+    observations = observations.dropna(subset=["time"])
+    if observations.empty:
+        return observations
+
+    source = observations.get(
+        "source", pd.Series("", index=observations.index, dtype="string")
+    ).astype("string")
+    observations["_source_rank"] = source.eq("ecowitt_cloud_history").astype(int)
+    observations["_time_bucket"] = observations["time"].dt.round(
+        f"{OBSERVATION_BUCKET_MINUTES}min"
+    )
+    observations = (
+        observations.sort_values(["_time_bucket", "_source_rank", "time"])
+        .drop_duplicates("_time_bucket", keep="last")
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
+    observations["rain_mm"] = _canonical_rain_increments(observations)
+    return observations.drop(columns=["_source_rank", "_time_bucket"])
+
+
 def aggregate_observations_daily(
     frame: pd.DataFrame,
     station_id: str,
@@ -365,11 +461,7 @@ def aggregate_observations_daily(
     """Aggregate true timestamped samples into the same daily comparison shape."""
     if frame is None or frame.empty:
         return pd.DataFrame(columns=DAILY_COLUMNS)
-    observations = frame.copy()
-    observations["time"] = pd.to_datetime(
-        observations["time"], utc=True, errors="coerce"
-    )
-    observations = observations.dropna(subset=["time"])
+    observations = canonicalize_observations(frame)
     if observations.empty:
         return pd.DataFrame(columns=DAILY_COLUMNS)
     observations["local_date"] = (

@@ -1,8 +1,18 @@
 # Changelog Meteo V4
 
+## V4.9.9 · qualità astronomica coerente con la nuvolosità
+
+- lo score usa la copertura nuvolosa totale come limite minimo di penalità, conservando il peso maggiore delle nubi basse senza sottostimare un cielo coperto da nubi alte;
+- trasparenza, stabilità, jet e rischio condensa possono ridurre lo score meteo di base, ma non trasformare nuvole, pioggia, vento o scarsa visibilità in una finestra favorevole;
+- la tabella chiarisce che le ore favorevoli sono intervalli con score almeno 65 e distingue la nuvolosità media dalla singola ora migliore;
+- aggiunti test di regressione per il caso reale di copertura totale 75%, strati bassi/medi assenti e nubi alte al 100%;
+- verificato in produzione che, dopo l'allineamento delle finestre, storico e realtime Ecowitt usano gli stessi timestamp e il canale storico arriva fino all'ultimo intervallo disponibile; il realtime continua a coprire la coda più recente;
+- la lettura unifica history e realtime in intervalli fisici di cinque minuti, preferisce il campione storico consolidato e ricava la pioggia dal contatore cumulativo, evitando doppio peso nelle medie e doppio conteggio negli accumuli giornalieri;
+- il riepilogo meteo astronomico resta visibile anche quando l'Atlante dell'inquinamento luminoso non risponde; soltanto SQM, Bortle e zona LP risultano temporaneamente non disponibili.
+
 ## V4.9.8 · finestre Ecowitt allineate al fuso della stazione
 
-- le date delle richieste `device/history` vengono convertite dal riferimento UTC al fuso configurato per ciascuna stazione prima dell'invio, eliminando il ritardo di due ore osservato durante l'ora legale;
+- le date delle richieste `device/history` vengono convertite dal riferimento UTC al fuso configurato per ciascuna stazione prima dell'invio, allineando correttamente i limiti della finestra richiesta durante CET e CEST;
 - la conversione usa automaticamente CET/CEST e torna in modo sicuro a UTC se il nome del fuso non è valido, senza modificare gli epoch restituiti da Ecowitt;
 - i test coprono estate, inverno, fallback e ordine del recupero profondo;
 - restano invariati ciclo unico di 10 minuti, contatori pioggia e isolamento tra Roma e Comacchio.

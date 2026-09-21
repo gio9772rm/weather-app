@@ -1806,7 +1806,7 @@ def _style_astronomy_table(table: pd.DataFrame, dark_mode: bool) -> Any:
         "Bortle ≈": "bortle",
         "Qualità media": "confidence",
         "Qualità migliore": "confidence",
-        "Nuvole notte %": "clouds",
+        "Nuvole medie notte %": "clouds",
         "Vento notte km/h": "wind",
     }
     for column, metric in metrics.items():
@@ -1819,7 +1819,7 @@ def _style_astronomy_table(table: pd.DataFrame, dark_mode: bool) -> Any:
         "SQM stimato": "{:.2f}",
         "Qualità media": "{:.0f}",
         "Qualità migliore": "{:.0f}",
-        "Nuvole notte %": "{:.0f}",
+        "Nuvole medie notte %": "{:.0f}",
         "Vento notte km/h": "{:.1f}",
         "Luna illuminata %": "{:.0f}",
     }
@@ -5615,6 +5615,7 @@ with tab_astro:
     else:
         events = astronomy_events(CFG)
         light_pollution, light_pollution_error = light_pollution_data()
+        daily_astro = daily_astronomy_summary(astro, events).head(7)
         if light_pollution is not None:
             sqm_cols = st.columns(3)
             sqm_cols[0].metric(
@@ -5635,44 +5636,6 @@ with tab_astro:
                 f"indice LP {light_pollution.lp_index:.1f}× il cielo naturale",
                 delta_color="off",
             )
-
-            daily_astro = daily_astronomy_summary(astro, events).head(7)
-            if not daily_astro.empty:
-                daily_astro["sqm"] = light_pollution.sqm
-                daily_astro["bortle"] = light_pollution.approximate_bortle
-                daily_astro["lp_zone"] = light_pollution.lp_zone
-                daily_table = pd.DataFrame(
-                    {
-                        "Data": pd.to_datetime(daily_astro["date"]).map(_day_label),
-                        "SQM stimato": daily_astro["sqm"],
-                        "Bortle ≈": daily_astro["bortle"],
-                        "Zona LP": daily_astro["lp_zone"],
-                        "Qualità media": daily_astro["weather_score_mean"],
-                        "Qualità migliore": daily_astro["weather_score_best"],
-                        "Ore buone": daily_astro["good_hours"],
-                        "Nuvole notte %": daily_astro["clouds_mean"],
-                        "Vento notte km/h": daily_astro["wind_mean"],
-                        "Trasparenza proxy": _numeric_series(
-                            daily_astro, "transparency_proxy"
-                        ),
-                        "Stabilità proxy": _numeric_series(
-                            daily_astro, "stability_proxy"
-                        ),
-                        "Rischio condensa %": _numeric_series(daily_astro, "dew_risk"),
-                        "Luna illuminata %": _numeric_series(
-                            daily_astro, "moon_illumination"
-                        ),
-                    }
-                )
-                st.markdown(
-                    '<div class="section-kicker">Riepilogo giornaliero</div>',
-                    unsafe_allow_html=True,
-                )
-                st.subheader("SQM, inquinamento luminoso e meteo astronomico")
-                render_color_legend("astronomy")
-                render_styled_table(
-                    _style_astronomy_table(daily_table, dark_mode),
-                )
             st.caption(
                 f"SQM e zona LP sono stime zenitali geolocalizzate dell'Atlante {light_pollution.year} "
                 "per l'area della stazione; restano uguali nei giorni perché "
@@ -5684,6 +5647,54 @@ with tab_astro:
                 "La stima geolocalizzata SQM non è disponibile in questo momento: "
                 + (light_pollution_error or "fonte non raggiungibile")
                 + ". Le altre previsioni astronomiche restano utilizzabili."
+            )
+
+        if not daily_astro.empty:
+            if light_pollution is not None:
+                daily_astro["sqm"] = light_pollution.sqm
+                daily_astro["bortle"] = light_pollution.approximate_bortle
+                daily_astro["lp_zone"] = light_pollution.lp_zone
+            else:
+                daily_astro["sqm"] = np.nan
+                daily_astro["bortle"] = np.nan
+                daily_astro["lp_zone"] = "—"
+            daily_table = pd.DataFrame(
+                {
+                    "Data": pd.to_datetime(daily_astro["date"]).map(_day_label),
+                    "SQM stimato": daily_astro["sqm"],
+                    "Bortle ≈": daily_astro["bortle"],
+                    "Zona LP": daily_astro["lp_zone"],
+                    "Qualità media": daily_astro["weather_score_mean"],
+                    "Qualità migliore": daily_astro["weather_score_best"],
+                    "Ore favorevoli (≥65)": daily_astro["good_hours"],
+                    "Nuvole medie notte %": daily_astro["clouds_mean"],
+                    "Vento notte km/h": daily_astro["wind_mean"],
+                    "Trasparenza proxy": _numeric_series(
+                        daily_astro, "transparency_proxy"
+                    ),
+                    "Stabilità proxy": _numeric_series(
+                        daily_astro, "stability_proxy"
+                    ),
+                    "Rischio condensa %": _numeric_series(daily_astro, "dew_risk"),
+                    "Luna illuminata %": _numeric_series(
+                        daily_astro, "moon_illumination"
+                    ),
+                }
+            )
+            st.markdown(
+                '<div class="section-kicker">Riepilogo giornaliero</div>',
+                unsafe_allow_html=True,
+            )
+            st.subheader("SQM, inquinamento luminoso e meteo astronomico")
+            render_color_legend("astronomy")
+            render_styled_table(
+                _style_astronomy_table(daily_table, dark_mode),
+            )
+            st.caption(
+                "Le ore favorevoli sono intervalli orari con score astronomico ≥65. "
+                "La nuvolosità è la media dell'intera notte, mentre la qualità migliore "
+                "descrive la singola ora più favorevole; gli indicatori Pro possono "
+                "ridurre, ma non superare, il limite imposto da nuvole e meteo di base."
             )
 
         st.divider()

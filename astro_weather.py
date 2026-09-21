@@ -17,13 +17,18 @@ def astronomy_score(frame: pd.DataFrame) -> pd.Series:
         return pd.Series(dtype=float)
     index = frame.index
     clouds = pd.to_numeric(
-        frame.get("clouds", pd.Series(50, index=index)), errors="coerce"
-    ).fillna(50)
-    low = pd.to_numeric(frame.get("cloud_low", clouds), errors="coerce").fillna(clouds)
-    mid = pd.to_numeric(frame.get("cloud_mid", clouds), errors="coerce").fillna(clouds)
-    high = pd.to_numeric(frame.get("cloud_high", clouds), errors="coerce").fillna(
-        clouds
-    )
+        frame.get("clouds", pd.Series(np.nan, index=index)), errors="coerce"
+    ).clip(0, 100)
+    cloud_fallback = clouds.fillna(50)
+    low = pd.to_numeric(
+        frame.get("cloud_low", cloud_fallback), errors="coerce"
+    ).fillna(cloud_fallback)
+    mid = pd.to_numeric(
+        frame.get("cloud_mid", cloud_fallback), errors="coerce"
+    ).fillna(cloud_fallback)
+    high = pd.to_numeric(
+        frame.get("cloud_high", cloud_fallback), errors="coerce"
+    ).fillna(cloud_fallback)
     pop = pd.to_numeric(
         frame.get("precip_probability", pd.Series(0, index=index)), errors="coerce"
     ).fillna(0)
@@ -42,7 +47,11 @@ def astronomy_score(frame: pd.DataFrame) -> pd.Series:
     )
     dew_spread = (temperature - dewpoint).fillna(5).clip(0, 10)
 
-    effective_cloud = 0.50 * low + 0.30 * mid + 0.20 * high
+    layer_cloud = 0.50 * low + 0.30 * mid + 0.20 * high
+    # Total cover is the union seen across the whole sky.  Layer weights retain
+    # the stronger impact of low clouds, but must never make an overcast high
+    # layer look clear enough for imaging.
+    effective_cloud = pd.concat([clouds, layer_cloud], axis=1).max(axis=1).fillna(50)
     score = (
         100
         - effective_cloud.clip(0, 100) * 0.55
@@ -150,9 +159,14 @@ def prepare_astronomy(frame: pd.DataFrame, cfg: Settings = settings) -> pd.DataF
         data[column] = pro[column]
     has_pro = data.get("astro_pro_available", pd.Series(0, index=data.index)).ge(1)
     data["astro_score"] = base_score
-    data.loc[has_pro, "astro_score"] = (
+    refined_score = (
         base_score[has_pro] * 0.72 + data.loc[has_pro, "astro_pro_score"] * 0.28
     ).round(0)
+    # Upper-atmosphere indicators refine a usable sky; they cannot compensate
+    # for cloud, precipitation, wind, dew or poor visibility in the base score.
+    data.loc[has_pro, "astro_score"] = np.minimum(
+        base_score[has_pro], refined_score
+    )
     data["astro_label"] = data["astro_score"].map(score_label)
     return data
 

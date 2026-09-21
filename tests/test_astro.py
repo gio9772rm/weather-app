@@ -53,6 +53,58 @@ def test_clear_sky_scores_higher_than_cloudy_windy_sky():
     assert scores.iloc[1] < 30
 
 
+def test_total_cloud_cover_caps_optimistic_layer_weighting():
+    frame = pd.DataFrame(
+        {
+            "clouds": [75],
+            "cloud_low": [0],
+            "cloud_mid": [0],
+            "cloud_high": [100],
+            "precip_probability": [0],
+            "wind_kmh": [2],
+            "wind_gust_kmh": [4],
+            "visibility_m": [30_000],
+            "temp_c": [15],
+            "dewpoint_c": [5],
+        }
+    )
+
+    score = astronomy_score(frame).iloc[0]
+
+    assert score == 59
+    assert score < 65
+
+
+def test_pro_indicators_cannot_override_cloud_limited_score():
+    frame = pd.DataFrame(
+        {
+            "valid_time": [pd.Timestamp("2026-09-21T22:00:00Z")],
+            "is_day": [0],
+            "clouds": [75],
+            "cloud_low": [0],
+            "cloud_mid": [0],
+            "cloud_high": [100],
+            "precip_probability": [0],
+            "wind_kmh": [2],
+            "wind_gust_kmh": [4],
+            "visibility_m": [30_000],
+            "temp_c": [15],
+            "dewpoint_c": [5],
+            "humidity": [45],
+            "humidity_700hpa": [30],
+            "cape_j_kg": [0],
+            "wind_300hpa_kmh": [60],
+        }
+    )
+
+    base_score = astronomy_score(frame).iloc[0]
+    prepared = prepare_astronomy(frame, _settings())
+
+    assert prepared.iloc[0]["astro_pro_score"] > base_score
+    assert prepared.iloc[0]["astro_score"] == base_score
+    assert prepared.iloc[0]["astro_label"] == "Discreto"
+
+
 def test_best_window_groups_consecutive_night_hours():
     times = pd.date_range("2026-08-19T20:00:00Z", periods=4, freq="h")
     frame = pd.DataFrame(

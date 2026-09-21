@@ -1,4 +1,4 @@
-# Meteo V4.9.8
+# Meteo V4.9.9
 
 Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
 
@@ -32,9 +32,9 @@ La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la
 - baseline climatica locale Ecowitt per mese e ora, con mediana, fascia P10–P90 e anomalie correnti dichiarate come confronto con lo storico disponibile;
 - riferimento climatico mensile **1991–2020 ERA5-Land**, esplicitamente dichiarato come rianalisi e distinto dalle normali ufficiali ISPRA/SCIA;
 - bollettini ufficiali DPC e Regione Lazio subito sotto **Pianifica la giornata**, separati dagli avvisi contestuali calcolati dall'app;
-- seconda Ecowitt indipendente con storico giornaliero, vista live e confronto omogeneo per data; Roma resta il riferimento delle previsioni locali;
+- seconda Ecowitt indipendente con storico giornaliero, vista live e confronto omogeneo per data; la sovrapposizione history/realtime viene ricondotta a un solo campione fisico e Roma resta il riferimento delle previsioni locali;
 - rapporti climatici mensili scaricabili in **PDF e CSV**, privi delle coordinate esatte;
-- **Astronomia Pro** con trasparenza, stabilità atmosferica, jet a 300 hPa, umidità a 700 hPa, zero termico e rischio condensa presentati come proxy previsionali, mai come seeing misurato;
+- **Astronomia Pro** con trasparenza, stabilità atmosferica, jet a 300 hPa, umidità a 700 hPa, zero termico e rischio condensa presentati come proxy previsionali, mai come seeing misurato; la copertura nuvolosa totale resta un limite conservativo che i proxy favorevoli non possono scavalcare;
 - modalità di lettura **Semplice/Esperta**, salvata nell'URL, per aggiungere confronti grezzi e metadati solo quando servono;
 - origine, età e qualità delle sorgenti in pagina, palette accessibile anche senza affidarsi al solo colore e riepilogo giornaliero scaricabile in PNG;
 - stima geolocalizzata SQM, zona d'inquinamento luminoso e Bortle indicativa dall'Atlante 2025, senza chiavi aggiuntive;
@@ -80,7 +80,7 @@ flowchart TD
   Q --> DB
 ```
 
-Il Cron Job Render gira ogni 10 minuti e recupera sempre almeno le ultime 2 ore per entrambe le Ecowitt configurate. Le date inviate all'endpoint Ecowitt `device/history` vengono espresse nel fuso della singola stazione, con passaggio CET/CEST automatico, mentre i timestamp restituiti restano archiviati in UTC. Un controllo persistente sull'ora d'inizio del ciclo impedisce inoltre all'intera pipeline di modificare database o fonti dopo soli 5 minuti, anche se la pianificazione di un servizio Render esistente non fosse ancora allineata al Blueprint. La pagina usa un unico ciclo automatico di 10 minuti: tra due cicli le interazioni riutilizzano la stessa fotografia in cache, mentre **Ricarica dati** forza un nuovo ciclo e fa ripartire il conteggio. I provider di previsione mantengono la propria cadenza appropriata (un'ora per i modelli), ma ogni sezione visibile rilegge insieme lo stato disponibile al ciclo successivo. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
+Il Cron Job Render gira ogni 10 minuti e recupera sempre almeno le ultime 2 ore per entrambe le Ecowitt configurate. Le date inviate all'endpoint Ecowitt `device/history` vengono espresse nel fuso della singola stazione, con passaggio CET/CEST automatico, mentre i timestamp restituiti restano archiviati in UTC. Il confronto con il canale realtime verifica che gli orari dei campioni coincidano; le letture realtime acquisite ogni 10 minuti mantengono inoltre coperto l'eventuale intervallo non ancora pubblicato dal canale storico. Un controllo persistente sull'ora d'inizio del ciclo impedisce inoltre all'intera pipeline di modificare database o fonti dopo soli 5 minuti, anche se la pianificazione di un servizio Render esistente non fosse ancora allineata al Blueprint. La pagina usa un unico ciclo automatico di 10 minuti: tra due cicli le interazioni riutilizzano la stessa fotografia in cache, mentre **Ricarica dati** forza un nuovo ciclo e fa ripartire il conteggio. I provider di previsione mantengono la propria cadenza appropriata (un'ora per i modelli), ma ogni sezione visibile rilegge insieme lo stato disponibile al ciclo successivo. GitHub Actions non è usato per il tempo reale: ogni giorno rilegge 7 giorni come rete di sicurezza, mentre un controllo separato verifica ogni 30 minuti database, freschezza Ecowitt e copertura della previsione combinata. Render continua inoltre a interrogare `/_stcore/health` e riavvia l'istanza web se non risponde.
 
 Il punteggio dei forecast usa query PostgreSQL a colonne strette e rilascia i frame temporanei fra le fasi locale, ufficiale e blend. In questo modo l'archivio può crescere senza caricare ripetutamente campi inutilizzati nel cron Render da 512 MiB.
 
