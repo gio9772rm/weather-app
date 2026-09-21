@@ -28,9 +28,9 @@ if _scripts_dir not in sys.path:
 try:
     import patch_streamlit_pwa as _pwa_patch
 
-    _pwa_patch.apply_patch()
-except Exception:
-    pass
+    _pwa_patch_result = _pwa_patch.apply_patch()
+except Exception:  # noqa: BLE001 - optional PWA metadata must not block the app
+    _pwa_patch_result = 1
 
 from air_quality import AirQualityError, AirQualityForecast, fetch_air_quality
 from astro_weather import (

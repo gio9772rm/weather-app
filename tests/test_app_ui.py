@@ -210,6 +210,7 @@ def test_app_opens_local_dashboard_and_city_search(
         "Aria",
         "Astronomia",
         "Radar",
+        "Informazioni",
         "Sistema",
     ]
     assert any("hero-v4" in item.value for item in app.markdown)
