@@ -261,6 +261,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
         _seed_database(database_path)
         port = _available_port()
         base_url = f"http://127.0.0.1:{port}"
+        visual_admin_token = "visual-regression-admin"
         environment = os.environ.copy()
         environment.pop("DATABASE_URL", None)
         environment.update(
@@ -271,6 +272,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                 "LON": "12.50",
                 "STATION_ID": "visual-primary",
                 "LOCATION_NAME": "Stazione visuale",
+                "ADMIN_ACCESS_TOKEN": visual_admin_token,
                 "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
             }
         )
@@ -299,8 +301,11 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                     page = browser.new_page(viewport={"width": width, "height": height})
                     screenshot = output_path / f"{name}.png"
                     try:
+                        admin_query = (
+                            f"&admin={visual_admin_token}" if tab == "system" else ""
+                        )
                         page.goto(
-                            f"{base_url}/?tab={tab}&theme={theme}",
+                            f"{base_url}/?tab={tab}&theme={theme}{admin_query}",
                             wait_until="domcontentloaded",
                             timeout=45_000,
                         )
