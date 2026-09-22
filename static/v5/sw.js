@@ -1,5 +1,5 @@
 "use strict";
-const SHELL = "meteo-v5-shell-1",
+const SHELL = "meteo-v5-shell-2",
   DATA = "meteo-v5-data",
   SETTINGS = "meteo-v5-settings";
 const ASSETS = [

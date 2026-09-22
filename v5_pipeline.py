@@ -23,6 +23,52 @@ from v5_data import (
 log = logging.getLogger(__name__)
 
 
+def select_secondary_forecast(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Prefer ICON-2I, supplement only missing probability at identical hours."""
+    combined = pd.concat(frames, ignore_index=True)
+    combined["valid_time"] = pd.to_datetime(combined["valid_time"], utc=True)
+    combined["_rank"] = (
+        combined["model"]
+        .astype(str)
+        .str.contains("icon.*2i|icon_italia", case=False, regex=True)
+        .astype(int)
+    )
+    selected = (
+        combined.sort_values(["valid_time", "_rank", "issued_at"])
+        .drop_duplicates("valid_time", keep="last")
+        .drop(columns="_rank")
+        .sort_values("valid_time")
+        .copy()
+    )
+    selected["probability_source"] = (
+        selected["model"]
+        .map({"best_match": "Open-Meteo best-match", "icon_2i_2p2km": "ICON-2I"})
+        .where(selected["precip_probability"].notna())
+    )
+    # ICON-2I is deterministic and often has no precipitation probability.
+    # Reuse the same-location best-match fetched in this cycle, never Rome's
+    # forecast, a different target hour or an inferred zero from dry rain totals.
+    probability = (
+        combined[
+            combined["model"].eq("best_match")
+            & combined["interval_hours"].eq(1)
+            & combined["precip_probability"].between(0, 100)
+        ]
+        .sort_values("issued_at")
+        .drop_duplicates("valid_time", keep="last")
+        .set_index("valid_time")["precip_probability"]
+    )
+    supplement = selected["valid_time"].map(probability)
+    missing = (
+        selected["precip_probability"].isna()
+        & selected["interval_hours"].eq(1)
+        & supplement.notna()
+    )
+    selected.loc[missing, "precip_probability"] = supplement[missing]
+    selected.loc[missing, "probability_source"] = "Open-Meteo best-match"
+    return selected
+
+
 def refresh_secondary_forecast(cfg: Settings, *, force=False) -> int:
     if not cfg.secondary_station_enabled:
         return 0
@@ -48,21 +94,7 @@ def refresh_secondary_forecast(cfg: Settings, *, force=False) -> int:
     )
     if not frames:
         raise RuntimeError("Previsione secondaria non disponibile")
-    combined = pd.concat(frames, ignore_index=True)
-    # ICON-2I's explicit short-range run has priority where present. This is
-    # selection, not an ensemble: dependent ICON products are never double-counted.
-    combined["_rank"] = (
-        combined["model"]
-        .astype(str)
-        .str.contains("icon.*2i|icon_italia", case=False, regex=True)
-        .astype(int)
-    )
-    combined = (
-        combined.sort_values(["valid_time", "_rank", "issued_at"])
-        .drop_duplicates("valid_time", keep="last")
-        .drop(columns="_rank")
-        .sort_values("valid_time")
-    )
+    combined = select_secondary_forecast(frames)
     combined["issued_at"] = now
     combined["confidence"] = None
     combined["provider_count"] = 1

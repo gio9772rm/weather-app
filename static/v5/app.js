@@ -616,7 +616,7 @@ function astronomyView() {
           .map(([k, v]) => esc(k) + ": " + num(v) + " punti")
           .join(
             "<br>",
-          )}${h.missing_fields?.length ? "<br>Mancano: " + esc(h.missing_fields.join(", ")) : ""}</p></details></td></tr>`,
+          )}${h.probability_source ? "<br>Probabilità pioggia: " + esc(h.probability_source) : ""}${h.missing_fields?.length ? "<br>Mancano: " + esc(h.missing_fields.join(", ")) : ""}</p></details></td></tr>`,
     )
     .join("")}</tbody></table></div></article>`;
 }

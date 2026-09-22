@@ -29,13 +29,15 @@ La configurazione già bloccata in constraints.txt è compatibile.
 
 ## Stato della lavorazione
 
-PWA, ASGI, strumenti Pro, selettore globale, astronomia residua, snapshot,
-offline, import guidato e push sono implementati. Verifica indipendente della
-seconda stazione e serie canonica estesa a scoring/3h. Suite locale: 234 test
-verdi. Verifica previsionale su ore-obiettivo indipendenti e riepiloghi mensili
-a blocchi per limitare la memoria del cron, conservando i dati originali.
-I test browser comprendono V5 e Pro. Il timer da 600 secondi e le 16 viste V5
-hanno superato la CI; resta il collaudo offline e Pro sull'ultimo commit,
-seguito dal merge e dalla verifica del deploy/cron.
+V5 pubblicata con PR #69, commit 6f12e70: 234 test e 32 viste browser verdi,
+inclusi timer e offline. Sito e cron Render distribuiti il 22 settembre 2026.
+Il vecchio processo già in corso prima del deploy è terminato alle 19:18 UTC;
+successivamente 15 acquisizioni per stazione e tre ricalcoli previsionali
+completati, con picco di memoria campionato circa 332 MiB su 512 MiB.
+Snapshot, previsioni e ambiente presenti per entrambe le stazioni.
+
+Il collaudo online ha evidenziato la probabilità mancante nelle ore ICON-2I
+di Comacchio. La correzione riusa il campo best-match della stessa ora e
+località, senza nuove chiamate e senza cambiare cooldown o calibrazione Roma.
 
 Il widget nativo rimane subordinato ai materiali Android sopra indicati.
