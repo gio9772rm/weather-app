@@ -1,5 +1,5 @@
 -c constraints.txt
-streamlit>=1.50,<2
+streamlit>=1.62,<1.63
 pandas>=2.2,<3
 numpy>=1.26,<2.4
 requests>=2.32,<3
@@ -12,3 +12,4 @@ astral>=3.2,<4
 openpyxl>=3.1,<4
 pillow>=10.4,<13
 reportlab>=4.2,<5
+pywebpush>=2.5,<2.6

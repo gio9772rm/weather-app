@@ -1,0 +1,22 @@
+{
+  "id": "/?src=pwa",
+  "name": "Meteo Pro",
+  "short_name": "Meteo Pro",
+  "description": "Le tue stazioni, previsioni e astronomia in un’unica esperienza.",
+  "start_url": "/?src=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f6fa",
+  "theme_color": "#123a5a",
+  "lang": "it",
+  "icons": [
+    {"src": "/app/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/app/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/app/static/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Le prossime ore", "url": "/?page=forecast"},
+    {"name": "Il cielo di stanotte", "url": "/?page=astronomy"},
+    {"name": "Storico stazioni", "url": "/?page=stations"}
+  ]
+}

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#123a5a" />
+    <meta
+      name="description"
+      content="Meteo Pro: le tue stazioni, previsioni verificabili e il cielo della prossima notte."
+    />
+    <title>Meteo Pro · V5</title>
+    <link rel="icon" href="/assets/v5/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/app/static/apple-touch-icon-180.png" />
+    <link rel="manifest" href="/assets/v5/manifest.webmanifest" />
+    <link rel="stylesheet" href="/assets/v5/app.css" />
+    <script src="/assets/v5/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#content">Vai ai contenuti</a>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Meteo Pro, pagina iniziale"
+        ><img src="/assets/v5/icon.svg" alt="" width="38" height="38" /><span
+          >Meteo<span class="brand-pro">Pro</span
+          ><small>IL TUO TEMPO, DA VICINO</small></span
+        ><span class="version">V5</span></a
+      >
+      <div class="top-actions">
+        <button id="install" class="quiet" hidden>Installa app</button
+        ><button id="theme" class="icon-button" aria-label="Cambia tema">
+          ◐</button
+        ><button id="settings" class="icon-button" aria-label="Personalizza">
+          ⚙
+        </button>
+      </div>
+    </header>
+    <div class="layout">
+      <nav
+        id="navigation"
+        class="navigation"
+        aria-label="Navigazione principale"
+      >
+        <button data-page="today" aria-current="page">
+          <span>◷</span>Oggi
+        </button>
+        <button data-page="forecast"><span>≋</span>Previsioni</button>
+        <button data-page="stations"><span>⌁</span>Stazioni</button>
+        <button data-page="astronomy"><span>☾</span>Cielo</button>
+        <button data-page="more"><span>⊞</span>Esplora</button>
+        <p class="nav-note">
+          Misure reali.<br />Previsioni trasparenti.<br /><b
+            >Una fotografia ogni 10 min.</b
+          >
+        </p>
+      </nav>
+      <main id="content" tabindex="-1">
+        <div class="location-row">
+          <div>
+            <span class="eyebrow">IL TUO OSSERVATORIO METEO</span
+            ><label class="sr-only" for="station"
+              >Località per tutte le sezioni</label
+            ><select id="station" aria-label="Località per tutte le sezioni">
+              <option>Caricamento località…</option>
+            </select>
+          </div>
+          <div class="sync">
+            <span id="connection" role="status">Connessione…</span
+            ><button id="refresh" class="quiet">Aggiorna ora</button>
+          </div>
+        </div>
+        <div id="notice" class="notice" role="status" hidden></div>
+        <section id="view" aria-live="polite">
+          <div class="loading">
+            <span class="loading-dot"></span>
+            <h1>Il tuo meteo, in un posto solo.</h1>
+            <p>Carico l’ultima fotografia disponibile…</p>
+          </div>
+        </section>
+        <footer>
+          <span>Meteo Pro · V5</span
+          ><span id="snapshot-time"
+            >Misure e previsioni: origini distinte, orari espliciti.</span
+          ><a href="/pro/?tab=info">Fonti e metodo</a>
+        </footer>
+      </main>
+    </div>
+    <dialog id="preferences">
+      <form method="dialog">
+        <div class="dialog-title">
+          <h2>Il tuo Meteo Pro</h2>
+          <button class="icon-button" aria-label="Chiudi">×</button>
+        </div>
+      </form>
+      <p>Scegli cosa vedere. Le preferenze rimangono su questo dispositivo.</p>
+      <label>Località iniziale<select id="default-station"></select></label>
+      <fieldset>
+        <legend>Riquadri della home · ordine di visualizzazione</legend>
+        <div id="card-settings"></div>
+      </fieldset>
+      <label
+        >Profilo astronomico<select id="astro-preference">
+          <option value="deep_sky">Fotografia cielo profondo</option>
+          <option value="visual">Osservazione visuale</option>
+          <option value="planetary">Luna e pianeti</option>
+        </select></label
+      >
+      <label
+        ><input type="checkbox" id="expert" /> Mostra più dettagli
+        tecnici</label
+      >
+      <label
+        ><input type="checkbox" id="offline-storage" /> Conserva l’ultima
+        fotografia per l’uso offline</label
+      >
+      <button id="save-preferences" class="primary">Salva preferenze</button
+      ><button id="forget" class="quiet">
+        Elimina i dati offline da questo dispositivo
+      </button>
+    </dialog>
+    <noscript
+      ><p class="notice">
+        Per la nuova interfaccia serve JavaScript.
+        <a href="/pro/">Apri gli strumenti Pro</a>.
+      </p></noscript
+    >
+  </body>
+</html>

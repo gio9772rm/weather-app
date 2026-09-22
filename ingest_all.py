@@ -1063,6 +1063,11 @@ def run_all(
         "last_pipeline_run", pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     )
     prune_derived_history()
+    # V5 read models are published only inside the existing ten-minute gate.
+    # This optional stage must never invalidate a successful Ecowitt cycle.
+    from v5_pipeline import run_v5_publication
+
+    result["v5"] = run_v5_publication(cfg, force=force_forecast)
     return result
 
 

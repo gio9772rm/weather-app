@@ -710,7 +710,10 @@ def recompute_3h(
             "string"
         ).str.strip().eq("")
         frame.loc[legacy, "rain_mm"] = np.nan
-    frame = frame.dropna(subset=["time"]).set_index("time")
+    from station_daily import canonicalize_observations
+
+    frame = canonicalize_observations(frame.dropna(subset=["time"]))
+    frame = frame.set_index("time")
     grouped = frame.resample("3h")
     aggregate = grouped.agg(
         temp_c=("temp_c", "mean"),
@@ -722,6 +725,7 @@ def recompute_3h(
         sample_count=("temp_c", "count"),
     )
     aggregate["winddir"] = grouped["winddir"].apply(_circular_mean)
+    aggregate["rain_mm"] = grouped["rain_mm"].sum(min_count=1)
     aggregate = aggregate[aggregate["sample_count"] > 0].reset_index()
     aggregate["time"] = aggregate["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     records = []

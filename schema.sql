@@ -2,6 +2,57 @@
 
 -- Meteo V3 schema. SQL is deliberately portable between SQLite and PostgreSQL.
 
+-- V5 derived public read models. Raw observations remain unchanged.
+CREATE TABLE IF NOT EXISTS public_snapshots (
+  station_id TEXT PRIMARY KEY,
+  generated_at TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS location_forecasts (
+  station_id TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (station_id, issued_at)
+);
+
+CREATE TABLE IF NOT EXISTS location_environment (
+  station_id TEXT PRIMARY KEY,
+  attempted_at TEXT NOT NULL,
+  payload TEXT
+);
+
+CREATE TABLE IF NOT EXISTS location_scores (
+  station_id TEXT PRIMARY KEY,
+  evaluated_at TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+
+-- Private push material must never be included in public snapshots.
+CREATE TABLE IF NOT EXISTS push_config (
+  id INTEGER PRIMARY KEY,
+  private_key TEXT NOT NULL,
+  public_key TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL,
+  subscription TEXT NOT NULL,
+  station_id TEXT NOT NULL,
+  rules TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS push_deliveries (
+  subscription_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  attempted_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  PRIMARY KEY (subscription_id, kind)
+);
+
 CREATE TABLE IF NOT EXISTS station_raw (
   Time TEXT PRIMARY KEY,
   Temp_C REAL,
