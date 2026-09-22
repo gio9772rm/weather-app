@@ -22,6 +22,10 @@ come statistiche della seconda località.
 - Roma e Comacchio hanno snapshot, meteo, aria/pollini, emissioni e astronomia
   distinti. Le coordinate precise rimangono sul server.
 - Comacchio usa ICON-2I dove disponibile e best-match a completamento. Nessun
+  valore di probabilità viene dedotto dai millimetri: se manca in ICON-2I,
+  si usa la probabilità best-match per la stessa ora e località, specificando
+  l'origine nei dettagli astronomici. Se entrambe mancano, la qualità resta
+  incompleta. Nessun
   ensemble fittizio e nessuna percentuale di fiducia inventata. Gli errori
   vengono confrontati con i suoi campioni, su 14 giorni, distinguendo orizzonte
   e validazione temporale. La calibrazione automatica di Comacchio resta inattiva.

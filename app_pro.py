@@ -4741,7 +4741,7 @@ with st.spinner("Carico i dati meteo aggiornati…"):
     health = health_data(active_station_id)
 if not is_primary_view:
     st.info(
-        "Previsione indipendente della località selezionata. La calibrazione di Roma non viene applicata a Comacchio; affidabilità locale in raccolta."
+        "Previsione indipendente della località selezionata. La calibrazione di Roma non viene applicata a Comacchio; affidabilità locale in raccolta. Se ICON-2I non fornisce la probabilità di pioggia, si usa quella di Open-Meteo best-match per la stessa ora e località, quando disponibile."
     )
 theme = "plotly_dark" if dark_mode else "plotly_white"
 

@@ -163,3 +163,48 @@ def test_unknown_rain_is_not_a_dry_measurement():
         pd.DataFrame({"time": ["2026-09-20T20:00Z"], "temp_c": [20]})
     )
     assert result.rain_mm.isna().all()
+
+
+def test_secondary_probability_completes_astronomy_without_changing_icon_weather():
+    from v5_pipeline import select_secondary_forecast
+
+    icon = forecast_at(["2026-09-20T21:00Z"], clouds=69)
+    icon["model"], icon["interval_hours"], icon["precip_probability"] = (
+        "icon_2i_2p2km",
+        1,
+        float("nan"),
+    )
+    best = icon.copy()
+    best["model"], best["precip_probability"], best["temp_c"], best["clouds"] = (
+        "best_match",
+        35,
+        99,
+        0,
+    )
+    selected = select_secondary_forecast([icon, best])
+    row = selected.iloc[0]
+    assert row.precip_probability == 35
+    assert row.probability_source == "Open-Meteo best-match"
+    assert row.temp_c == 18 and row.clouds == 69 and row.model == "icon_2i_2p2km"
+    result = observing_forecast(
+        selected, Settings.from_env(), now=pd.Timestamp("2026-09-20T20:00Z")
+    )
+    assert result.iloc[0].complete and result.iloc[0].astro_score < 65
+
+
+def test_secondary_probability_does_not_invent_or_misalign_values():
+    from v5_pipeline import select_secondary_forecast
+
+    icon = forecast_at(pd.date_range("2026-09-20T21:00Z", periods=4, freq="h"))
+    icon["model"], icon["interval_hours"] = "icon_2i_2p2km", 1
+    icon["precip_probability"] = [40, float("nan"), float("nan"), float("nan")]
+    best = icon.iloc[:3].copy()
+    best["model"] = "best_match"
+    best["precip_probability"] = [10, 130, 60]
+    best["interval_hours"] = [1, 1, 3]
+    result = select_secondary_forecast([icon, best])
+    assert len(result) == 4
+    assert result.iloc[0].precip_probability == 40
+    assert result.iloc[0].probability_source == "ICON-2I"
+    assert result.iloc[1:].precip_probability.isna().all()
+    assert result.iloc[1:].probability_source.isna().all()
