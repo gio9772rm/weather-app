@@ -32,6 +32,11 @@ come statistiche della seconda località.
 - Serie canonica a cinque minuti anche per aggregati a tre ore, scoring e
   correzione iniziale. Archivio grezzo conservato. L’assenza di dati pioggia
   non viene trasformata in zero.
+- Verifica di Roma ridotta nel database a un’emissione per ora-obiettivo,
+  modello e orizzonte (la più lontana disponibile, criterio conservativo).
+  Evita campioni correlati contati più volte e il picco di memoria del cron
+  a 512 MB. Le emissioni originali restano archiviate. Riepiloghi giornalieri
+  elaborati in blocchi di 31 giorni con continuità dei contatori ai confini.
 - Import giornaliero XLSX limitato a 8 MB/5.000 date, decompressione limitata,
   autenticazione amministratore, anteprima e conferma del digest. Nessun dato
   orario inventato. Il risultato appare al normale ciclo successivo.

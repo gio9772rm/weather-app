@@ -139,13 +139,17 @@ def test_private_daily_bootstrap_is_imported_only_once(sqlite_engine):
     assert first["last_date"] == "2026-08-30"
     assert second is None
     with sqlite_engine.connect() as connection:
-        rows = connection.execute(
-            text(
-                "SELECT local_date,temp_mean_c,data_quality "
-                "FROM station_daily_summaries WHERE station_id='secondary-bootstrap' "
-                "ORDER BY local_date"
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT local_date,temp_mean_c,data_quality "
+                    "FROM station_daily_summaries WHERE station_id='secondary-bootstrap' "
+                    "ORDER BY local_date"
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     assert len(rows) == 2
     assert rows[1]["temp_mean_c"] == 25.0
     assert "pressure_calibration_review" in rows[1]["data_quality"]
@@ -205,9 +209,7 @@ def test_live_daily_aggregate_prefers_history_and_counts_rain_counter_once():
         }
     )
 
-    live = aggregate_observations_daily(
-        observations, "secondary-one", "Europe/Rome"
-    )
+    live = aggregate_observations_daily(observations, "secondary-one", "Europe/Rome")
 
     assert live.iloc[0]["sample_count"] == 2
     assert live.iloc[0]["temp_mean_c"] == 21.0
@@ -265,6 +267,39 @@ def test_primary_daily_comparison_falls_back_to_authoritative_raw_archive(
     assert primary.iloc[0]["source"] == "station_raw"
     assert primary.iloc[0]["temp_mean_c"] == 21.5
     assert primary.iloc[0]["rain_mm"] == 0.4
+
+
+def test_daily_batches_keep_rain_counter_continuity(sqlite_engine):
+    now = pd.Timestamp.now(tz="UTC")
+    start = (
+        (now - pd.Timedelta(days=71)).tz_convert(settings.local_timezone).normalize()
+    )
+    boundary = start + pd.DateOffset(days=31)
+    with sqlite_engine.begin() as con:
+        con.execute(
+            text(
+                "INSERT INTO station_raw(time,temp_c,rain_total_mm,source) VALUES(:time,20,:total,'ecowitt_cloud_history')"
+            ),
+            [
+                {
+                    "time": (boundary - pd.Timedelta(minutes=5))
+                    .tz_convert("UTC")
+                    .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "total": 10,
+                },
+                {
+                    "time": (boundary + pd.Timedelta(minutes=5))
+                    .tz_convert("UTC")
+                    .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "total": 11.2,
+                },
+            ],
+        )
+    daily = load_station_daily_summaries(70)
+    selected = daily[daily.local_date.eq(pd.Timestamp(boundary.date()))]
+    assert len(selected) == 1
+    assert selected.iloc[0].rain_mm == pytest.approx(1.2)
+    assert selected.iloc[0].sample_count == 1
 
 
 def test_daily_comparison_excludes_unattributed_legacy_primary_rows(sqlite_engine):

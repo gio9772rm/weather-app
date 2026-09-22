@@ -337,6 +337,29 @@ def _forecast_regime(variable: str, row: pd.Series) -> str:
     return "all"
 
 
+def _verification_query(engine: Engine):
+    """Bound scoring to independent target hours before allocating DataFrames.
+
+    Hourly emissions for the same target are correlated. Keeping the longest
+    archived lead per horizon is conservative and avoids counting that target
+    dozens of times. The full archive remains available for other analyses.
+    """
+    columns = ",".join(SCORE_FORECAST_COLUMNS)
+    lead = (
+        "EXTRACT(EPOCH FROM (CAST(valid_time AS TIMESTAMPTZ)-CAST(issued_at AS TIMESTAMPTZ)))/3600.0"
+        if engine.dialect.name == "postgresql"
+        else "ROUND((julianday(valid_time)-julianday(issued_at))*24.0,6)"
+    )
+    return text(
+        f"WITH eligible AS (SELECT {columns}, CASE WHEN {lead}<=24 THEN 0 "
+        f"WHEN {lead}<=72 THEN 1 ELSE 2 END AS verification_horizon "
+        "FROM forecast_runs WHERE valid_time>=:cutoff AND valid_time<=:now "
+        f"AND {lead}>=0), ranked AS (SELECT {columns}, ROW_NUMBER() OVER ("
+        "PARTITION BY provider,model,valid_time,verification_horizon ORDER BY issued_at) AS selection "
+        f"FROM eligible) SELECT {columns} FROM ranked WHERE selection=1 ORDER BY valid_time"
+    )
+
+
 def score_forecasts(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> pd.DataFrame:
@@ -348,11 +371,7 @@ def score_forecasts(
     now_iso = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     with engine.connect() as connection:
         forecasts = pd.read_sql(
-            text(
-                f"SELECT {','.join(SCORE_FORECAST_COLUMNS)} FROM forecast_runs "
-                "WHERE valid_time >= :cutoff "
-                "AND valid_time <= :now ORDER BY valid_time"
-            ),
+            _verification_query(engine),
             connection,
             params={"cutoff": cutoff, "now": now_iso},
         )
@@ -704,11 +723,7 @@ def score_forecasts_against_references(
     now_iso = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     with engine.connect() as connection:
         forecasts = pd.read_sql(
-            text(
-                f"SELECT {','.join(SCORE_FORECAST_COLUMNS)} FROM forecast_runs "
-                "WHERE valid_time >= :cutoff "
-                "AND valid_time <= :now ORDER BY valid_time"
-            ),
+            _verification_query(engine),
             connection,
             params={"cutoff": cutoff, "now": now_iso},
         )

@@ -237,6 +237,7 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         raise RuntimeError("Nessun provider di previsione ha restituito dati")
     provider_names = sorted({str(frame.iloc[0]["provider"]) for frame in frames})
     archived = sum(archive_forecast(frame) for frame in frames)
+    log.info("Previsioni archiviate: %s righe; avvio guida ensemble", archived)
     del frames
     gc.collect()
     try:
@@ -252,6 +253,7 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
     del ensemble
     gc.collect()
     try:
+        log.info("Verifica locale: selezione di ore-obiettivo indipendenti")
         scores = score_forecasts(cfg)
         local_score_rows = len(scores)
         del scores
@@ -260,6 +262,7 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         local_score_rows = 0
     gc.collect()
     try:
+        log.info("Verifica rete ufficiale: selezione di ore-obiettivo indipendenti")
         reference_scores = score_forecasts_against_references(cfg)
         reference_score_rows = len(reference_scores)
         del reference_scores
@@ -267,6 +270,7 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
         warnings.append(f"Verifica rete ufficiale rinviata: {_safe_message(exc)}")
         reference_score_rows = 0
     gc.collect()
+    log.info("Combinazione della nuova previsione locale")
     blend = build_blend(cfg=cfg)
     if blend.empty:
         raise RuntimeError("Previsioni archiviate ma combinazione finale vuota")

@@ -508,6 +508,7 @@ def aggregate_observations_daily(
         sample_count=("time", "count"),
     )
     daily["wind_dir_deg"] = grouped["winddir"].apply(_circular_mean)
+    daily["rain_mm"] = grouped["rain_mm"].sum(min_count=1)
     daily = daily.reset_index()
     daily["station_id"] = station_id
     daily["source"] = "station_observations"
