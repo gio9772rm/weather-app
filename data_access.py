@@ -114,54 +114,60 @@ def load_station_daily_summaries(days: int = 365) -> pd.DataFrame:
         "ORDER BY local_date,station_id",
         {"cutoff": cutoff_date},
     )
-    observations = _read(
-        "SELECT * FROM station_observations WHERE time>=:cutoff ORDER BY station_id,time",
-        {"cutoff": cutoff_time.strftime("%Y-%m-%dT%H:%M:%SZ")},
-    )
-    primary_raw = _read(
-        "SELECT * FROM station_raw WHERE time>=:cutoff ORDER BY time",
-        {"cutoff": cutoff_time.strftime("%Y-%m-%dT%H:%M:%SZ")},
-    )
     profiles = load_station_profiles()
     live_frames: list[pd.DataFrame] = []
-    if not observations.empty and not profiles.empty:
-        observations["time"] = pd.to_datetime(
-            observations["time"], utc=True, errors="coerce"
-        )
-        for station_id, group in observations.groupby("station_id"):
-            group = _attributed_station_samples(group)
-            if group.empty:
-                continue
-            selected = profiles[profiles["station_id"].astype(str).eq(str(station_id))]
-            if selected.empty:
-                continue
-            timezone = str(selected.iloc[0].get("timezone") or settings.local_timezone)
-            derived = add_station_derived_values(group.copy())
-            live_frames.append(
-                aggregate_observations_daily(derived, str(station_id), timezone)
-            )
-    if not primary_raw.empty:
-        primary_raw = _attributed_station_samples(primary_raw)
-    if not primary_raw.empty:
-        primary_profile = profiles[
-            profiles.get("station_id", pd.Series(dtype="object"))
-            .astype(str)
-            .eq(settings.station_id)
-        ]
-        primary_timezone = (
-            str(primary_profile.iloc[0].get("timezone") or settings.local_timezone)
-            if not primary_profile.empty
-            else settings.local_timezone
-        )
-        primary_raw["time"] = pd.to_datetime(
-            primary_raw["time"], utc=True, errors="coerce"
-        )
-        derived_raw = add_station_derived_values(primary_raw)
-        raw_daily = aggregate_observations_daily(
-            derived_raw, settings.station_id, primary_timezone
-        )
-        raw_daily["source"] = "station_raw"
-        live_frames.append(raw_daily)
+    sites = {
+        str(row["station_id"]): str(row.get("timezone") or settings.local_timezone)
+        for row in profiles.to_dict("records")
+    }
+    sites.setdefault(settings.station_id, settings.local_timezone)
+    # Bound peak memory even when several years have been recovered. Keep only
+    # daily aggregates between batches, never both full raw and mirrored archives.
+    for station_id, timezone in sites.items():
+        start = cutoff_time.tz_convert(timezone).normalize()
+        stop = (
+            pd.Timestamp.now(tz="UTC").tz_convert(timezone) + pd.DateOffset(days=1)
+        ).normalize()
+        while start < stop:
+            end = min(start + pd.DateOffset(days=31), stop)
+            params = {
+                "cutoff": (start - pd.DateOffset(days=1))
+                .tz_convert("UTC")
+                .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end": end.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "station_id": station_id,
+            }
+            queries = [
+                (
+                    "station_observations",
+                    "SELECT * FROM station_observations WHERE station_id=:station_id AND time>=:cutoff AND time<:end ORDER BY time",
+                )
+            ]
+            if station_id == settings.station_id:
+                queries.append(
+                    (
+                        "station_raw",
+                        "SELECT * FROM station_raw WHERE time>=:cutoff AND time<:end ORDER BY time",
+                    )
+                )
+            for source, query in queries:
+                samples = _attributed_station_samples(_read(query, params))
+                if samples.empty:
+                    continue
+                samples["time"] = pd.to_datetime(
+                    samples["time"], utc=True, errors="coerce"
+                )
+                daily = aggregate_observations_daily(
+                    add_station_derived_values(samples), station_id, timezone
+                )
+                dates = daily["local_date"].astype(str)
+                daily = daily[
+                    dates.ge(str(start.date())) & dates.lt(str(end.date()))
+                ].copy()
+                daily["source"] = source
+                live_frames.append(daily)
+                del samples
+            start = end
     live = pd.concat(live_frames, ignore_index=True) if live_frames else pd.DataFrame()
     if not live.empty:
         live = (

@@ -66,9 +66,12 @@ def test_blend_combines_two_providers_and_tracks_uncertainty(sqlite_engine):
     assert result["temp_c"].between(20, 24).all()
     assert result["confidence"].between(20, 99).all()
     with sqlite_engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT COUNT(*) FROM forecast_blend_history")
-        ).scalar_one() == 3
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM forecast_blend_history")
+            ).scalar_one()
+            == 3
+        )
 
     issued = pd.Timestamp.now(tz="UTC").floor("h")
     three_hour = provider_frame("openweather", [20, 21])
@@ -197,9 +200,7 @@ def test_explicit_icon_collapses_overlapping_best_match_but_keeps_fallbacks():
     assert set(collapsed["valid_time"]) == {first, second}
 
 
-def test_scoring_queries_do_not_load_unused_wide_columns(
-    sqlite_engine, monkeypatch
-):
+def test_scoring_queries_do_not_load_unused_wide_columns(sqlite_engine, monkeypatch):
     queries: list[str] = []
 
     def empty_read_sql(statement, connection, params=None):
@@ -216,3 +217,38 @@ def test_scoring_queries_do_not_load_unused_wide_columns(
     assert all("SELECT *" not in query.upper() for query in queries)
     assert all("description" not in query.lower() for query in queries)
     assert all("raw_observation" not in query.lower() for query in queries)
+
+
+def test_scoring_selects_independent_targets_in_sql(sqlite_engine):
+    from forecast_blend import _verification_query
+
+    now = pd.Timestamp.now(tz="UTC").floor("h")
+    valid = now - pd.Timedelta(hours=1)
+    rows = []
+    for lead in range(1, 101):
+        rows.append(
+            {
+                "issued": (valid - pd.Timedelta(hours=lead)).isoformat(),
+                "valid": valid.isoformat(),
+                "temp": lead,
+            }
+        )
+    # A retrospective emission must never enter verification.
+    rows.append({"issued": now.isoformat(), "valid": valid.isoformat(), "temp": 999})
+    with sqlite_engine.begin() as con:
+        con.execute(
+            text(
+                "INSERT INTO forecast_runs(provider,model,issued_at,valid_time,temp_c,fetched_at) VALUES('test','test',:issued,:valid,:temp,:issued)"
+            ),
+            rows,
+        )
+        selected = pd.read_sql(
+            _verification_query(sqlite_engine),
+            con,
+            params={
+                "cutoff": (now - pd.Timedelta(days=10)).isoformat(),
+                "now": now.isoformat(),
+            },
+        )
+    assert len(selected) == 3
+    assert sorted(selected.temp_c) == [24, 72, 100]

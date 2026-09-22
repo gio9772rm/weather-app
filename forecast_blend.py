@@ -15,6 +15,7 @@ from config import Settings, settings
 from db import get_engine
 from forecast_providers import FORECAST_COLUMNS
 from forecast_quality import enforce_physical_bounds
+from station_daily import canonicalize_observations
 
 NUMERIC_COLUMNS = [
     "temp_c",
@@ -115,6 +116,9 @@ LOCAL_SCORE_OBSERVATION_COLUMNS = (
     "windgust_kmh",
     "winddir",
     "rain_mm",
+    "rain_total_mm",
+    "rain_rate_mm_h",
+    "source",
 )
 REFERENCE_SCORE_OBSERVATION_COLUMNS = (
     "source",
@@ -277,9 +281,7 @@ def _holdout_pair(pair: pd.DataFrame) -> pd.DataFrame:
 def _observed_regime(pair: pd.DataFrame, observed_col: str, variable: str) -> pd.Series:
     values = pd.to_numeric(pair[observed_col], errors="coerce")
     if variable in {"temp_c", "dewpoint_c"}:
-        labels = np.select(
-            [values <= 5, values >= 30], ["cold", "hot"], default="mild"
-        )
+        labels = np.select([values <= 5, values >= 30], ["cold", "hot"], default="mild")
     elif variable == "humidity":
         labels = np.select(
             [values <= 40, values >= 80], ["dry", "humid"], default="moderate"
@@ -335,6 +337,29 @@ def _forecast_regime(variable: str, row: pd.Series) -> str:
     return "all"
 
 
+def _verification_query(engine: Engine):
+    """Bound scoring to independent target hours before allocating DataFrames.
+
+    Hourly emissions for the same target are correlated. Keeping the longest
+    archived lead per horizon is conservative and avoids counting that target
+    dozens of times. The full archive remains available for other analyses.
+    """
+    columns = ",".join(SCORE_FORECAST_COLUMNS)
+    lead = (
+        "EXTRACT(EPOCH FROM (CAST(valid_time AS TIMESTAMPTZ)-CAST(issued_at AS TIMESTAMPTZ)))/3600.0"
+        if engine.dialect.name == "postgresql"
+        else "ROUND((julianday(valid_time)-julianday(issued_at))*24.0,6)"
+    )
+    return text(
+        f"WITH eligible AS (SELECT {columns}, CASE WHEN {lead}<=24 THEN 0 "
+        f"WHEN {lead}<=72 THEN 1 ELSE 2 END AS verification_horizon "
+        "FROM forecast_runs WHERE valid_time>=:cutoff AND valid_time<=:now "
+        f"AND {lead}>=0), ranked AS (SELECT {columns}, ROW_NUMBER() OVER ("
+        "PARTITION BY provider,model,valid_time,verification_horizon ORDER BY issued_at) AS selection "
+        f"FROM eligible) SELECT {columns} FROM ranked WHERE selection=1 ORDER BY valid_time"
+    )
+
+
 def score_forecasts(
     cfg: Settings = settings, engine: Engine | None = None
 ) -> pd.DataFrame:
@@ -346,11 +371,7 @@ def score_forecasts(
     now_iso = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     with engine.connect() as connection:
         forecasts = pd.read_sql(
-            text(
-                f"SELECT {','.join(SCORE_FORECAST_COLUMNS)} FROM forecast_runs "
-                "WHERE valid_time >= :cutoff "
-                "AND valid_time <= :now ORDER BY valid_time"
-            ),
+            _verification_query(engine),
             connection,
             params={"cutoff": cutoff, "now": now_iso},
         )
@@ -377,6 +398,7 @@ def score_forecasts(
     observations["time"] = pd.to_datetime(
         observations["time"], utc=True, errors="coerce"
     )
+    observations = canonicalize_observations(observations)
     observations["dewpoint_c"] = _dewpoint_from_temperature_humidity(
         observations.get("temp_c"), observations.get("humidity")
     )
@@ -423,9 +445,7 @@ def score_forecasts(
         )
     if "rain_mm" in observations and "rain_mm_obs" in merged:
         rain = observations[["time", "rain_mm"]].copy()
-        rain["rain_mm"] = pd.to_numeric(rain["rain_mm"], errors="coerce").clip(
-            lower=0
-        )
+        rain["rain_mm"] = pd.to_numeric(rain["rain_mm"], errors="coerce").clip(lower=0)
         hourly_rain = rain.set_index("time")["rain_mm"].resample("h").sum(min_count=1)
         merged["rain_mm_obs"] = merged["valid_time"].dt.floor("h").map(hourly_rain)
     merged["lead_hours"] = (
@@ -442,7 +462,10 @@ def score_forecasts(
     ):
         if not horizon:
             continue
-        for variable, (forecast_col, observed_col) in LOCAL_OBSERVATION_MAPPINGS.items():
+        for variable, (
+            forecast_col,
+            observed_col,
+        ) in LOCAL_OBSERVATION_MAPPINGS.items():
             if forecast_col not in group or observed_col not in group:
                 continue
             persistence_col = f"{observed_col.removesuffix('_obs')}_persistence"
@@ -567,9 +590,7 @@ def score_forecasts(
                     "variable": variable,
                     "horizon": str(horizon),
                     "regime": str(regime),
-                    **_score_record(
-                        regime_pair, forecast_col, observed_col, variable
-                    ),
+                    **_score_record(regime_pair, forecast_col, observed_col, variable),
                 }
                 if variable == "rain_mm" and "precip_probability" in group:
                     probability = (
@@ -660,9 +681,7 @@ def _reference_transfer(
     ).dropna()
     if len(matched) < minimum_samples:
         return None
-    difference = _variable_error(
-        matched["reference"], matched["local"], variable
-    )
+    difference = _variable_error(matched["reference"], matched["local"], variable)
     transfer_bias = (
         _circular_mean_degrees(difference)
         if variable == "wind_dir"
@@ -672,9 +691,7 @@ def _reference_transfer(
     if variable == "wind_dir":
         residual = (residual + 180.0).mod(360.0) - 180.0
         radians = np.deg2rad(difference)
-        correlation = float(
-            np.hypot(np.cos(radians).mean(), np.sin(radians).mean())
-        )
+        correlation = float(np.hypot(np.cos(radians).mean(), np.sin(radians).mean()))
     else:
         correlation = float(matched["reference"].corr(matched["local"]))
         if not math.isfinite(correlation):
@@ -706,11 +723,7 @@ def score_forecasts_against_references(
     now_iso = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
     with engine.connect() as connection:
         forecasts = pd.read_sql(
-            text(
-                f"SELECT {','.join(SCORE_FORECAST_COLUMNS)} FROM forecast_runs "
-                "WHERE valid_time >= :cutoff "
-                "AND valid_time <= :now ORDER BY valid_time"
-            ),
+            _verification_query(engine),
             connection,
             params={"cutoff": cutoff, "now": now_iso},
         )
@@ -746,15 +759,14 @@ def score_forecasts_against_references(
     forecasts["issued_at"] = pd.to_datetime(
         forecasts["issued_at"], utc=True, errors="coerce"
     )
-    references["time"] = pd.to_datetime(
-        references["time"], utc=True, errors="coerce"
-    )
+    references["time"] = pd.to_datetime(references["time"], utc=True, errors="coerce")
     forecasts = forecasts.dropna(subset=["valid_time", "issued_at"]).sort_values(
         "valid_time"
     )
     references = references.dropna(subset=["time"]).sort_values("time")
     if not local.empty:
         local["time"] = pd.to_datetime(local["time"], utc=True, errors="coerce")
+        local = canonicalize_observations(local)
         local = local.rename(
             columns={"windgust_kmh": "wind_gust_kmh", "winddir": "wind_dir"}
         )
@@ -798,7 +810,8 @@ def score_forecasts_against_references(
                     variable,
                     cfg.official_min_overlap_samples,
                 )
-                if not local.empty and variable not in {"clouds", "visibility_m", "rain_mm"}
+                if not local.empty
+                and variable not in {"clouds", "visibility_m", "rain_mm"}
                 else None
             )
 
@@ -813,11 +826,16 @@ def score_forecasts_against_references(
                 if forecast_col not in group or observed_col not in group:
                     continue
                 transfer = transfers[variable]
-                if variable not in {"clouds", "visibility_m", "rain_mm"} and transfer is None:
+                if (
+                    variable not in {"clouds", "visibility_m", "rain_mm"}
+                    and transfer is None
+                ):
                     continue
-                pair = group[[forecast_col, observed_col]].apply(
-                    pd.to_numeric, errors="coerce"
-                ).dropna()
+                pair = (
+                    group[[forecast_col, observed_col]]
+                    .apply(pd.to_numeric, errors="coerce")
+                    .dropna()
+                )
                 if len(pair) < 6:
                     continue
                 transfer_bias, transfer_mae, site_correlation = (0.0, None, None)
@@ -856,9 +874,11 @@ def score_forecasts_against_references(
             probability_col = "precip_probability"
             event_col = "precip_observed"
             if probability_col in group and event_col in group:
-                pair = group[[probability_col, event_col]].apply(
-                    pd.to_numeric, errors="coerce"
-                ).dropna()
+                pair = (
+                    group[[probability_col, event_col]]
+                    .apply(pd.to_numeric, errors="coerce")
+                    .dropna()
+                )
                 if len(pair) >= 6:
                     probability = pair[probability_col].clip(0, 100) / 100.0
                     event = pair[event_col].clip(0, 1)
@@ -875,7 +895,9 @@ def score_forecasts_against_references(
                             "n": len(pair),
                             "bias": float(percentage_error.mean()),
                             "mae": float(percentage_error.abs().mean()),
-                            "rmse": float(np.sqrt(np.mean(np.square(percentage_error)))),
+                            "rmse": float(
+                                np.sqrt(np.mean(np.square(percentage_error)))
+                            ),
                             "brier": float(np.mean(np.square(probability - event))),
                             "transfer_bias": None,
                             "transfer_mae": None,
@@ -1151,16 +1173,13 @@ def _score_lookup(
     ].dropna(subset=["mae", "reference_weight"])
     if external.empty:
         return local_bias, local_mae
-    evidence = (
-        external["reference_weight"].clip(lower=0)
-        * np.sqrt(external["n"].clip(lower=1))
+    evidence = external["reference_weight"].clip(lower=0) * np.sqrt(
+        external["n"].clip(lower=1)
     )
     total_evidence = float(evidence.sum())
     if total_evidence <= 0:
         return local_bias, local_mae
-    external_bias = float(
-        np.average(external["bias"].fillna(0.0), weights=evidence)
-    )
+    external_bias = float(np.average(external["bias"].fillna(0.0), weights=evidence))
     external_mae = float(np.average(external["mae"], weights=evidence))
     if local_mae is None:
         # The secondary network can initialise a parameter only after enough
@@ -1220,17 +1239,16 @@ def _station_correction(blend: pd.DataFrame, engine: Engine) -> pd.DataFrame:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     with engine.connect() as connection:
-        observation = (
-            connection.execute(
-                text(
-                    "SELECT time,temp_c,humidity,pressure_hpa,wind_kmh FROM station_raw "
-                    "WHERE time >= :cutoff ORDER BY time DESC LIMIT 1"
-                ),
-                {"cutoff": cutoff},
-            )
-            .mappings()
-            .first()
+        recent = pd.read_sql(
+            text(
+                "SELECT time,temp_c,humidity,pressure_hpa,wind_kmh,source FROM station_raw "
+                "WHERE time >= :cutoff AND source IS NOT NULL AND source <> '' ORDER BY time"
+            ),
+            connection,
+            params={"cutoff": cutoff},
         )
+    canonical = canonicalize_observations(recent)
+    observation = canonical.iloc[-1].to_dict() if not canonical.empty else None
     if not observation or blend.empty:
         return blend
     observed_at = pd.to_datetime(observation["time"], utc=True, errors="coerce")
@@ -1268,7 +1286,9 @@ def build_blend(
         return pd.DataFrame()
     scores = _latest_scores(engine)
     regime_scores = _latest_regime_scores(engine)
-    ensemble = _latest_ensemble(engine) if cfg.ensemble_forecast_enabled else pd.DataFrame()
+    ensemble = (
+        _latest_ensemble(engine) if cfg.ensemble_forecast_enabled else pd.DataFrame()
+    )
     reference_scores = _enabled_reference_frame(_latest_reference_scores(engine), cfg)
     interval_coverage = pd.to_timedelta(
         (forecasts["interval_hours"].fillna(1.0) - 1.0).clip(lower=0),
@@ -1330,9 +1350,7 @@ def build_blend(
                     reference_scores,
                     cfg.official_score_max_share,
                     regime_scores,
-                    _forecast_regime(
-                        "temp_c", hourly[provider].iloc[position]
-                    ),
+                    _forecast_regime("temp_c", hourly[provider].iloc[position]),
                 )
                 prior = PRIOR_WEIGHTS.get(provider, 0.35)
                 time_weights[provider] = prior / max(mae or 1.5, ERROR_FLOORS["temp_c"])
@@ -1357,19 +1375,23 @@ def build_blend(
                 value = hourly[provider].iloc[position].get(variable)
                 if pd.isna(value):
                     continue
-                score_variable = variable if variable in ERROR_FLOORS else {
-                    "feels_like_c": "temp_c",
-                    "snow_mm": "rain_mm",
-                    "cloud_low": "clouds",
-                    "cloud_mid": "clouds",
-                    "cloud_high": "clouds",
-                    "cape_j_kg": "temp_c",
-                    "freezing_level_m": "temp_c",
-                    "wind_300hpa_kmh": "wind_kmh",
-                    "humidity_700hpa": "humidity",
-                    "geopotential_500hpa_m": "pressure_hpa",
-                    "temperature_850hpa_c": "temp_c",
-                }.get(variable, "temp_c")
+                score_variable = (
+                    variable
+                    if variable in ERROR_FLOORS
+                    else {
+                        "feels_like_c": "temp_c",
+                        "snow_mm": "rain_mm",
+                        "cloud_low": "clouds",
+                        "cloud_mid": "clouds",
+                        "cloud_high": "clouds",
+                        "cape_j_kg": "temp_c",
+                        "freezing_level_m": "temp_c",
+                        "wind_300hpa_kmh": "wind_kmh",
+                        "humidity_700hpa": "humidity",
+                        "geopotential_500hpa_m": "pressure_hpa",
+                        "temperature_850hpa_c": "temp_c",
+                    }.get(variable, "temp_c")
+                )
                 bias, mae = _score_lookup(
                     scores,
                     provider,
@@ -1378,9 +1400,7 @@ def build_blend(
                     reference_scores,
                     cfg.official_score_max_share,
                     regime_scores,
-                    _forecast_regime(
-                        score_variable, hourly[provider].iloc[position]
-                    ),
+                    _forecast_regime(score_variable, hourly[provider].iloc[position]),
                 )
                 corrected = _bias_correct_forecast_value(
                     variable,

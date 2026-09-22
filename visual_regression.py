@@ -235,6 +235,158 @@ def _seed_database(path: Path) -> None:
     reset_engine_cache()
 
 
+def _seed_second_station() -> None:
+    from sqlalchemy import text
+
+    from db import get_engine
+
+    with get_engine().begin() as con:
+        con.execute(
+            text(
+                "INSERT INTO station_profiles(station_id,display_name,latitude,longitude,elevation_m,timezone,source,role,enabled,privacy_level,created_at,updated_at) VALUES('visual-secondary','Comacchio · test',44.8,12.1,-1,'Europe/Rome','visual_fixture','secondary',1,'private_location','2026-01-01','2026-01-01')"
+            )
+        )
+        con.execute(
+            text(
+                "INSERT INTO station_observations(station_id,time,temp_c,humidity,pressure_hpa,wind_kmh,windgust_kmh,winddir,rain_mm,rain_rate_mm_h,rain_total_mm,source,data_quality) SELECT 'visual-secondary',time,temp_c+3,humidity,pressure_hpa,wind_kmh,windgust_kmh,winddir,rain_mm,rain_rate_mm_h,rain_total_mm,source,data_quality FROM station_raw"
+            )
+        )
+        forecast = pd.read_sql(
+            text("SELECT * FROM forecast_blend ORDER BY valid_time"), con
+        )
+        forecast["temp_c"] += 3
+        forecast["clouds"] = 69
+        forecast["cloud_high"] = 69
+        con.execute(
+            text(
+                "INSERT INTO location_forecasts VALUES('visual-secondary',:issued,:payload)"
+            ),
+            {
+                "issued": str(forecast.issued_at.max()),
+                "payload": forecast.to_json(orient="records"),
+            },
+        )
+
+
+def _v5_checks(browser, base_url: str, output: Path) -> dict:
+    """Real root API, responsive UI, offline snapshot and a single 600s timer."""
+    from playwright.sync_api import expect
+
+    digests = {}
+    for theme in ("light", "dark"):
+        for width, height in ((1440, 1000), (390, 844)):
+            context = browser.new_context(viewport={"width": width, "height": height})
+            page = context.new_page()
+            errors = []
+            page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+            for view in ("today", "forecast", "stations", "astronomy"):
+                name = f"v5-{view}-{theme}-{width}"
+                try:
+                    page.goto(f"{base_url}/?page={view}&theme={theme}")
+                    page.wait_for_function(
+                        "document.querySelector('#snapshot-time').textContent.includes('Fotografia')"
+                    )
+                    assert page.locator("#station option").count() == 2
+                    assert (
+                        page.evaluate(
+                            "document.documentElement.scrollWidth-window.innerWidth"
+                        )
+                        <= 3
+                    ), name + ": overflow"
+                    assert page.locator("#view .card").count() > 0
+                    assert not errors, errors
+                    # Legend and line use the same actual computed color.
+                    if page.locator(".chart-legend").count():
+                        colors = page.evaluate("""() => {
+                          const legend = document.querySelector('.chart-legend');
+                          const svg = legend.nextElementSibling;
+                          return [...legend.querySelectorAll('.swatch')].map((swatch, i) => {
+                            const paths = [...svg.querySelectorAll('path[stroke-width="2.8"]')];
+                            return paths[i] && getComputedStyle(swatch).borderTopColor === getComputedStyle(paths[i]).stroke;
+                          });
+                        }""")
+                        assert all(colors), name + ": legend mismatch"
+                    if view == "astronomy":
+                        page.select_option("#station", "visual-secondary")
+                        expect(page.locator("#station")).to_have_value(
+                            "visual-secondary"
+                        )
+                        expect(page.locator("#view")).to_contain_text("0,0")
+                finally:
+                    screenshot = output / f"{name}.png"
+                    page.screenshot(path=str(screenshot), full_page=True)
+                digests[name] = hashlib.sha256(screenshot.read_bytes()).hexdigest()
+            context.close()
+
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    # Record fetch invocation as well as network calls: the HTTP cache must not
+    # conceal a second automatic timer from the cadence check.
+    page.add_init_script("""(() => {
+      window.weatherFetches=0;
+      const original=window.fetch;
+      window.fetch=(...args)=>{if(String(args[0]).includes('/api/v5/snapshot/'))window.weatherFetches++;return original(...args);};
+    })();""")
+    page.clock.install()
+    page.goto(base_url)
+    page.wait_for_function(
+        "document.querySelector('#snapshot-time').textContent.includes('Fotografia')"
+    )
+    page.evaluate("navigator.serviceWorker.ready.then(()=>true)")
+    initial = page.evaluate("window.weatherFetches")
+    assert initial == 2
+    page.clock.fast_forward(599_000)
+    page.get_by_role("button", name="Cielo", exact=True).click()
+    page.select_option("#station", "visual-secondary")
+    assert page.evaluate("window.weatherFetches") == initial
+    page.clock.fast_forward(2_000)
+    page.wait_for_function("window.weatherFetches===4")
+    expect(page.locator("#refresh")).to_be_enabled()
+    page.get_by_role("button", name="Aggiorna ora", exact=True).click()
+    page.wait_for_function("window.weatherFetches===6")
+    expect(page.locator("#refresh")).to_be_enabled()
+    page.clock.fast_forward(599_000)
+    assert page.evaluate("window.weatherFetches") == 6
+    page.get_by_role("button", name="Personalizza", exact=True).click()
+    page.locator('[data-card="air"]').uncheck()
+    page.get_by_role("button", name="Salva preferenze", exact=True).click()
+    assert page.evaluate(
+        "JSON.parse(localStorage.getItem('meteo.v5.preferences')).hidden.includes('air')"
+    )
+    page.clock.resume()
+    context.set_offline(True)
+    page.reload(wait_until="domcontentloaded")
+    try:
+        expect(page.locator("#connection")).to_contain_text("Offline", timeout=15000)
+        expect(page.locator("#notice")).to_contain_text(
+            "Non sono un aggiornamento live"
+        )
+        expect(page.locator("#view .card").first).to_be_visible()
+        assert not errors, errors
+    except Exception:
+        print(
+            "Offline diagnostic:",
+            page.evaluate("""() => ({
+          online: navigator.onLine,
+          controlled: !!navigator.serviceWorker.controller,
+          connection: document.querySelector('#connection')?.textContent,
+          notice: document.querySelector('#notice')?.textContent,
+          saved: Object.keys(localStorage).filter(key => key.startsWith('meteo.v5.snapshot.')),
+          cards: document.querySelectorAll('#view .card').length
+        })"""),
+            "errors:",
+            errors,
+            flush=True,
+        )
+        raise
+    finally:
+        page.screenshot(path=str(output / "v5-offline-mobile.png"), full_page=True)
+    context.close()
+    return digests
+
+
 def _wait_for_app(url: str, process: subprocess.Popen[str]) -> None:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -259,6 +411,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
     with tempfile.TemporaryDirectory(prefix="meteo-visual-") as temporary:
         database_path = Path(temporary) / "visual.sqlite"
         _seed_database(database_path)
+        _seed_second_station()
         port = _available_port()
         base_url = f"http://127.0.0.1:{port}"
         visual_admin_token = "visual-regression-admin"
@@ -271,6 +424,8 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                 "LAT": "41.90",
                 "LON": "12.50",
                 "STATION_ID": "visual-primary",
+                "SECONDARY_STATION_ENABLED": "true",
+                "SECONDARY_STATION_ID": "visual-secondary",
                 "LOCATION_NAME": "Stazione visuale",
                 "ADMIN_ACCESS_TOKEN": visual_admin_token,
                 "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
@@ -297,6 +452,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
             digests: dict[str, str] = {}
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
+                digests.update(_v5_checks(browser, base_url, output_path))
                 for name, tab, theme, width, height in CASES:
                     page = browser.new_page(viewport={"width": width, "height": height})
                     screenshot = output_path / f"{name}.png"
@@ -305,7 +461,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             f"&admin={visual_admin_token}" if tab == "system" else ""
                         )
                         page.goto(
-                            f"{base_url}/?tab={tab}&theme={theme}{admin_query}",
+                            f"{base_url}/pro/?tab={tab}&theme={theme}{admin_query}",
                             wait_until="domcontentloaded",
                             timeout=45_000,
                         )
@@ -326,9 +482,9 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                         elif tab == "overview":
                             page.wait_for_selector(".js-plotly-plot", timeout=45_000)
                         elif tab == "astronomy":
-                            page.get_by_text(
-                                "Piano della notte", exact=True
-                            ).wait_for(state="attached", timeout=45_000)
+                            page.get_by_text("Piano della notte", exact=True).wait_for(
+                                state="attached", timeout=45_000
+                            )
                         page.wait_for_timeout(500)
                         body = page.locator("body").inner_text()
                         if any(marker in body for marker in ("�", "Ã", "Â")):
@@ -547,7 +703,9 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Contratti visuali Meteo V4.7")
+    parser = argparse.ArgumentParser(
+        description="Contratti visuali Meteo Pro V5 e strumenti Pro"
+    )
     parser.add_argument("--output", default="visual-artifacts")
     args = parser.parse_args()
     results = run_visual_checks(args.output)

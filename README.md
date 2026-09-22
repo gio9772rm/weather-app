@@ -1,8 +1,24 @@
-# Meteo V4.9.9
+# Meteo Pro V5
 
-Dashboard Streamlit multi-stazione con Ecowitt primaria, previsioni multi-modello, osservazioni istituzionali isolate e un'esperienza quotidiana immediata.
+Osservatorio meteo multi-stazione: nuova PWA responsive e strumenti scientifici Streamlit completi in `/pro/`, nello stesso servizio Render.
 
-La V3 stabile resta archiviata e immutata nel ramo `archive/meteo-v3-stable`; la V4 viene pubblicata su `main` soltanto dopo test e CI verdi.
+La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`. Ogni rilascio passa da test, audit privacy e CI prima del merge su `main`.
+
+## Novità V5
+
+- Nuova home personalizzabile, navigazione mobile, tema chiaro/scuro, scelta globale Roma/Comacchio e preferenze conservate sul dispositivo.
+- Un solo ciclo automatico ogni 600 secondi. La navigazione usa la stessa fotografia; un aggiornamento manuale riavvia il conto. Il cron pubblica snapshot per stazione e continua a rispettare i cooldown esistenti.
+- Ultima fotografia offline con data e avviso esplicito. Nessuna credenziale amministratore viene conservata nel browser o nella cache offline.
+- Calendario della copertura con giornate complete, parziali, importate e mancanti. Import XLSX amministratore con anteprima, verifica del file confermato e scrittura idempotente.
+- Astronomia per visuale, Luna/pianeti e fotografia del cielo profondo: buio reale, ore favorevoli **residue**, finestre continue e penalità spiegate. Un dato essenziale mancante produce una valutazione incompleta.
+- Previsione indipendente per Comacchio, archivio delle emissioni e verifica sui soli campioni della seconda stazione. Il controllo degli errori parte dopo almeno 12 confronti per variabile/orizzonte. Non applica correzioni a Roma.
+- Serie canonica condivisa da grafici, riepiloghi, aggregati a tre ore e verifica/calibrazione di Roma. Pioggia sconosciuta resta mancante.
+- Aria e pollini CAMS per ciascuna località, con origine e data; avvisi web push su consenso, soglie personalizzate, fascia silenziosa e deduplicazione di quattro ore.
+- Strumenti Pro mantenuti: radar, ricerca città, target astronomici, rapporti mensili, diagnostica e amministrazione. I vecchi collegamenti con `tab`/`admin` vengono inoltrati a `/pro/`.
+
+L’APK esistente continua ad aprire l’interfaccia aggiornata. **Il widget Android nativo non è distribuito**: per un aggiornamento compatibile servono il progetto nativo e la procedura di firma originali. La firma e l’APK esistente sono preservati.
+
+Vedi [CHANGELOG_V5.md](CHANGELOG_V5.md) per comportamento, verifiche e limiti operativi.
 
 ## Cosa offre
 

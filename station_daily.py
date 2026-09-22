@@ -96,7 +96,7 @@ def _filter_range(
 
 def parse_ecowitt_daily_export(path: str | Path) -> pd.DataFrame:
     """Read Ecowitt's two-row XLSX daily export without inventing live samples."""
-    source_path = Path(path)
+    source_path = path if hasattr(path, "read") else Path(path)
     frame = pd.read_excel(source_path, sheet_name="result_list", header=[0, 1])
     time_column = next(
         (column for column in frame.columns if str(column[0]).strip() == "Time"), None
@@ -413,7 +413,7 @@ def _canonical_rain_increments(observations: pd.DataFrame) -> pd.Series:
                 min((current_time - previous_time).total_seconds() / 3600.0, 1.0),
             )
             amount = float(rates.iloc[position]) * elapsed_hours
-        amounts.append(0.0 if pd.isna(amount) else max(0.0, float(amount)))
+        amounts.append(np.nan if pd.isna(amount) else max(0.0, float(amount)))
         previous_time = current_time
     return pd.Series(amounts, index=observations.index, dtype=float)
 
@@ -508,6 +508,7 @@ def aggregate_observations_daily(
         sample_count=("time", "count"),
     )
     daily["wind_dir_deg"] = grouped["winddir"].apply(_circular_mean)
+    daily["rain_mm"] = grouped["rain_mm"].sum(min_count=1)
     daily = daily.reset_index()
     daily["station_id"] = station_id
     daily["source"] = "station_observations"

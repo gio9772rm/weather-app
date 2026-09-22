@@ -15,7 +15,7 @@ from station_registry import register_station
 
 
 def test_theme_css_covers_streamlit_native_widget_text() -> None:
-    source = (Path(__file__).parents[1] / "app_streamlit.py").read_text(
+    source = (Path(__file__).parents[1] / "app_pro.py").read_text(
         encoding="utf-8"
     )
 
@@ -72,7 +72,7 @@ def test_theme_css_covers_streamlit_native_widget_text() -> None:
 
 
 def test_page_has_one_ten_minute_automatic_refresh_and_no_shorter_cache() -> None:
-    source = (Path(__file__).parents[1] / "app_streamlit.py").read_text(
+    source = (Path(__file__).parents[1] / "app_pro.py").read_text(
         encoding="utf-8"
     )
 
@@ -89,7 +89,7 @@ def test_page_has_one_ten_minute_automatic_refresh_and_no_shorter_cache() -> Non
 
 
 def test_plotly_legends_use_real_trace_swatches_and_readable_style() -> None:
-    source = (Path(__file__).parents[1] / "app_streamlit.py").read_text(
+    source = (Path(__file__).parents[1] / "app_pro.py").read_text(
         encoding="utf-8"
     )
 
@@ -165,7 +165,7 @@ def test_station_comparison_legend_matches_the_two_trace_colours(
     )
 
     app = AppTest.from_file(
-        Path(__file__).parents[1] / "app_streamlit.py", default_timeout=30
+        Path(__file__).parents[1] / "app_pro.py", default_timeout=30
     ).run()
 
     assert not app.exception
@@ -198,7 +198,7 @@ def test_app_opens_local_dashboard_and_city_search(
     reset_engine_cache()
     request.addfinalizer(reset_engine_cache)
 
-    app_path = Path(__file__).parents[1] / "app_streamlit.py"
+    app_path = Path(__file__).parents[1] / "app_pro.py"
     app = AppTest.from_file(app_path, default_timeout=30).run()
 
     assert not app.exception
@@ -237,7 +237,7 @@ def test_simple_and_expert_modes_are_available(tmp_path, monkeypatch, request) -
     reset_engine_cache()
     request.addfinalizer(reset_engine_cache)
 
-    app_path = Path(__file__).parents[1] / "app_streamlit.py"
+    app_path = Path(__file__).parents[1] / "app_pro.py"
     app = AppTest.from_file(app_path, default_timeout=30).run()
 
     assert not app.exception
@@ -284,7 +284,7 @@ def test_recent_station_cards_show_real_live_badges(
         )
 
     app = AppTest.from_file(
-        Path(__file__).parents[1] / "app_streamlit.py", default_timeout=30
+        Path(__file__).parents[1] / "app_pro.py", default_timeout=30
     ).run()
 
     assert not app.exception
@@ -341,7 +341,7 @@ def test_astronomy_pro_planner_renders_with_forecast_data(
         )
 
     app = AppTest.from_file(
-        Path(__file__).parents[1] / "app_streamlit.py", default_timeout=30
+        Path(__file__).parents[1] / "app_pro.py", default_timeout=30
     )
     app.query_params["tab"] = "astronomy"
     app.run()

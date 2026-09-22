@@ -392,6 +392,8 @@ def fetch_openweather(
 
 def fetch_all_forecasts(
     cfg: Settings = settings,
+    *,
+    source_prefix: str = "",
 ) -> tuple[list[pd.DataFrame], list[str]]:
     """Fetch every configured provider; one failure never hides other results."""
     frames: list[pd.DataFrame] = []
@@ -413,6 +415,7 @@ def fetch_all_forecasts(
                 fetch_openweather,
             ),
         ):
+            source = source_prefix + source
             if not enabled:
                 record_source_disabled(source)
                 continue
