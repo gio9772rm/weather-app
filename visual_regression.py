@@ -320,6 +320,8 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
 
     context = browser.new_context(viewport={"width": 390, "height": 844})
     page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
     # Record fetch invocation as well as network calls: the HTTP cache must not
     # conceal a second automatic timer from the cadence check.
     page.add_init_script("""(() => {
@@ -356,12 +358,31 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
     page.clock.resume()
     context.set_offline(True)
     page.reload(wait_until="domcontentloaded")
-    page.wait_for_function(
-        "document.querySelector('#connection').textContent.includes('Offline')"
-    )
-    expect(page.locator("#notice")).to_contain_text("Non sono un aggiornamento live")
-    expect(page.locator("#view .card").first).to_be_visible()
-    page.screenshot(path=str(output / "v5-offline-mobile.png"), full_page=True)
+    try:
+        expect(page.locator("#connection")).to_contain_text("Offline", timeout=15000)
+        expect(page.locator("#notice")).to_contain_text(
+            "Non sono un aggiornamento live"
+        )
+        expect(page.locator("#view .card").first).to_be_visible()
+        assert not errors, errors
+    except Exception:
+        print(
+            "Offline diagnostic:",
+            page.evaluate("""() => ({
+          online: navigator.onLine,
+          controlled: !!navigator.serviceWorker.controller,
+          connection: document.querySelector('#connection')?.textContent,
+          notice: document.querySelector('#notice')?.textContent,
+          saved: Object.keys(localStorage).filter(key => key.startsWith('meteo.v5.snapshot.')),
+          cards: document.querySelectorAll('#view .card').length
+        })"""),
+            "errors:",
+            errors,
+            flush=True,
+        )
+        raise
+    finally:
+        page.screenshot(path=str(output / "v5-offline-mobile.png"), full_page=True)
     context.close()
     return digests
 

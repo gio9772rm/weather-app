@@ -184,7 +184,7 @@ function updateMeta() {
 }
 async function loadStations() {
   try {
-    const r = await fetch("/api/v5/stations");
+    const r = await fetch("/api/v5/stations", { cache: "no-store" });
     if (!r.ok) throw Error();
     stations = (await r.json()).stations;
     storage.set("meteo.v5.stations", stations);
@@ -208,7 +208,11 @@ async function loadStations() {
 }
 async function loadSnapshot(id) {
   try {
-    const r = await fetch("/api/v5/snapshot/" + encodeURIComponent(id));
+    // Only a network response can be called live. Offline copies are restored
+    // explicitly below or identified by the service worker's provenance header.
+    const r = await fetch("/api/v5/snapshot/" + encodeURIComponent(id), {
+      cache: "no-store",
+    });
     if (!r.ok) throw Error();
     const payload = await r.json();
     if (payload?.station?.id !== id) throw Error();

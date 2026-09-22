@@ -154,6 +154,27 @@ def test_push_api_requires_management_token_and_never_exposes_private_key(client
     }
     path = "/api/v5/push/subscription"
     assert client.post(path, json=value).status_code == 403
+    assert (
+        client.post(
+            path, json=value, headers={"Origin": "https://other.example"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            path, json=value, headers={"Origin": "https://testserver:444"}
+        ).status_code
+        == 403
+    )
+    # Render terminates TLS before forwarding HTTP to the ASGI process.
+    assert (
+        client.post(
+            path,
+            json={"station_id": "unknown"},
+            headers={"Origin": "https://testserver"},
+        ).status_code
+        == 400
+    )
     headers = {"Origin": "http://testserver"}
     created = client.post(path, json=value, headers=headers)
     assert created.status_code == 200

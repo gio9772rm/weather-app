@@ -13,6 +13,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import (
@@ -149,6 +150,23 @@ def admin_allowed(request) -> bool:
     return bool(token) and bool(supplied) and hmac.compare_digest(token, supplied)
 
 
+def origin_matches(request) -> bool:
+    """Keep host/port exact, including HTTPS terminated by Render's proxy."""
+    try:
+        origin = urlsplit(request.headers.get("origin", ""))
+        target = urlsplit(str(request.base_url))
+        return (
+            bool(origin.netloc)
+            and origin.netloc == target.netloc
+            and origin.scheme in {target.scheme, "https"}
+            and not origin.path
+            and not origin.query
+            and not origin.fragment
+        )
+    except ValueError:
+        return False
+
+
 async def import_history(request):
     if not admin_allowed(request):
         return JSONResponse(
@@ -157,7 +175,7 @@ async def import_history(request):
             headers={"Cache-Control": "no-store"},
         )
     origin = request.headers.get("origin")
-    if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+    if origin and not origin_matches(request):
         return JSONResponse({"error": "Origine non consentita"}, status_code=403)
     content_length = request.headers.get("content-length", "0")
     if not content_length.isdigit() or int(content_length) > 8_000_000:
@@ -235,9 +253,7 @@ async def push_subscription(request):
     from v5_push import delete_subscription, save_subscription
 
     headers = {"Cache-Control": "no-store"}
-    if request.headers.get("origin", "").rstrip("/") != str(request.base_url).rstrip(
-        "/"
-    ):
+    if not origin_matches(request):
         return JSONResponse(
             {"error": "Origine non consentita"}, status_code=403, headers=headers
         )

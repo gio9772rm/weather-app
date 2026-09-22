@@ -63,7 +63,9 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       (async () => {
         try {
-          const response = await fetch(request);
+          // The browser's HTTP cache must not turn an offline copy into a
+          // seemingly live response. The page requests data only every 600s.
+          const response = await fetch(request, { cache: "no-store" });
           if (!response.ok) throw Error("offline");
           if (await enabled())
             await (await caches.open(DATA)).put(request, response.clone());

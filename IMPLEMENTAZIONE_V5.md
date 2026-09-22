@@ -31,8 +31,11 @@ La configurazione già bloccata in constraints.txt è compatibile.
 
 PWA, ASGI, strumenti Pro, selettore globale, astronomia residua, snapshot,
 offline, import guidato e push sono implementati. Verifica indipendente della
-seconda stazione e serie canonica estesa a scoring/3h. Suite di base: 229 test
-verdi prima degli ultimi casi di regressione. I test browser comprendono V5
-e Pro. Restano il passaggio CI, il merge e la verifica del deploy/cron.
+seconda stazione e serie canonica estesa a scoring/3h. Suite locale: 234 test
+verdi. Verifica previsionale su ore-obiettivo indipendenti e riepiloghi mensili
+a blocchi per limitare la memoria del cron, conservando i dati originali.
+I test browser comprendono V5 e Pro. Il timer da 600 secondi e le 16 viste V5
+hanno superato la CI; resta il collaudo offline e Pro sull'ultimo commit,
+seguito dal merge e dalla verifica del deploy/cron.
 
 Il widget nativo rimane subordinato ai materiali Android sopra indicati.
