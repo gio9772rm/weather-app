@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -680,6 +681,21 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                     f"{name}: salvataggio profilo ottico non disponibile"
                                 )
                             save_profile.click()
+                            # The old plots remain mounted during the form rerun.
+                            # Wait for its result, then for Streamlit's stale fade
+                            # to finish before auditing actual settled contrast.
+                            page.get_by_text(re.compile(r"^Profilo .+ attivo\.$")).wait_for(
+                                state="visible", timeout=30_000
+                            )
+                            page.wait_for_function(
+                                """() => [...document.querySelectorAll('[data-testid="stCaptionContainer"] p')].every(el => {
+                                  for (let node=el; node && !node.matches('.stApp'); node=node.parentElement) {
+                                    if (Number(getComputedStyle(node).opacity) < 0.99) return false;
+                                  }
+                                  return true;
+                                })""",
+                                timeout=15_000,
+                            )
                             page.wait_for_function(
                                 "document.querySelectorAll('.js-plotly-plot').length >= 3",
                                 timeout=30_000,
