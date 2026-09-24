@@ -183,3 +183,29 @@ def test_public_tools_require_bounded_origin_and_widget_is_allowlisted(
             ]
             == "com.gio9772rm.meteov4"
         )
+
+
+def test_radar_accepts_current_opaque_frame_ids_and_rejects_external_paths(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from v5_extensions import radar_frames
+
+    payload = {"radar": {"past": [
+        {"time": 1790276400, "path": "/v2/radar/dc1ab75daea9"},
+        {"time": 1790277000, "path": "/v2/radar/1790277000"},
+        {"time": 1790277600, "path": "https://example.org/foreign"},
+        {"time": 1790278200, "path": "/v2/radar/../private"},
+        {"time": 1790278800, "path": "/v2/radar/frame?key=private"},
+    ]}}
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+    session = SimpleNamespace(get=lambda *args, **kwargs: response)
+    monkeypatch.setattr("forecast_providers.build_session", lambda **kw: nullcontext(session))
+    result = radar_frames()
+    assert [frame["path"] for frame in result["frames"]] == [
+        "/v2/radar/dc1ab75daea9", "/v2/radar/1790277000"
+    ]
+    assert result["host"] == "https://tilecache.rainviewer.com"
+    payload["radar"]["past"] = []
+    with pytest.raises(ValueError, match="Fotogrammi"):
+        radar_frames()

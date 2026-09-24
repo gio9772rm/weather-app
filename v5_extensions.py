@@ -130,8 +130,10 @@ def radar_frames():
     for item in (payload.get("radar") or {}).get("past", [])[-13:]:
         path = str(item.get("path", ""))
         stamp = pd.to_datetime(item.get("time"), unit="s", utc=True, errors="coerce")
-        if re.fullmatch(r"/v2/radar/\d+", path) and pd.notna(stamp):
+        if re.fullmatch(r"/v2/radar/[A-Za-z0-9_-]{1,128}", path) and pd.notna(stamp):
             frames.append({"path": path, "time": stamp})
+    if not frames:
+        raise ValueError("Fotogrammi radar non disponibili")
     return clean_json(
         {
             "source": "RainViewer",

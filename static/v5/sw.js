@@ -1,5 +1,5 @@
 "use strict";
-const SHELL = "meteo-v5-shell-3",
+const SHELL = "meteo-v5-shell-4",
   DATA = "meteo-v5-data",
   SETTINGS = "meteo-v5-settings";
 const ASSETS = [
@@ -18,7 +18,11 @@ self.addEventListener("install", (event) =>
   event.waitUntil(
     caches
       .open(SHELL)
-      .then((cache) => cache.addAll(ASSETS))
+      .then((cache) =>
+        // A new shell must not reuse still-fresh HTTP responses from the old
+        // deployment. CacheStorage versioning alone does not invalidate them.
+        cache.addAll(ASSETS.map((url) => new Request(url, { cache: "reload" }))),
+      )
       .then(() => self.skipWaiting()),
   ),
 );
@@ -111,7 +115,9 @@ self.addEventListener("fetch", (event) => {
   }
   if (ASSETS.includes(url.pathname) && url.pathname !== "/") {
     event.respondWith(
-      caches.match(request).then((saved) => saved || fetch(request)),
+      caches.open(SHELL)
+        .then((cache) => cache.match(request, { ignoreSearch: true }))
+        .then((saved) => saved || fetch(request)),
     );
   }
 });
