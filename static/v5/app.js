@@ -718,19 +718,22 @@ function render() {
     if (b.dataset.page === active) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
-  const views = new Map([
-    ["today", todayView],
-    ["forecast", forecastView],
-    ["stations", stationsView],
-    ["astronomy", astronomyView],
-    ["air", airView],
-    ["maps", mapsView],
-    ["more", moreView],
-    ["notifications", notificationsView],
-    ["import", importView],
-  ]);
+  function mainView() {
+    switch (page) {
+      case "today": return todayView();
+      case "forecast": return forecastView();
+      case "stations": return stationsView();
+      case "astronomy": return astronomyView();
+      case "air": return airView();
+      case "maps": return mapsView();
+      case "more": return moreView();
+      case "notifications": return notificationsView();
+      case "import": return importView();
+      default: return todayView();
+    }
+  }
   window.MeteoExtra?.beforeRender();
-  $("#view").innerHTML = window.MeteoExtra?.view(page) ?? (views.get(page) || todayView)();
+  $("#view").innerHTML = window.MeteoExtra?.view(page) ?? mainView();
   bindView();
   window.MeteoExtra?.bind(page);
   if (page === "notifications") checkPush();

@@ -186,11 +186,25 @@
   function activitiesView(){const rule={...activityDefaults[activity],...local("activity-rules",{})[activity]};const result=activityWindows(data.forecast||[],rule);return `<h1>Il momento giusto per uscire</h1><p>Finestre nelle prossime 72 ore, secondo le tue soglie. Il riepilogo principale conserva aria, pollini e astronomia.</p><div class="controls"><label>Attività<select id="activity-type">${Object.entries(activityDefaults).map(([id,r])=>`<option value="${id}" ${id===activity?"selected":""}>${r.name}</option>`).join("")}</select></label></div><form id="activity-form" class="card"><div class="form-grid">${input("act-min","Temperatura minima °C",rule.min,-30,45)}${input("act-max","Temperatura massima °C",rule.max,-20,50)}${input("act-wind","Vento massimo km/h",rule.wind,0,100)}${input("act-gust","Raffica massima km/h",rule.gust,0,150)}${input("act-pop","Probabilità massima %",rule.pop,0,100)}${input("act-rain","Pioggia massima mm/h",rule.rain,0,20,0.1)}${input("act-hours","Durata minima ore",rule.hours,0.5,12,0.5)}</div><label><input id="act-daylight" type="checkbox" ${rule.daylight?"checked":""}> Solo ore diurne</label><button class="primary">Trova le finestre</button></form><div class="grid">${result.windows.length?result.windows.slice(0,12).map(w=>`<article class="card span-4"><span class="tag">${esc(rule.name)}</span><h2>${dayLabel(new Date(w.start).toISOString())}</h2><div class="metric">${clock(new Date(w.start).toISOString())}–${clock(new Date(w.end).toISOString())}</div><p>${num((w.end-w.start)/3600000)} ore continue entro le soglie</p></article>`).join(""):empty("Nessuna finestra continua soddisfa tutte le soglie nei dati disponibili.")}</div><p class="metric-caption">${result.incomplete} intervalli esclusi per dati incompleti. Le ore mancanti interrompono la finestra. Indicazione meteo, da affiancare ai bollettini ufficiali.</p>`;}
   function bindActivities(){ $("#activity-type").onchange=e=>{activity=e.target.value;save("activity-choice",activity);render();};$("#activity-form").onsubmit=e=>{e.preventDefault();const rule={name:activityDefaults[activity].name,daylight:$("#act-daylight").checked};for(const field of ["min","max","wind","gust","pop","rain","hours"])rule[field]=Number($("#act-"+field).value);if(rule.min>rule.max){notice("La temperatura minima deve essere inferiore alla massima.");return;}save("activity-rules",{...local("activity-rules",{}),[activity]:rule});render();};}
 
-  const views = new Map([["maps",radarView],["cities",citiesView],["planner",plannerView],["journal",journalView],["inbox",inboxView],["activities",activitiesView]]);
-  const bindings = new Map([["maps",bindRadar],["cities",bindCities],["planner",bindPlanner],["journal",bindJournal],["inbox",bindInbox],["activities",bindActivities]]);
   window.MeteoExtra={
-    view:p=>views.get(p)?.(),
-    bind:p=>{restoreDrafts();return bindings.get(p)?.();},
+    view:p=>{switch(p){
+      case "maps": return radarView();
+      case "cities": return citiesView();
+      case "planner": return plannerView();
+      case "journal": return journalView();
+      case "inbox": return inboxView();
+      case "activities": return activitiesView();
+      default: return undefined;
+    }},
+    bind:p=>{restoreDrafts();switch(p){
+      case "maps": return bindRadar();
+      case "cities": return bindCities();
+      case "planner": return bindPlanner();
+      case "journal": return bindJournal();
+      case "inbox": return bindInbox();
+      case "activities": return bindActivities();
+      default: return undefined;
+    }},
     beforeRender:()=>{captureDrafts();playing=false;if(animation)cancelAnimationFrame(animation);},
     refreshCity:()=>{if(page==="cities"&&cityId)loadCity(cityId);},
     recordEvents,uncertaintyCard,verificationTable,activityWindows
