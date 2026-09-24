@@ -17,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -632,6 +632,17 @@ def station_ingest_is_due(
     return elapsed_seconds >= interval_seconds
 
 
+def _last_cycle_started() -> pd.Timestamp:
+    """Read the gate without migrations, including a genuinely empty database."""
+    with get_engine().connect() as connection:
+        if not inspect(connection).has_table("meta"):
+            return pd.NaT
+        value = connection.execute(
+            text("SELECT v FROM meta WHERE k='last_pipeline_cycle_started'")
+        ).scalar_one_or_none()
+    return pd.to_datetime(value, utc=True, errors="coerce")
+
+
 def pipeline_cycle_is_due(
     cfg: Settings,
     force: bool = False,
@@ -645,13 +656,9 @@ def pipeline_cycle_is_due(
     to fifteen minutes on a legacy five-minute Render schedule.
     """
     try:
-        with get_engine().connect() as connection:
-            value = connection.execute(
-                text("SELECT v FROM meta WHERE k='last_pipeline_cycle_started'")
-            ).scalar_one_or_none()
+        last_started = _last_cycle_started()
     except SQLAlchemyError:
         return False
-    last_started = pd.to_datetime(value, utc=True, errors="coerce")
     if pd.isna(last_started):
         return True
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
@@ -662,9 +669,10 @@ def pipeline_cycle_is_due(
 
 def cycle_wait_seconds(cfg: Settings, now: pd.Timestamp | None = None) -> float:
     """Wait out scheduler jitter inside this run instead of losing a cron tick."""
-    last = pd.to_datetime(
-        get_meta("last_pipeline_cycle_started"), utc=True, errors="coerce"
-    )
+    try:
+        last = _last_cycle_started()
+    except SQLAlchemyError:
+        return max(10, cfg.station_refresh_minutes) * 60
     if pd.isna(last):
         return 0.0
     now = now if now is not None else pd.Timestamp.now(tz="UTC")

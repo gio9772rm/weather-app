@@ -327,6 +327,9 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                     screenshot = output / f"{name}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                 digests[name] = hashlib.sha256(screenshot.read_bytes()).hexdigest()
+            assert page.evaluate(
+                "['constructor','toString','__proto__'].every(p => window.MeteoExtra.view(p) === undefined)"
+            ), "Unknown tools must never dispatch inherited object methods"
             # Exercise real planner calculation and private journal persistence.
             page.goto(f"{base_url}/?page=planner&theme={theme}")
             page.wait_for_selector('[name="target"]')

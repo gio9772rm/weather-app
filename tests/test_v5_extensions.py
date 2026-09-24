@@ -29,6 +29,26 @@ def test_jitter_waits_in_current_slot_and_force_cannot_bypass(sqlite_engine):
     assert not pipeline_cycle_is_due(cfg, now=now + pd.Timedelta(seconds=41))
 
 
+
+def test_cycle_gate_reads_empty_database_without_writing_and_blocks_db_errors(monkeypatch):
+    from sqlalchemy import create_engine, inspect
+    from sqlalchemy.exc import OperationalError
+
+    engine = create_engine("sqlite://")
+    monkeypatch.setattr("ingest_all.get_engine", lambda: engine)
+    cfg = replace(Settings.from_env(), station_refresh_minutes=10)
+    assert cycle_wait_seconds(cfg) == 0
+    assert pipeline_cycle_is_due(cfg)
+    assert inspect(engine).get_table_names() == []
+
+    def failed_connection():
+        raise OperationalError("SELECT", {}, Exception("Database unavailable"))
+
+    monkeypatch.setattr(engine, "connect", failed_connection)
+    assert cycle_wait_seconds(cfg) == 600
+    assert not pipeline_cycle_is_due(cfg, force=True)
+
+
 def test_product_failure_retains_date_and_obeys_cooldown(sqlite_engine):
     with sqlite_engine.begin() as con:
         con.execute(
