@@ -1,11 +1,13 @@
 "use strict";
-const SHELL = "meteo-v5-shell-2",
+const SHELL = "meteo-v5-shell-3",
   DATA = "meteo-v5-data",
   SETTINGS = "meteo-v5-settings";
 const ASSETS = [
   "/",
   "/assets/v5/app.css",
   "/assets/v5/app.js",
+  "/assets/v5/extras.js",
+  "/assets/v5/extras.css",
   "/assets/v5/icon.svg",
   "/assets/v5/manifest.webmanifest",
   "/app/static/icon-192.png",
@@ -123,6 +125,13 @@ self.addEventListener("push", (event) => {
         return;
       }
       if (!data || typeof data.body !== "string") return;
+      try {
+        const history = await caches.open("meteo-v5-notifications");
+        const saved = await history.match("/__meteo_notifications__");
+        const rows = saved ? await saved.json() : [];
+        rows.push({title: String(data.title || "Meteo Pro").slice(0,100), body: String(data.body || "").slice(0,350), received_at: new Date().toISOString()});
+        await history.put("/__meteo_notifications__", new Response(JSON.stringify(rows.slice(-100)), {headers: {"Content-Type":"application/json"}}));
+      } catch {}
       await self.registration.showNotification(
         String(data.title || "Meteo Pro").slice(0, 100),
         {

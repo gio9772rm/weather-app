@@ -564,3 +564,10 @@ CREATE TABLE IF NOT EXISTS user_prefs (
   k TEXT PRIMARY KEY,
   v TEXT
 );
+
+-- Derived, allowlisted products. No private notebook data.
+CREATE TABLE IF NOT EXISTS v5_products (
+  product_key TEXT PRIMARY KEY,
+  attempted_at TEXT NOT NULL,
+  payload TEXT
+);

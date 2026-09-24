@@ -89,6 +89,11 @@ if (
     "air",
     "maps",
     "notifications",
+    "planner",
+    "cities",
+    "journal",
+    "activities",
+    "inbox",
     "import",
   ].includes(page)
 )
@@ -220,6 +225,7 @@ async function loadSnapshot(id) {
     snapshots.set(id, payload);
     cachedOffline.set(id, fromCache);
     if (prefs.offline) storage.set("meteo.v5.snapshot." + id, payload);
+    if (!fromCache) window.MeteoExtra?.recordEvents(payload);
     return { payload, offline: fromCache };
   } catch {
     const saved = prefs.offline ? storage.get("meteo.v5.snapshot." + id) : null;
@@ -261,6 +267,7 @@ async function refreshCycle() {
     refreshing = false;
     $("#refresh").disabled = false;
     scheduleRefresh();
+    window.MeteoExtra?.refreshCity();
   }
 }
 function navigate(next) {
@@ -523,7 +530,7 @@ function forecastView() {
     )
     .join(
       "",
-    )}${weatherChart()}</div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Fiducia</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${finite(f.confidence) ? num(f.confidence, 0) + "%" : "In raccolta"}</td></tr>`).join("")}</tbody></table></div></article>${title("Verifica delle previsioni")}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
+    )}${weatherChart()}</div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Fiducia</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${finite(f.confidence) ? num(f.confidence, 0) + "%" : "In raccolta"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${title("Verifica delle previsioni")}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
 }
 function qualityTable() {
   const scores = (data.scores || []).filter((s) =>
@@ -607,7 +614,7 @@ function astronomyView() {
     )
     .join(
       "",
-    )}</select>${proAnchor("astronomy", "Target, strumenti e piano notturno Pro")}</div><div class="grid">${astroCard()}<article class="card span-6"><h2>Come leggere la qualità</h2><p>Ore favorevoli: punteggio ≥65, dati essenziali completi e intervallo ancora futuro. I buchi non uniscono due finestre.</p><ul class="fact-list"><li><span>Profilo</span><b>${esc(a.label || "—")}</b></li><li><span>Sole sotto l’orizzonte</span><b>${prefs.profile === "deep_sky" ? "18°" : prefs.profile === "visual" ? "12°" : "6°"}</b></li><li><span>Nuvole</span><b>Limite conservativo</b></li></ul><details><summary>Limiti delle stime</summary><p>Il punteggio meteo non certifica la sicurezza della strumentazione. SQM/Bortle sono stime di atlante, non misure. Per il target usa anche altezza, Luna e ostacoli nel pianificatore Pro.</p></details></article></div>${title("Confronto tra le notti")}<article class="card"><div class="table-wrap"><table><thead><tr><th>Notte</th><th>Qualità media residua</th><th>Nuvole medie</th><th>Ore favorevoli residue</th><th>Finestra continua</th><th>Ore incomplete</th></tr></thead><tbody>${nights.map((n) => `<tr><td><button class="quiet" data-night="${n.date}">${dayLabel(n.date)}</button></td><td>${num(n.score, 0)}/100</td><td>${num(n.clouds_mean, 0)}%</td><td><b>${num(n.remaining_good_hours)} h</b></td><td>${n.best_start ? clock(n.best_start) + "–" + clock(n.best_end) + " · " + num(n.continuous_hours) + " h" : "—"}</td><td>${num(n.incomplete_hours)} h</td></tr>`).join("")}</tbody></table></div>${!nights.length ? '<p class="empty">Nessuna finestra calcolabile con i dati disponibili.</p>' : ""}</article>${title("Perché questo punteggio · " + dayLabel(selectedNight))}<article class="card"><div class="table-wrap"><table><thead><tr><th>Intervallo futuro</th><th>Qualità</th><th>Nuvole</th><th>Vento</th><th>Limite principale</th><th>Dettaglio</th></tr></thead><tbody>${rows
+    )}</select><button class="quiet" data-go="planner">Target, strumenti e piano notturno →</button></div><div class="grid">${astroCard()}<article class="card span-6"><h2>Come leggere la qualità</h2><p>Ore favorevoli: punteggio ≥65, dati essenziali completi e intervallo ancora futuro. I buchi non uniscono due finestre.</p><ul class="fact-list"><li><span>Profilo</span><b>${esc(a.label || "—")}</b></li><li><span>Sole sotto l’orizzonte</span><b>${prefs.profile === "deep_sky" ? "18°" : prefs.profile === "visual" ? "12°" : "6°"}</b></li><li><span>Nuvole</span><b>Limite conservativo</b></li></ul><details><summary>Limiti delle stime</summary><p>Il punteggio meteo non certifica la sicurezza della strumentazione. SQM/Bortle sono stime di atlante, non misure. Per il target usa anche altezza, Luna e ostacoli nel pianificatore della notte.</p></details></article></div>${title("Confronto tra le notti")}<article class="card"><div class="table-wrap"><table><thead><tr><th>Notte</th><th>Qualità media residua</th><th>Nuvole medie</th><th>Ore favorevoli residue</th><th>Finestra continua</th><th>Ore incomplete</th></tr></thead><tbody>${nights.map((n) => `<tr><td><button class="quiet" data-night="${n.date}">${dayLabel(n.date)}</button></td><td>${num(n.score, 0)}/100</td><td>${num(n.clouds_mean, 0)}%</td><td><b>${num(n.remaining_good_hours)} h</b></td><td>${n.best_start ? clock(n.best_start) + "–" + clock(n.best_end) + " · " + num(n.continuous_hours) + " h" : "—"}</td><td>${num(n.incomplete_hours)} h</td></tr>`).join("")}</tbody></table></div>${!nights.length ? '<p class="empty">Nessuna finestra calcolabile con i dati disponibili.</p>' : ""}</article>${title("Perché questo punteggio · " + dayLabel(selectedNight))}<article class="card"><div class="table-wrap"><table><thead><tr><th>Intervallo futuro</th><th>Qualità</th><th>Nuvole</th><th>Vento</th><th>Limite principale</th><th>Dettaglio</th></tr></thead><tbody>${rows
     .map(
       (h) =>
         `<tr><td>${clock(h.start)}–${clock(h.end)}</td><td>${h.complete ? num(h.astro_score, 0) + "/100" : "Incompleta"}</td><td>${num(h.clouds, 0)}%</td><td>${num(h.wind_kmh)} km/h</td><td>${esc(h.limiting_factor)}</td><td><details><summary>Fattori</summary><p>${Object.entries(
@@ -649,6 +656,10 @@ function airView() {
 }
 function moreView() {
   const tools = [
+    ["planner", "✧", "Pianifica la notte", "Target, ostacoli, strumento e campo inquadrato."],
+    ["journal", "▤", "Diario astronomico", "Sessioni personali e confronto con la previsione."],
+    ["activities", "↗", "Le tue attività", "Finestre meteo e soglie che decidi tu."],
+    ["inbox", "☷", "Centro avvisi", "Eventi rilevati e rientro delle condizioni."],
     [
       "forecast",
       "≋",
@@ -686,7 +697,7 @@ function moreView() {
       "Condizioni scelte da te, senza notifiche ripetute.",
     ],
   ];
-  return `<h1>Il tuo osservatorio, completo</h1><p>Strumenti quotidiani e approfondimenti scientifici, nello stesso posto.</p><div class="grid">${tools.map(([p, i, h, t]) => `<a class="card tool-card span-4" href="?page=${p}" data-go="${p}"><span class="tool-icon">${i}</span><h2>${h}</h2><p>${t}</p></a>`).join("")}<a class="card tool-card span-12" href="/pro/?mode=city"><h2>Cerca una città o un CAP</h2><p>Previsioni mondiali e confronto con la stazione selezionata.</p></a><a class="card tool-card span-6" href="${esc(proLink("system"))}"><h2>Sistema e diagnostica</h2><p>Controllo salute, sorgenti e backup. I dettagli riservati richiedono accesso amministratore.</p></a><a class="card tool-card span-6" href="${esc(proLink("info"))}"><h2>Fonti, metodo e limiti</h2><p>Come sono ottenuti i dati, cosa è misurato e cosa è stimato.</p></a></div>`;
+  return `<h1>Il tuo osservatorio, completo</h1><p>Strumenti quotidiani e approfondimenti scientifici, nello stesso posto.</p><div class="grid">${tools.map(([p, i, h, t]) => `<a class="card tool-card span-4" href="?page=${p}" data-go="${p}"><span class="tool-icon">${i}</span><h2>${h}</h2><p>${t}</p></a>`).join("")}<a class="card tool-card span-12" href="?page=cities" data-go="cities"><h2>Cerca una città o un CAP</h2><p>Previsioni mondiali e confronto con la stazione selezionata.</p></a><a class="card tool-card span-6" href="${esc(proLink("system"))}"><h2>Sistema e diagnostica</h2><p>Controllo salute, sorgenti e backup. I dettagli riservati richiedono accesso amministratore.</p></a><a class="card tool-card span-6" href="${esc(proLink("info"))}"><h2>Fonti, metodo e limiti</h2><p>Come sono ottenuti i dati, cosa è misurato e cosa è stimato.</p></a></div>`;
 }
 function mapsView() {
   return `<h1>Radar e mappe</h1><p>Ogni prodotto mantiene la propria origine e il proprio orario.</p><div class="grid"><article class="card span-6"><span class="tag">OSSERVAZIONE</span><h2>Radar e fulmini DPC</h2><p>Eco radar e fulminazioni osservate. Consulta nel pannello Pro l’ultimo fotogramma disponibile e il suo orario.</p>${proAnchor("radar", "Apri radar della località")}</article><article class="card span-6"><span class="tag">TENDENZA PREVISTA</span><h2>Movimento delle precipitazioni</h2><p>Il nowcast è una tendenza a breve termine, non una nuova osservazione. Se non sono disponibili fotogrammi futuri viene dichiarato nel pannello.</p>${proAnchor("radar", "Apri animazione e mappe")}</article></div>`;
@@ -707,19 +718,24 @@ function render() {
     if (b.dataset.page === active) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
-  const views = {
-    today: todayView,
-    forecast: forecastView,
-    stations: stationsView,
-    astronomy: astronomyView,
-    air: airView,
-    maps: mapsView,
-    more: moreView,
-    notifications: notificationsView,
-    import: importView,
-  };
-  $("#view").innerHTML = (views[page] || todayView)();
+  function mainView() {
+    switch (page) {
+      case "today": return todayView();
+      case "forecast": return forecastView();
+      case "stations": return stationsView();
+      case "astronomy": return astronomyView();
+      case "air": return airView();
+      case "maps": return mapsView();
+      case "more": return moreView();
+      case "notifications": return notificationsView();
+      case "import": return importView();
+      default: return todayView();
+    }
+  }
+  window.MeteoExtra?.beforeRender();
+  $("#view").innerHTML = window.MeteoExtra?.view(page) ?? mainView();
   bindView();
+  window.MeteoExtra?.bind(page);
   if (page === "notifications") checkPush();
 }
 function bindView() {

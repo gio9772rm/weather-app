@@ -408,7 +408,7 @@ def build_snapshot(
         else []
     )
     payload = {
-        "version": "5.0.0",
+        "version": "5.1.0",
         "station": {
             "id": station_id,
             "name": cfg.location_name,
@@ -451,6 +451,10 @@ def build_snapshot(
             "Le misure e le previsioni hanno origini e orari distinti.",
         ],
     }
+    from v5_extensions import read_product, uncertainty
+
+    payload["uncertainty"] = uncertainty(station_id, now)
+    payload["radar_animation"] = read_product("radar_frames")
     return clean_json(payload)
 
 

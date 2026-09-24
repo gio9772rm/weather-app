@@ -1,0 +1,6 @@
+<resources>
+  <string name="app_name">Meteo Pro</string><string name="radar">Radar</string><string name="sky">Cielo</string>
+  <string name="widget_description">Ultima misura di Roma o Comacchio, con orario e accesso al sito.</string>
+  <string name="asset_statements">[{\"relation\":[\"delegate_permission/common.handle_all_urls\"],\"target\":{\"namespace\":\"web\",\"site\":\"https://weather-app-v3-w2jd.onrender.com\"}}]</string>
+  <color name="brand">#123A5A</color>
+</resources>

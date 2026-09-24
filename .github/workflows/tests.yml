@@ -50,3 +50,29 @@ jobs:
           path: visual-artifacts
           if-no-files-found: warn
           retention-days: 14
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Gradle
+        shell: bash
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.13-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.13-bin.zip.sha256 -o "$RUNNER_TEMP/gradle.sha256"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/gradle.sha256")" "$RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP/gradle"
+          echo "$RUNNER_TEMP/gradle/gradle-8.13/bin" >> "$GITHUB_PATH"
+      - name: Build and lint unsigned Android release
+        working-directory: android
+        run: gradle --no-daemon :app:assembleRelease :app:lintRelease
+      - name: Save unsigned release and lint results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: meteo-pro-android-unsigned-${{ github.run_id }}
+          path: |
+            android/app/build/outputs/apk/release/*unsigned.apk
+            android/app/build/reports/lint-results-release.*
+          retention-days: 30

@@ -1,0 +1,4 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+ <shortcut android:shortcutId="radar" android:shortcutShortLabel="@string/radar" android:enabled="true"><intent android:action="android.intent.action.VIEW" android:targetPackage="com.gio9772rm.meteov4" android:targetClass="com.gio9772rm.meteov4.LauncherActivity" android:data="https://weather-app-v3-w2jd.onrender.com/?page=maps"/></shortcut>
+ <shortcut android:shortcutId="sky" android:shortcutShortLabel="@string/sky" android:enabled="true"><intent android:action="android.intent.action.VIEW" android:targetPackage="com.gio9772rm.meteov4" android:targetClass="com.gio9772rm.meteov4.LauncherActivity" android:data="https://weather-app-v3-w2jd.onrender.com/?page=astronomy"/></shortcut>
+</shortcuts>

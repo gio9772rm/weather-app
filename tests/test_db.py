@@ -29,6 +29,7 @@ def test_schema_contains_v43_tables_and_columns(sqlite_engine):
         "forecast_regime_scores",
         "climate_reference_normals",
         "radar_local_snapshots",
+        "v5_products",
         "meta",
     } <= tables
     raw_columns = {
@@ -67,7 +68,7 @@ def test_schema_contains_v43_tables_and_columns(sqlite_engine):
             connection.execute(
                 text("SELECT v FROM meta WHERE k='schema_version'")
             ).scalar_one()
-            == "10"
+            == "11"
         )
 
 
