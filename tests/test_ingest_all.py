@@ -225,7 +225,7 @@ def test_station_ingest_guard_rejects_five_minute_scheduler_path(monkeypatch):
     )
 
     assert station_ingest_is_due(_settings(), now=now) is False
-    assert station_ingest_is_due(_settings(), force=True, now=now) is True
+    assert station_ingest_is_due(_settings(), force=True, now=now) is False
 
 
 def test_station_ingest_guard_accepts_the_ten_minute_cycle(monkeypatch):

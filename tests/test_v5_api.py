@@ -51,29 +51,27 @@ def subscription():
     }
 
 
-def test_api_snapshot_stays_fixed_for_ten_minutes(client, monkeypatch):
+def test_api_returns_latest_published_revision_without_extra_ingestion(
+    client, monkeypatch
+):
     import v5_api
 
-    calls, clock = [], [10.0]
     identifier = Settings.from_env().station_id
-    monkeypatch.setattr(v5_api.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(
-        v5_api,
-        "read_snapshot",
-        lambda station: calls.append(station) or {"generation": len(calls)},
-    )
+    published = {"generation": 1}
+    monkeypatch.setattr(v5_api, "read_snapshot", lambda station: dict(published))
     first = client.get(f"/api/v5/snapshot/{identifier}")
-    clock[0] += 599
     cached = client.get(
         f"/api/v5/snapshot/{identifier}",
         headers={"If-None-Match": first.headers["etag"]},
     )
     assert cached.status_code == 304
-    assert len(calls) == 1
-    clock[0] += 1
-    refreshed = client.get(f"/api/v5/snapshot/{identifier}")
+    published["generation"] = 2
+    refreshed = client.get(
+        f"/api/v5/snapshot/{identifier}",
+        headers={"If-None-Match": first.headers["etag"]},
+    )
     assert refreshed.json() == {"generation": 2}
-    assert "max-age=600" in refreshed.headers["cache-control"]
+    assert "no-cache" in refreshed.headers["cache-control"]
     assert client.get("/api/v5/snapshot/missing").status_code == 404
 
 

@@ -1,3 +1,5 @@
+> **V5.1**: [novità e controlli](CHANGELOG_V5_1.md) · [widget Android e recupero firma](android/README.md).
+
 # Meteo Pro V5
 
 Osservatorio meteo multi-stazione: nuova PWA responsive e strumenti scientifici Streamlit completi in `/pro/`, nello stesso servizio Render.

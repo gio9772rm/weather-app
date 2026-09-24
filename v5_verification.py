@@ -44,6 +44,19 @@ def verification_scores(
         observations["time"], utc=True, errors="coerce"
     )
     observations = observations[observations.time.le(now)].sort_values("time")
+    # Persistence is what was already measured at issuance, never a later value.
+    baseline = observations.rename(
+        columns={c: c + "_baseline" for c in observations.columns if c != "time"}
+    )
+    forecast = pd.merge_asof(
+        forecast.sort_values("issued_at"),
+        baseline,
+        left_on="issued_at",
+        right_on="time",
+        direction="backward",
+        tolerance=pd.Timedelta(minutes=20),
+    ).drop(columns="time")
+    forecast = forecast.sort_values("valid_time")
     pairs = pd.merge_asof(
         forecast,
         observations,
@@ -59,11 +72,44 @@ def verification_scores(
             columns = [variable + "_forecast", variable + "_observed"]
             if not set(columns).issubset(group.columns):
                 continue
-            pair = group[columns].apply(pd.to_numeric, errors="coerce").dropna()
+            baseline_column = variable + "_baseline"
+            available = columns + (
+                [baseline_column] if baseline_column in group else []
+            )
+            pair = (
+                group[available]
+                .apply(pd.to_numeric, errors="coerce")
+                .dropna(subset=columns)
+            )
             if len(pair) < 12:
                 continue
             error = pair.iloc[:, 0] - pair.iloc[:, 1]
             holdout = error.iloc[int(len(error) * 0.8) :]
+            training = error.iloc[: int(len(error) * 0.8)]
+            learned_bias = float(training.mean())
+            corrected = float((holdout - learned_bias).abs().mean())
+            baseline_pair = pair.iloc[int(len(error) * 0.8) :].dropna()
+            persistence = (
+                float(
+                    (baseline_pair[baseline_column] - baseline_pair[columns[1]])
+                    .abs()
+                    .mean()
+                )
+                if baseline_column in baseline_pair and not baseline_pair.empty
+                else None
+            )
+            days = group.loc[pair.index, "valid_time"].dt.date.nunique()
+            skill = (
+                1 - float(holdout.abs().mean()) / persistence
+                if persistence and persistence > 0
+                else None
+            )
+            eligible = (
+                days >= 30
+                and len(holdout) >= 30
+                and persistence is not None
+                and corrected < min(float(holdout.abs().mean()), persistence) * 0.9
+            )
             result.append(
                 {
                     "provider": "selezione_indipendente",
@@ -76,7 +122,15 @@ def verification_scores(
                     "bias": float(error.mean()),
                     "holdout_n": len(holdout),
                     "holdout_mae": float(holdout.abs().mean()),
-                    "skill_vs_persistence": None,
+                    "skill_vs_persistence": skill,
+                    "persistence_mae": persistence,
+                    "training_bias": learned_bias,
+                    "candidate_holdout_mae": corrected,
+                    "validation_days": int(days),
+                    "calibration_status": "candidate_for_review"
+                    if eligible
+                    else "collecting",
+                    "calibration_applied": False,
                 }
             )
     return result
@@ -88,9 +142,9 @@ def update_secondary_scores(station_id: str) -> None:
         payloads = (
             con.execute(
                 text(
-                    "SELECT payload FROM location_forecasts WHERE station_id=:id AND issued_at>=:cutoff ORDER BY issued_at DESC LIMIT 336"
+                    "SELECT payload FROM location_forecasts WHERE station_id=:id AND issued_at>=:cutoff ORDER BY issued_at DESC LIMIT 720"
                 ),
-                {"id": station_id, "cutoff": (now - pd.Timedelta(days=14)).isoformat()},
+                {"id": station_id, "cutoff": (now - pd.Timedelta(days=30)).isoformat()},
             )
             .scalars()
             .all()
@@ -100,7 +154,7 @@ def update_secondary_scores(station_id: str) -> None:
         if payloads
         else pd.DataFrame()
     )
-    scores = verification_scores(forecast, load_station(24 * 14, station_id), now)
+    scores = verification_scores(forecast, load_station(24 * 31, station_id), now)
     with get_engine().begin() as con:
         con.execute(
             text(

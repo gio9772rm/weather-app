@@ -574,13 +574,10 @@ def primary_history_recovery_coverage(
     latest = timestamps.iloc[-1]
     gaps = timestamps.diff().dt.total_seconds().div(3600).dropna()
     max_gap_hours = float(gaps.max()) if not gaps.empty else None
-    boundaries_covered = (
-        earliest
-        <= cutoff
-        + pd.Timedelta(hours=PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS)
-        and latest
-        >= current
-        - pd.Timedelta(hours=PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS)
+    boundaries_covered = earliest <= cutoff + pd.Timedelta(
+        hours=PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS
+    ) and latest >= current - pd.Timedelta(
+        hours=PRIMARY_HISTORY_RECOVERY_BOUNDARY_TOLERANCE_HOURS
     )
     gaps_covered = (
         max_gap_hours is not None
@@ -624,8 +621,7 @@ def station_ingest_is_due(
     time spent completing the previous request without admitting a five-minute
     acquisition path.
     """
-    if force:
-        return True
+    # Forecast overrides do not shorten the acquisition interval.
     last_success = pd.to_datetime(
         get_meta("last_station_success"), utc=True, errors="coerce"
     )
@@ -633,9 +629,8 @@ def station_ingest_is_due(
         return True
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
     interval_seconds = max(1, int(cfg.station_refresh_minutes)) * 60
-    scheduler_allowance_seconds = min(30, interval_seconds // 20)
     elapsed_seconds = max(0.0, (current - last_success).total_seconds())
-    return elapsed_seconds >= interval_seconds - scheduler_allowance_seconds
+    return elapsed_seconds >= interval_seconds
 
 
 def pipeline_cycle_is_due(
@@ -650,8 +645,6 @@ def pipeline_cycle_is_due(
     it finished, so slow providers cannot stretch a nominal ten-minute cycle
     to fifteen minutes on a legacy five-minute Render schedule.
     """
-    if force:
-        return True
     try:
         with get_engine().connect() as connection:
             value = connection.execute(
@@ -664,9 +657,21 @@ def pipeline_cycle_is_due(
         return True
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
     interval_seconds = max(1, int(cfg.station_refresh_minutes)) * 60
-    scheduler_allowance_seconds = min(30, interval_seconds // 20)
     elapsed_seconds = max(0.0, (current - last_started).total_seconds())
-    return elapsed_seconds >= interval_seconds - scheduler_allowance_seconds
+    return elapsed_seconds >= interval_seconds
+
+
+def cycle_wait_seconds(cfg: Settings, now: pd.Timestamp | None = None) -> float:
+    """Wait out scheduler jitter inside this run instead of losing a cron tick."""
+    last = pd.to_datetime(
+        get_meta("last_pipeline_cycle_started"), utc=True, errors="coerce"
+    )
+    if pd.isna(last):
+        return 0.0
+    now = now if now is not None else pd.Timestamp.now(tz="UTC")
+    return max(
+        0.0, max(10, cfg.station_refresh_minutes) * 60 - (now - last).total_seconds()
+    )
 
 
 def run_all(
@@ -690,7 +695,13 @@ def run_all(
     }
     if not pipeline_cycle_is_due(cfg, force_forecast, now=cycle_started):
         reason = "ciclo completo di 10 minuti non ancora dovuto"
-        for component in ("station", "secondary_station", "official", "radar", "forecast"):
+        for component in (
+            "station",
+            "secondary_station",
+            "official",
+            "radar",
+            "forecast",
+        ):
             result[component] = {"skipped": True, "reason": reason}
         return result
 
@@ -700,7 +711,12 @@ def run_all(
         cycle_started.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
-    if not skip_station and station_ingest_is_due(cfg, force_forecast):
+    # The global gate grants this whole cycle. A second check against the
+    # previous *finish* time used to skip fresh cycles by a few seconds.
+    if not skip_station:
+        pending = int(get_meta("pending_reconciliation_hours") or 0)
+        if pending:
+            backfill_hours = max(backfill_hours or 0, pending)
         ensure_primary_station(cfg)
         identifier, _ = _log_start("station")
         station_started = perf_counter()
@@ -814,9 +830,7 @@ def run_all(
                     "requested_days": cfg.station_history_recovery_days,
                     "attempt": recovery_attempt_number,
                     "direction": (
-                        "newest_first"
-                        if history_newest_first
-                        else "oldest_first"
+                        "newest_first" if history_newest_first else "oldest_first"
                     ),
                     "earliest_received": station.get("earliest_station_time"),
                     "status": recovery_status,
@@ -863,6 +877,8 @@ def run_all(
                     f"{station['source_age_minutes']:.1f} minuti "
                     f"(limite {max_station_age_minutes})"
                 )
+            if pending and not station.get("warnings"):
+                set_meta("pending_reconciliation_hours", "0")
             _log_finish(
                 identifier, "success", station["rows"], "; ".join(station["warnings"])
             )
@@ -906,7 +922,9 @@ def run_all(
                         history["last_date"],
                     )
             except Exception as exc:  # noqa: BLE001 - history never blocks live data
-                message = f"Storico stazione secondaria non importato: {_safe_message(exc)}"
+                message = (
+                    f"Storico stazione secondaria non importato: {_safe_message(exc)}"
+                )
                 result["warnings"].append(message)
                 log.warning("%s", message)
         if cfg.secondary_station_enabled and secondary_cfg is None:
@@ -1088,11 +1106,28 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # A daily/manual history request is queued even if another host is active.
+    # Only the ordinary gated ingest consumes it; this is not a forced refresh.
+    if args.backfill_hours and args.backfill_hours >= 24:
+        ensure_schema()
+        set_meta("pending_reconciliation_hours", str(min(args.backfill_hours, 8784)))
+
     lock = PipelineLock()
     if not lock.acquire():
         log.warning("Un'altra pipeline è già in esecuzione")
         return 0
     try:
+        from time import sleep
+
+        # Hold the cross-host advisory lock while waiting: Render and the daily
+        # reconciliation cannot both acquire a cycle. Long/forced early runs
+        # simply retain the normal gate; no cooldown is bypassed.
+        delay = cycle_wait_seconds(Settings.from_env())
+        if 0 < delay <= 180:
+            log.info(
+                "Prossimo ciclo tra %.0f secondi; rispetto intervallo minimo", delay
+            )
+            sleep(delay + 0.1)
         result = run_all(
             backfill_hours=args.backfill_hours,
             skip_station=args.skip_station,

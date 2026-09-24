@@ -40,3 +40,11 @@ ecowitt_*_output.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Android outputs and signing material stay local.
+android/.gradle/
+android/**/build/
+android/local.properties
+*.jks
+*.keystore
+keystore.properties

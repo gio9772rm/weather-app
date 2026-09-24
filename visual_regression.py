@@ -279,7 +279,18 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             page = context.new_page()
             errors = []
             page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
-            for view in ("today", "forecast", "stations", "astronomy"):
+            for view in (
+                "today",
+                "forecast",
+                "stations",
+                "astronomy",
+                "maps",
+                "cities",
+                "planner",
+                "journal",
+                "inbox",
+                "activities",
+            ):
                 name = f"v5-{view}-{theme}-{width}"
                 try:
                     page.goto(f"{base_url}/?page={view}&theme={theme}")
@@ -316,6 +327,34 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                     screenshot = output / f"{name}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                 digests[name] = hashlib.sha256(screenshot.read_bytes()).hexdigest()
+            # Exercise real planner calculation and private journal persistence.
+            page.goto(f"{base_url}/?page=planner&theme={theme}")
+            page.wait_for_selector('[name="target"]')
+            page.get_by_role("button", name="Calcola il piano", exact=True).click()
+            expect(page.locator("#plan-result .fov").first).to_be_visible(timeout=15000)
+            assert not errors, errors
+            page.goto(f"{base_url}/?page=journal&theme={theme}")
+            page.locator("#journal-target").fill("M31 · prova sessione")
+            page.locator("#journal-notes").fill("Nota da conservare al refresh")
+            page.get_by_role("button", name="Aggiorna ora", exact=True).click()
+            expect(page.locator("#refresh")).to_be_enabled()
+            expect(page.locator("#journal-notes")).to_have_value(
+                "Nota da conservare al refresh"
+            )
+            page.get_by_role("button", name="Registra sessione", exact=True).click()
+            page.reload()
+            expect(page.locator(".journal-text")).to_contain_text(
+                "Nota da conservare al refresh"
+            )
+            # Missing weather splits activity windows instead of becoming dry.
+            result = page.evaluate("""() => {
+              const now=Date.parse('2026-09-24T08:00Z');
+              const rows=[0,1,2,3].map(h=>({valid_time:new Date(now+h*3600000).toISOString(),temp_c:20,wind_kmh:5,wind_gust_kmh:8,precip_probability:10,rain_mm:0,is_day:1}));
+              rows[1].rain_mm=null;
+              return window.MeteoExtra.activityWindows(rows,{min:5,max:30,wind:20,gust:35,pop:30,rain:0.1,hours:2,daylight:true},now);
+            }""")
+            assert result["incomplete"] == 1 and len(result["windows"]) == 1
+            assert not errors, errors
             context.close()
 
     context = browser.new_context(viewport={"width": 390, "height": 844})

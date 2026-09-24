@@ -139,6 +139,23 @@ def run_v5_publication(cfg: Settings, *, force=False) -> dict:
             refresh_environment(station_settings(station["id"], cfg))
         except Exception:  # noqa: BLE001 - retain last environmental snapshot
             log.warning("Previsione ambientale V5 rinviata")
+    from v5_extensions import radar_frames, refresh_product, secondary_ensemble
+
+    try:
+        refresh_product("radar_frames", radar_frames, 600)
+    except Exception:  # noqa: BLE001 - retain last observed animation with its date
+        log.warning("Animazione radar rinviata")
+    if cfg.secondary_station_enabled and cfg.ensemble_forecast_enabled:
+        try:
+            refresh_product(
+                "ensemble:" + cfg.secondary_station_id,
+                lambda: secondary_ensemble(
+                    station_settings(cfg.secondary_station_id, cfg)
+                ),
+                3600,
+            )
+        except Exception:  # noqa: BLE001 - no substitution with Rome's ensemble
+            log.warning("Ensemble secondario rinviato")
     try:
         result["snapshots"] = publish_snapshots(cfg)
     except Exception:  # noqa: BLE001 - existing live ingestion remains independent

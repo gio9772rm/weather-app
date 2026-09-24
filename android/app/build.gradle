@@ -1,0 +1,19 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.gio9772rm.meteov4'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.gio9772rm.meteov4'
+        minSdk 23
+        targetSdk 36
+        versionCode 5
+        versionName '5.1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildTypes {
+        // CI makes an unsigned release. Sign locally with the original key.
+        release { minifyEnabled false }
+        debug { applicationIdSuffix '.preview'; versionNameSuffix '-preview' }
+    }
+}
+dependencies { implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.3' }
