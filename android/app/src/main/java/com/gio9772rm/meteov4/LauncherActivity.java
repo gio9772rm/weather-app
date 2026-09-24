@@ -15,6 +15,6 @@ public class LauncherActivity extends com.google.androidbrowserhelper.trusted.La
             if (page != null && Arrays.asList("today","forecast","stations","astronomy","maps","cities","planner","journal","activities","inbox","notifications","more").contains(page)) url.appendQueryParameter("page", page);
             if ("roma-primary".equals(station) || "comacchio-secondary".equals(station)) url.appendQueryParameter("station", station);
         }
-        return url.appendQueryParameter("src","android").appendQueryParameter("shellVersion","5").build();
+        return url.appendQueryParameter("src","twa").appendQueryParameter("shell","5").build();
     }
 }

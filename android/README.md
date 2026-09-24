@@ -6,6 +6,7 @@ anche dall'app già installata, senza sostituire l'APK.
 
 ## APK esistente verificato
 
+- Generatore identificato nelle risorse: `bubblewrap-cli`.
 - Identificatore: `com.gio9772rm.meteov4`.
 - Versione Android: `versionCode=4`, `versionName=4`, target SDK 36.
 - SHA-256 del file: `3f55d6292f1a36b431cf3cd1bef1e4c089cffbcd25d85882d435e5d86a3a19ad`.

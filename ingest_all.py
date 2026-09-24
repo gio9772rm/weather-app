@@ -617,9 +617,8 @@ def station_ingest_is_due(
 
     Render is configured for ten-minute invocations, but this database-backed
     guard also protects an existing service whose Dashboard schedule has not
-    yet been reconciled with the Blueprint.  A small allowance absorbs the
-    time spent completing the previous request without admitting a five-minute
-    acquisition path.
+    yet been reconciled with the Blueprint. The CLI waits out normal scheduler
+    jitter while holding the database lock; it never shortens this interval.
     """
     # Forecast overrides do not shorten the acquisition interval.
     last_success = pd.to_datetime(
@@ -628,7 +627,7 @@ def station_ingest_is_due(
     if pd.isna(last_success):
         return True
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
-    interval_seconds = max(1, int(cfg.station_refresh_minutes)) * 60
+    interval_seconds = max(10, int(cfg.station_refresh_minutes)) * 60
     elapsed_seconds = max(0.0, (current - last_success).total_seconds())
     return elapsed_seconds >= interval_seconds
 
@@ -651,12 +650,12 @@ def pipeline_cycle_is_due(
                 text("SELECT v FROM meta WHERE k='last_pipeline_cycle_started'")
             ).scalar_one_or_none()
     except SQLAlchemyError:
-        return True
+        return False
     last_started = pd.to_datetime(value, utc=True, errors="coerce")
     if pd.isna(last_started):
         return True
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
-    interval_seconds = max(1, int(cfg.station_refresh_minutes)) * 60
+    interval_seconds = max(10, int(cfg.station_refresh_minutes)) * 60
     elapsed_seconds = max(0.0, (current - last_started).total_seconds())
     return elapsed_seconds >= interval_seconds
 
