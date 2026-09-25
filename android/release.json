@@ -1,0 +1,8 @@
+{
+  "applicationId": "com.gio9772rm.meteopro",
+  "versionCode": 50200,
+  "versionName": "5.2.0",
+  "minSdk": 23,
+  "certificateSha256": "0E:22:20:AC:9D:DE:BC:42:75:62:E8:E0:0D:DC:E4:8D:68:8D:D4:96:8F:6E:DC:4E:09:83:A4:C5:52:90:B5:26",
+  "notes": "Nuova Meteo Pro: aggiornamenti OTA, widget Roma/Comacchio, accesso rapido a radar e astronomia. Installazione iniziale accanto alla vecchia app."
+}

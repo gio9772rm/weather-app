@@ -1,98 +1,93 @@
-# Meteo Pro Android · sorgenti recuperabili e widget
+# Meteo Pro Android 5.2 · OTA
 
-Il file ricevuto `MeteoV4.apk` è una Trusted Web Activity (TWA): apre il sito
-Meteo Pro nel browser Android. Le nuove pagine V5 sono quindi utilizzabili
-anche dall'app già installata, senza sostituire l'APK.
+Nuova app `com.gio9772rm.meteopro`, installabile accanto a `com.gio9772rm.meteov4`.
+Non sostituisce la vecchia firma. I dati meteo e lo storico restano sul server;
+preferenze browser, diario locale e iscrizioni push vanno verificati sul dispositivo.
+Esportare il diario prima di cambiare browser o cancellarne i dati.
 
-## APK esistente verificato
+## Uso
 
-- Generatore identificato nelle risorse: `bubblewrap-cli`.
-- Identificatore: `com.gio9772rm.meteov4`.
-- Versione Android: `versionCode=4`, `versionName=4`, target SDK 36.
-- SHA-256 del file: `3f55d6292f1a36b431cf3cd1bef1e4c089cffbcd25d85882d435e5d86a3a19ad`.
-- Certificato pubblico di firma, SHA-256:
-  `2A:87:75:3D:55:EC:90:82:C0:56:3C:8D:12:51:33:F7:41:D1:F2:32:7F:5A:BA:FD:5C:A6:ED:3E:09:31:FD:DF`.
+Scaricare l'APK firmato da **Altro → App e aggiornamenti** sul sito.
+Per la prima installazione Android richiede l'autorizzazione della fonte di download.
+Tenere premuta l'icona dell'app → **Aggiornamenti**, oppure aprire la stessa schermata
+tramite **App e aggiornamenti → Apri aggiornamenti nell'app**.
 
-Questo progetto è una nuova implementazione della parte Android, non il
-recupero dei sorgenti originali dall'APK. Mantiene l'identificatore e porta
-`versionCode` a 5. La CI produce un APK release **non firmato**, da firmare con
-la chiave originale. Non viene sostituito il download pubblico dell'APK attuale
-finché manca una firma verificata.
+- Controllo all'apertura quando sono trascorse sei ore e lavoro periodico ogni sei ore.
+  Android può ritardare il lavoro per risparmio energetico; non è una scadenza garantita.
+- Download automatico predefinito su rete non a consumo; entrambe le opzioni si possono cambiare.
+- Installazione con conferma; su Android 12+ si può abilitare l'installazione automatica.
+  Occorre consentire installazioni da Meteo Pro. Anche in modalità automatica Android
+  può richiedere una conferma: viene mostrata una notifica quando consentita.
+- Il download è conservato in memoria privata dell'app. Sono verificati host HTTPS,
+  dimensione, SHA-256, package, versione e certificato della versione installata.
+  PackageInstaller verifica nuovamente le firme crittografiche. Nessun downgrade.
+- I nuovi APK hanno URL immutabili. Il manifesto OTA e l'APK sono pubblicati insieme.
+- L'APK contiene solo endpoint pubblici: nessuna chiave Ecowitt o credenziale database.
 
-## Cosa aggiunge
+Le pagine web ricevono le novità al caricamento della nuova versione del sito/cache;
+non serve un APK per ogni modifica web. La pagina meteo mantiene il ciclo di 600 secondi.
+Il widget Roma/Comacchio ha un lavoro periodico di 30 minuti soggetto ai limiti Android,
+con almeno 10 minuti tra tentativi per stazione. Gli aggiornamenti OTA non acquisiscono
+misure meteo e non modificano questi intervalli.
 
-- Widget ridimensionabile con Roma/Comacchio selezionabili, temperatura,
-  umidità, vento e data/ora italiana della misura. Nessun segreto meteo nell'app.
-- Pulsanti per cambiare stazione, richiedere un aggiornamento e aprire il sito.
-- Conservazione dell'ultima misura datata quando la rete non è disponibile.
-- Collegamenti rapidi a radar e astronomia; navigazione limitata al dominio dell'app.
-- Endpoint compatto `/api/v5/widget/{station_id}`.
+## Compilazione e rilascio
 
-La pagina aperta mantiene un solo aggiornamento automatico ogni 600 secondi.
-Il widget segue i limiti Android: richiesta periodica ogni 30 minuti,
-eventualmente rinviata dal risparmio energetico. Anche i tentativi manuali del
-widget rispettano un minimo di dieci minuti per località. Non promette dati
-live mentre Android ha sospeso il lavoro. Requisito della nuova shell: Android 6+
-(API 23); il vecchio APK rimane disponibile per i dispositivi precedenti.
+JDK 17, SDK 36, Gradle 8.13 e AGP 8.13.0. Android minimo: 6 (API 23).
+`android/release.json` definisce versione nativa e impronta pubblica della firma.
+Incrementare **versionCode** e **versionName** solo quando serve un APK nuovo.
+Aggiornare anche le note. Il sito può essere pubblicato indipendentemente.
 
-## Come trovare il file di firma su Windows
-
-Sul PC usato per creare l'APK apri **Prompt dei comandi** e lancia:
-
-```bat
-where /r "%USERPROFILE%" *.jks *.keystore twa-manifest.json
-where /r C:\Meteo *.jks *.keystore twa-manifest.json
+```sh
+gradle -p android :app:assembleRelease :app:lintRelease :app:testReleaseUnitTest
 ```
 
-La ricerca è in sola lettura e può durare qualche minuto. Controlla anche gli
-ZIP scaricati quando hai creato l'app con PWABuilder/Bubblewrap: il pacchetto
-Android può contenere `signing.keystore`, `android.keystore`, un `.jks`,
-`twa-manifest.json` o istruzioni con alias della chiave. Se trovi il manifest,
-il campo `signingKey` può indicare il percorso della chiave e l'alias.
+La CI produce un APK non firmato per ogni PR. Il workflow **Android OTA - Release**
+può firmare e pubblicare solo dopo il successo della CI completa sul commit corrente
+in main e se release.json richiede una versione superiore a quella pubblicata.
+Non usa segreti su PR. Se manca la firma, segnala il rilascio in attesa e non pubblica
+APK non firmati. Lo stesso numero di versione non viene mai sovrascritto.
 
-**Occorrono il file `.jks`/`.keystore`, l'alias e le password associate.**
-La chiave privata e le password non sono contenute nel certificato pubblico
-dell'APK. Non aggiungerle al repository, a una issue o a un commento pubblico.
-Puoi effettuare la firma direttamente sul tuo PC, così la chiave non esce dal
-computer. Per leggere alias e impronta, `keytool` chiede la password senza
-inserirla nella riga del comando:
+Il rilascio automatico usa due segreti GitHub Actions del repository:
+`ANDROID_KEYSTORE_B64` e `ANDROID_KEYSTORE_PASSWORD`; alias `meteo-pro`.
+**Non aggiungere il keystore o la password al repository pubblico.**
+Dal backup privato della firma, sul PC Windows già autenticato con `gh`, eseguire:
 
-```bat
-keytool -list -v -keystore "C:\percorso\signing.keystore"
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Configure-Signing.ps1
 ```
 
-Verifica che l'impronta SHA-256 corrisponda a quella sopra. Se avevi usato un
-servizio di generazione, recupera il pacchetto/backup da quel servizio.
-Se la chiave è perduta e l'app era distribuita direttamente come APK, una
-nuova chiave non produce un aggiornamento installabile sopra l'app esistente.
-Play App Signing è un percorso diverso, applicabile solo se la distribuzione
-originale era effettivamente tramite Google Play.
+Lo script invia il keystore e la password esclusivamente ai due segreti GitHub Actions
+di `gio9772rm/weather-app`, senza stamparli. Avvia poi il workflow di rilascio.
+Il backup privato contiene quanto serve per la continuità delle firme: conservarne
+una seconda copia protetta. La chiave pubblica/certificato non permette di ricrearlo.
 
-## Compilare e firmare
+Il workflow prepara APK e manifest, li verifica con `apksigner`/`aapt` e fa un normale
+push senza forzare main. Una modifica concorrente blocca il push. Render distribuisce
+il commit insieme. I commit del bot non innescano altre Actions; tutti i controlli
+su sorgente e firma sono eseguiti prima. Una versione correttiva richiede un nuovo
+versionCode; non si effettua downgrade dei telefoni.
 
-Apri la cartella `android` in Android Studio con JDK 17, Android SDK 36 e Gradle
-8.13 (AGP 8.13.0). Il workflow del repository compila e controlla il progetto
-anche senza installare Android Studio sul tuo PC. L'artefatto GitHub Actions
-`meteo-pro-android-unsigned-...` contiene `app-release-unsigned.apk`.
+## Firma locale
 
-Da una distribuzione locale di Gradle 8.13:
+L'artefatto CI contiene l'APK non firmato e gli strumenti ufficiali SDK di firma.
+Usare `apksigner sign --ks meteo-pro.jks --ks-key-alias meteo-pro ...` e lasciare
+richiedere la password oppure usare un file/env locale. `android/release_tools.py`
+verifica firma, package, versione e SDK prima di generare i file pubblici.
+La distribuzione contiene esclusivamente l'APK firmato, mai il keystore.
 
-```bat
-gradle -p android :app:assembleRelease :app:lintRelease
-```
+Prima di considerare verificata l'installazione su un telefono reale: installare la
+nuova app, aprire sito e schermata Aggiornamenti, aggiungere il widget, verificare
+permessi notifiche/installazione, rete assente e annullamento di un aggiornamento.
+Compilazione, lint e unit test non sostituiscono il collaudo sul dispositivo.
 
-La firma si può effettuare con Android Studio, **Build → Generate Signed
-Bundle / APK → APK**, selezionando il keystore originale, oppure con
-`apksigner sign --ks ... --ks-key-alias ... --out MeteoPro.apk app-release-unsigned.apk`.
-Lascia che lo strumento chieda le password. Verifica quindi con
-`apksigner verify --verbose --print-certs MeteoPro.apk`.
+## Vecchia app
 
-Prima di sostituire il download pubblico serve la prova su telefono: aggiornare
-sopra la versione 4 senza disinstallarla, aprire le pagine, aggiungere il widget,
-cambiare stazione e verificare rete assente/risparmio energetico. La compilazione
-e il lint non sostituiscono questa prova né dimostrano la compatibilità della firma.
+Il file `static/MeteoV4.apk` e la sua configurazione restano disponibili.
+L'app precedente è una TWA Bubblewrap, versione 4, identità `com.gio9772rm.meteov4`.
+La sua chiave privata non si ricava dall'APK. La nuova app usa una chiave distinta;
+entrambe le identità sono dichiarate in `assetlinks.json`.
 
-Documentazione ufficiale:
+Riferimenti ufficiali:
+- https://developer.android.com/reference/android/content/pm/PackageInstaller.SessionParams
 - https://developer.android.com/studio/publish/app-signing
-- https://developer.android.com/develop/ui/views/appwidgets/advanced
-- https://github.com/GoogleChrome/android-browser-helper
+- https://developer.android.com/distribute/marketing-tools/alternative-distribution

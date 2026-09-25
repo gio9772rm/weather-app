@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0c1828">
+<title>Aggiornamenti · Meteo Pro</title>
+<link rel="icon" href="/assets/v5/icon.svg">
+<style>
+  :root{color-scheme:light dark;--bg:#f1f5fa;--card:#fff;--ink:#102a43;--muted:#3e5670;--line:#c4d3e3;--accent:#165b98}
+  @media(prefers-color-scheme:dark){:root{--bg:#0c1828;--card:#14243a;--ink:#f0f6ff;--muted:#bccde0;--line:#405976;--accent:#91ccff}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 system-ui,sans-serif}main{max-width:920px;margin:auto;padding:32px 22px 64px}
+  a{color:var(--accent)}h1{font-size:clamp(32px,6vw,52px);line-height:1.1;margin:28px 0 12px}h2{font-size:23px}p{color:var(--muted)}.eyebrow{font-weight:700;letter-spacing:.1em;font-size:13px;color:var(--accent)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:26px;margin-top:20px}.actions{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:22px}
+  .button{display:inline-block;text-decoration:none;border:1px solid var(--accent);border-radius:12px;padding:12px 20px;font-weight:650;color:var(--ink);background:var(--card)}.primary{background:#165b98;color:white;border-color:#165b98}.small{font-size:14px}.version{font-size:24px;font-weight:700}.hash{overflow-wrap:anywhere;font:13px/1.6 monospace}#notes{white-space:pre-wrap}[hidden]{display:none!important}@media(max-width:650px){.grid{grid-template-columns:1fr}.card{padding:22px}.actions>*{width:100%;text-align:center}}
+</style>
+<main>
+  <a href="/">← Torna al meteo</a>
+  <h1>Meteo Pro, sempre aggiornata.</h1>
+  <p>Le novità del sito arrivano nell’app senza reinstallazioni. Per widget e funzioni Android, usa gli aggiornamenti dell’APK.</p>
+  <section class="card" aria-labelledby="android-title">
+    <span class="eyebrow">ANDROID · DISTRIBUZIONE DIRETTA</span>
+    <h2 id="android-title">La nuova app Meteo Pro</h2>
+    <div id="status" role="status">Verifica della versione pubblicata…</div>
+    <p id="notes"></p>
+    <div class="actions"><a id="download" class="button primary" hidden>Scarica APK firmato</a><a id="native" class="button" href="intent://updates#Intent;scheme=meteopro;package=com.gio9772rm.meteopro;end" hidden>Apri aggiornamenti nell’app</a></div>
+    <p class="small">Android 6 o successivo. La prima installazione richiede il consenso Android per la fonte di download. La nuova app può convivere con MeteoV4: non occorre disinstallarla.</p>
+    <details id="verification" hidden><summary>Integrità del file e firma</summary><p class="small">SHA-256 APK</p><div id="hash" class="hash"></div><p class="small">Certificato della nuova app</p><div id="certificate" class="hash"></div></details>
+  </section>
+  <div class="grid">
+    <section class="card"><span class="eyebrow">SITO</span><h2>Le pagine si aggiornano dal web</h2><p>Grafici, radar, previsioni e astronomia usano il sito pubblicato. Dopo un rilascio, riapri o ricarica per ottenere le novità. I dati meteo mantengono il ciclo automatico di dieci minuti.</p></section>
+    <section class="card"><span class="eyebrow">APP</span><h2>Scegli quando installare</h2><p>Nella schermata nativa Aggiornamenti trovi download automatico, opzione Wi-Fi e installazione. Il controllo periodico è circa ogni sei ore, compatibilmente con il risparmio energetico Android.</p><p class="small">L’installazione automatica è facoltativa. Android può chiedere una conferma. Puoi sempre rimandare.</p></section>
+  </div>
+  <p class="small">Lo storico delle stazioni resta sul server. Eventuali preferenze, abbonamenti agli avvisi e note personali sul dispositivo vanno verificati nella nuova app; il diario dispone di esportazione e importazione.</p>
+</main>
+<script src="updates.js" defer></script>
+</html>

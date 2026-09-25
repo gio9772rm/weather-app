@@ -697,7 +697,7 @@ function moreView() {
       "Condizioni scelte da te, senza notifiche ripetute.",
     ],
   ];
-  return `<h1>Il tuo osservatorio, completo</h1><p>Strumenti quotidiani e approfondimenti scientifici, nello stesso posto.</p><div class="grid">${tools.map(([p, i, h, t]) => `<a class="card tool-card span-4" href="?page=${p}" data-go="${p}"><span class="tool-icon">${i}</span><h2>${h}</h2><p>${t}</p></a>`).join("")}<a class="card tool-card span-12" href="?page=cities" data-go="cities"><h2>Cerca una città o un CAP</h2><p>Previsioni mondiali e confronto con la stazione selezionata.</p></a><a class="card tool-card span-6" href="${esc(proLink("system"))}"><h2>Sistema e diagnostica</h2><p>Controllo salute, sorgenti e backup. I dettagli riservati richiedono accesso amministratore.</p></a><a class="card tool-card span-6" href="${esc(proLink("info"))}"><h2>Fonti, metodo e limiti</h2><p>Come sono ottenuti i dati, cosa è misurato e cosa è stimato.</p></a></div>`;
+  return `<h1>Il tuo osservatorio, completo</h1><p>Strumenti quotidiani e approfondimenti scientifici, nello stesso posto.</p><div class="grid">${tools.map(([p, i, h, t]) => `<a class="card tool-card span-4" href="?page=${p}" data-go="${p}"><span class="tool-icon">${i}</span><h2>${h}</h2><p>${t}</p></a>`).join("")}<a class="card tool-card span-6" href="/app/static/android/index.html"><h2>App e aggiornamenti</h2><p>Scarica Meteo Pro e gestisci gli aggiornamenti Android.</p></a><a class="card tool-card span-12" href="?page=cities" data-go="cities"><h2>Cerca una città o un CAP</h2><p>Previsioni mondiali e confronto con la stazione selezionata.</p></a><a class="card tool-card span-6" href="${esc(proLink("system"))}"><h2>Sistema e diagnostica</h2><p>Controllo salute, sorgenti e backup. I dettagli riservati richiedono accesso amministratore.</p></a><a class="card tool-card span-6" href="${esc(proLink("info"))}"><h2>Fonti, metodo e limiti</h2><p>Come sono ottenuti i dati, cosa è misurato e cosa è stimato.</p></a></div>`;
 }
 function mapsView() {
   return `<h1>Radar e mappe</h1><p>Ogni prodotto mantiene la propria origine e il proprio orario.</p><div class="grid"><article class="card span-6"><span class="tag">OSSERVAZIONE</span><h2>Radar e fulmini DPC</h2><p>Eco radar e fulminazioni osservate. Consulta nel pannello Pro l’ultimo fotogramma disponibile e il suo orario.</p>${proAnchor("radar", "Apri radar della località")}</article><article class="card span-6"><span class="tag">TENDENZA PREVISTA</span><h2>Movimento delle precipitazioni</h2><p>Il nowcast è una tendenza a breve termine, non una nuova osservazione. Se non sono disponibili fotogrammi futuri viene dichiarato nel pannello.</p>${proAnchor("radar", "Apri animazione e mappe")}</article></div>`;
@@ -1065,23 +1065,22 @@ async function disablePush() {
   }
 }
 async function checkAndroidShell() {
-  const params = new URLSearchParams(location.search),
-    installed = Number(params.get("shell"));
-  if (
-    (params.get("src") !== "twa" &&
-      !document.referrer.startsWith("android-app://")) ||
-    !installed
-  )
-    return;
+  const params = new URLSearchParams(location.search);
+  if (params.get("src") !== "twa" && !document.referrer.startsWith("android-app://")) return;
   try {
-    const info = await (
-      await fetch("/app/static/android-version.json", { cache: "no-store" })
-    ).json();
-    if (info.shellVersion <= installed) return;
+    const response = await fetch("/app/static/android/manifest.json", { cache: "no-store" });
+    if (!response.ok) return;
+    const info = await response.json();
+    if (info.applicationId !== "com.gio9772rm.meteopro" || !Number.isSafeInteger(info.versionCode)) return;
+    const sameApp = params.get("app") === info.applicationId;
+    if (sameApp && info.versionCode <= Number(params.get("shell"))) return;
     const bar = document.createElement("div");
     bar.className = "notice";
-    bar.innerHTML =
-      'È disponibile un aggiornamento dell’app Android. <a href="/app/static/MeteoV4.apk">Scarica APK</a>';
+    bar.textContent = sameApp ? "È disponibile un aggiornamento Android. " : "È disponibile la nuova Meteo Pro con aggiornamenti OTA, installabile accanto alla vecchia app. ";
+    const link = document.createElement("a");
+    link.href = "/app/static/android/index.html";
+    link.textContent = "App e aggiornamenti";
+    bar.append(link);
     $("#content").prepend(bar);
   } catch {}
 }

@@ -1,1 +1,26 @@
-[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"com.gio9772rm.meteov4","sha256_cert_fingerprints":["2A:87:75:3D:55:EC:90:82:C0:56:3C:8D:12:51:33:F7:41:D1:F2:32:7F:5A:BA:FD:5C:A6:ED:3E:09:31:FD:DF"]}}]
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.gio9772rm.meteov4",
+      "sha256_cert_fingerprints": [
+        "2A:87:75:3D:55:EC:90:82:C0:56:3C:8D:12:51:33:F7:41:D1:F2:32:7F:5A:BA:FD:5C:A6:ED:3E:09:31:FD:DF"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.gio9772rm.meteopro",
+      "sha256_cert_fingerprints": [
+        "0E:22:20:AC:9D:DE:BC:42:75:62:E8:E0:0D:DC:E4:8D:68:8D:D4:96:8F:6E:DC:4E:09:83:A4:C5:52:90:B5:26"
+      ]
+    }
+  }
+]
