@@ -2,6 +2,9 @@
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+  <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <queries><intent><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https"/></intent></queries>
   <application android:label="Meteo Pro" android:icon="@drawable/ic_meteo" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
     <meta-data android:name="asset_statements" android:resource="@string/asset_statements"/>
@@ -18,5 +21,10 @@
       <meta-data android:name="android.appwidget.provider" android:resource="@xml/meteo_widget"/>
     </receiver>
     <service android:name=".WidgetJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
+    <service android:name=".UpdateJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
+    <receiver android:name=".InstallReceiver" android:exported="false"/>
+    <activity android:name=".UpdateActivity" android:exported="true" android:label="Aggiornamenti Meteo Pro">
+      <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="meteopro" android:host="updates"/></intent-filter>
+    </activity>
   </application>
 </manifest>

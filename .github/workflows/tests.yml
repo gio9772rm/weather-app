@@ -66,7 +66,15 @@ jobs:
           echo "$RUNNER_TEMP/gradle/gradle-8.13/bin" >> "$GITHUB_PATH"
       - name: Build and lint unsigned Android release
         working-directory: android
-        run: gradle --no-daemon :app:assembleRelease :app:lintRelease
+        run: gradle --no-daemon :app:assembleRelease :app:lintRelease :app:testReleaseUnitTest
+      - name: Collect official APK signing tools for private local signing
+        run: |
+          mkdir -p android/app/build/signing-tools
+          tools_dir="$(dirname "$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner | sort -V | tail -1)")"
+          cp "$tools_dir/apksigner" "$tools_dir/aapt" android/app/build/signing-tools/
+          mkdir -p android/app/build/signing-tools/lib
+          cp "$tools_dir/lib/apksigner.jar" android/app/build/signing-tools/lib/
+          if [ -d "$tools_dir/lib64" ]; then cp -r "$tools_dir/lib64" android/app/build/signing-tools/; fi
       - name: Save unsigned release and lint results
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -75,4 +83,6 @@ jobs:
           path: |
             android/app/build/outputs/apk/release/*unsigned.apk
             android/app/build/reports/lint-results-release.*
+            android/app/build/reports/tests/testReleaseUnitTest/
+            android/app/build/signing-tools/
           retention-days: 30
