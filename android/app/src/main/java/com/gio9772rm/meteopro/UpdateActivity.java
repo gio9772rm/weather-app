@@ -30,6 +30,13 @@ public class UpdateActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         ScrollView scroll = new ScrollView(this);
+        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            } else view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+            return insets;
+        });
         layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (24 * getResources().getDisplayMetrics().density);
         layout.setPadding(pad, pad, pad, pad); layout.setBackgroundColor(Color.rgb(12, 24, 40)); scroll.addView(layout);

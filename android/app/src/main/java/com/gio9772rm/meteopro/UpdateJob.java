@@ -9,7 +9,7 @@ import android.content.Context;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UpdateJob extends JobService {
-    private final java.util.Map<Integer, AtomicBoolean> active = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Integer, AtomicBoolean> active = new java.util.concurrent.ConcurrentHashMap<>();
     static void schedule(Context c) {
         JobScheduler scheduler = c.getSystemService(JobScheduler.class);
         if (scheduler == null) return;

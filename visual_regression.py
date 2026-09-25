@@ -430,6 +430,35 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
     return digests
 
 
+def _android_update_checks(browser, base_url: str, output: Path) -> dict:
+    """The standalone download screen stays usable without a weather snapshot."""
+    from playwright.sync_api import expect
+
+    config = json.loads(Path("android/release.json").read_text())
+    valid = {"schema": 1, **config, "sizeBytes": 3500000, "sha256": "a" * 64,
+             "apkUrl": f"https://weather-app-v3-w2jd.onrender.com/app/static/android/MeteoPro-{config['versionName']}.apk"}
+    results = {}
+    for theme in ("light", "dark"):
+        for width in (390, 1440):
+            page = browser.new_page(viewport={"width": width, "height": 900}, color_scheme=theme)
+            page.route("**/app/static/android/manifest.json", lambda route: route.fulfill(json=valid))
+            page.goto(f"{base_url}/app/static/android/index.html")
+            expect(page.locator("#download")).to_be_visible()
+            expect(page.locator("#download")).to_have_attribute("href", valid["apkUrl"])
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 3")
+            name = f"android-updates-{theme}-{width}"
+            image = output / f"{name}.png"
+            page.screenshot(path=str(image), full_page=True)
+            results[name] = hashlib.sha256(image.read_bytes()).hexdigest()
+            page.unroute("**/app/static/android/manifest.json")
+            page.route("**/app/static/android/manifest.json", lambda route: route.fulfill(json={**valid, "apkUrl": "https://untrusted.example/app.apk"}))
+            page.reload()
+            expect(page.locator("#status")).to_contain_text("Non è possibile verificare")
+            expect(page.locator("#download")).to_be_hidden()
+            page.close()
+    return results
+
+
 def _wait_for_app(url: str, process: subprocess.Popen[str]) -> None:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -496,6 +525,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
                 digests.update(_v5_checks(browser, base_url, output_path))
+                digests.update(_android_update_checks(browser, base_url, output_path))
                 for name, tab, theme, width, height in CASES:
                     page = browser.new_page(viewport={"width": width, "height": height})
                     screenshot = output_path / f"{name}.png"
