@@ -267,6 +267,55 @@ def _seed_second_station() -> None:
                 "payload": forecast.to_json(orient="records"),
             },
         )
+        # Populate the new model table/plot so responsive checks cover data,
+        # not just empty-state cards. These are isolated synthetic fixtures.
+        now = pd.Timestamp.now(tz="UTC")
+        from v5_data import clean_json
+
+        scores = [
+            {
+                "provider": "canonical",
+                "model": "baseline",
+                "basis": "live",
+                "variable": "temp_c",
+                "horizon": "0–6 h",
+                "start": now - pd.Timedelta(days=45),
+                "end": now,
+                "n": 500,
+                "days": 45,
+                "holdout_n": 100,
+                "holdout_mae": 1.2,
+                "corrected_mae": 1.3,
+                "persistence_mae": 2,
+                "persistence_n": 100,
+                "eligible": False,
+                "applied": False,
+            }
+        ]
+        products = {
+            "verification": {
+                "evaluated_at": now,
+                "method": "Dati sintetici per verifica visuale",
+                "scores": scores,
+            },
+            "weathernext": {
+                "fetched_at": now,
+                "note": "Fixture a intervalli di sei ore",
+                "rows": forecast.iloc[::6][["valid_time", "temp_c"]].to_dict("records"),
+            },
+        }
+        for station in ("visual-primary", "visual-secondary"):
+            for key, payload in products.items():
+                con.execute(
+                    text(
+                        "INSERT INTO v5_products(product_key,attempted_at,payload) VALUES(:key,:at,:payload)"
+                    ),
+                    {
+                        "key": key + ":" + station,
+                        "at": now.isoformat(),
+                        "payload": json.dumps(clean_json(payload)),
+                    },
+                )
 
 
 def _v5_checks(browser, base_url: str, output: Path) -> dict:
@@ -291,6 +340,10 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 "journal",
                 "inbox",
                 "activities",
+                "quality",
+                "models",
+                "archive",
+                "events",
             ):
                 name = f"v5-{view}-{theme}-{width}"
                 try:
@@ -331,11 +384,26 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             assert page.evaluate(
                 "['constructor','toString','__proto__'].every(p => window.MeteoExtra.view(p) === undefined)"
             ), "Unknown tools must never dispatch inherited object methods"
+            assert page.evaluate(
+                "['constructor','toString','__proto__'].every(p => window.MeteoInsights.view(p) === undefined)"
+            ), "Unknown insights must never dispatch inherited object methods"
             # Exercise real planner calculation and private journal persistence.
             page.goto(f"{base_url}/?page=planner&theme={theme}")
             page.wait_for_selector('[name="target"]')
             page.get_by_role("button", name="Calcola il piano", exact=True).click()
             expect(page.locator("#plan-result .fov").first).to_be_visible(timeout=15000)
+            expect(page.locator(".session-summary")).to_contain_text(
+                "SESSIONE UTILIZZABILE"
+            )
+            assert not errors, errors
+            page.goto(f"{base_url}/?page=events&theme={theme}")
+            page.get_by_role("button", name="Ricostruisci evento", exact=True).click()
+            expect(page.locator("#event-status")).to_have_text(
+                "Evento ricostruito", timeout=15000
+            )
+            expect(page.locator("#event-result")).to_contain_text(
+                "Intensità pioggia osservata"
+            )
             assert not errors, errors
             page.goto(f"{base_url}/?page=journal&theme={theme}")
             page.locator("#journal-target").fill("M31 · prova sessione")
@@ -494,7 +562,10 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
             _wait_for_app(base_url, process)
             digests: dict[str, str] = {}
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True)
+                browser = playwright.chromium.launch(
+                    headless=True,
+                    executable_path=os.getenv("METEO_BROWSER_EXECUTABLE") or None,
+                )
                 digests.update(_v5_checks(browser, base_url, output_path))
                 for name, tab, theme, width, height in CASES:
                     page = browser.new_page(viewport={"width": width, "height": height})
@@ -684,9 +755,9 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             # The old plots remain mounted during the form rerun.
                             # Wait for its result, then for Streamlit's stale fade
                             # to finish before auditing actual settled contrast.
-                            page.get_by_text(re.compile(r"^Profilo .+ attivo\.$")).wait_for(
-                                state="visible", timeout=30_000
-                            )
+                            page.get_by_text(
+                                re.compile(r"^Profilo .+ attivo\.$")
+                            ).wait_for(state="visible", timeout=30_000)
                             page.wait_for_function(
                                 """() => [...document.querySelectorAll('[data-testid="stCaptionContainer"] p')].every(el => {
                                   for (let node=el; node && !node.matches('.stApp'); node=node.parentElement) {

@@ -196,6 +196,7 @@ def planner(station_id: str, values: dict) -> dict:
         summarize_night_plan,
     )
     from v5_astronomy import observing_forecast
+    from v5_sessions import session_limits, target_sessions
 
     cfg = station_settings(station_id)
     now = pd.Timestamp.now(tz="UTC")
@@ -238,7 +239,9 @@ def planner(station_id: str, values: dict) -> dict:
         equipment_profile(**values["equipment"]) if values.get("equipment") else None
     )
     forecast = scoped_forecast(station_id)
-    weather = observing_forecast(forecast, cfg, values.get("profile", "deep_sky"), now)
+    profile = values.get("profile", "deep_sky")
+    limits = session_limits(profile, values.get("limits"))
+    weather = observing_forecast(forecast, cfg, profile, now)
     tracks = night_plan_tracks(
         weather,
         cfg,
@@ -250,6 +253,7 @@ def planner(station_id: str, values: dict) -> dict:
         horizon_mask=horizon,
     )
     summaries = summarize_night_plan(tracks, equipment=equipment, rotation_deg=rotation)
+    sessions, session_detail = target_sessions(tracks, weather, limits, moon)
     geometry = (
         {
             name: framing_geometry(
@@ -270,6 +274,10 @@ def planner(station_id: str, values: dict) -> dict:
             "tracks": records(tracks),
             "field": asdict(field_of_view(equipment)) if equipment else None,
             "geometry": geometry,
+            "profile": profile,
+            "limits": limits,
+            "sessions": sessions,
+            "session_detail": session_detail,
         }
     )
 
