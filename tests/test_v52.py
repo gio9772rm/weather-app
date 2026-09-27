@@ -147,6 +147,8 @@ def test_hourly_rain_alignment_and_missing_coverage():
     result = observed_hourly(frame)
     assert result.iloc[0].time == pd.Timestamp("2026-09-01T01:00Z")
     assert result.iloc[0].rain_mm == pytest.approx(1.2)
+    single_gap = frame.drop(index=2)
+    assert pd.isna(observed_hourly(single_gap).iloc[0].rain_mm)
     frame.loc[12:16, "rain_mm"] = None
     assert pd.isna(observed_hourly(frame).iloc[-1].rain_mm)
     duplicated = pd.concat([frame, frame], ignore_index=True)

@@ -232,7 +232,7 @@ def observed_hourly(observations):
             output[var] = (
                 buckets.resample("h", closed="right", label="right")
                 .sum(min_count=1)
-                .where(counts >= 10)
+                .where(counts == 12)
             )
         else:
             # Point forecasts compare with the last nearby observed value.
@@ -286,6 +286,12 @@ def verify(forecast, observations, now):
     persistence = observations.copy()
     persistence["time"] = utc(persistence.time)
     persistence = persistence.dropna(subset=["time"]).sort_values("time")
+    if "data_quality" in persistence:
+        persistence = persistence[
+            ~persistence.data_quality.fillna("").str.contains(
+                "suspect|invalid|stuck", case=False
+            )
+        ]
     results = []
     for (provider, model, basis, horizon), group in pairs.groupby(
         ["provider", "model", "basis", "horizon"], observed=True
