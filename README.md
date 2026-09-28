@@ -1,4 +1,4 @@
-> **V5.3**: [confronti omogenei, sessioni e profili sincronizzati](CHANGELOG_V5_3.md) · [novità V5.2](CHANGELOG_V5_2.md).
+> **V5.4**: [riepilogo, pianificatore guidato e sequenze N.I.N.A.](CHANGELOG_V5_4.md) · **V5.3**: [confronti omogenei, sessioni e profili sincronizzati](CHANGELOG_V5_3.md) · [novità V5.2](CHANGELOG_V5_2.md).
 
 # Meteo Pro V5
 

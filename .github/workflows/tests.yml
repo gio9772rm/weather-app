@@ -25,7 +25,9 @@ jobs:
           ruff check .
           python privacy_audit.py
       - name: Unit tests
-        run: python -m pytest -q
+        run: |
+          python -m pytest -q
+          node --test tests/v54.test.cjs
 
   visual:
     runs-on: ubuntu-22.04

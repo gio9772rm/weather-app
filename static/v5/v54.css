@@ -1,0 +1,29 @@
+.briefing-grid, .reliability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.briefing-grid section + section, .reliability-grid section + section { border-left: 1px solid var(--line); padding-left: 24px; }
+.briefing-grid h3, .reliability-grid h3 { font-size: 1.05rem; }
+.next-hours { margin: 20px 0 12px; }
+.next-hours h2 { margin: 8px 0; }
+.reliability { margin-bottom: 24px; }
+.reliability summary { font-weight: 700; cursor: pointer; }
+.reliability small, .next-hours small { color: var(--muted); line-height: 1.6; }
+.planner-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 28px; }
+.planner-steps button { border: 1px solid var(--line); background: var(--soft); color: var(--ink); padding: 14px 8px; border-radius: 10px; min-height: 48px; }
+.planner-steps button[aria-current="step"] { border: 2px solid var(--teal); color: var(--teal); font-weight: 700; }
+.guided-planner [hidden] { display: none !important; }
+.guided-planner details { margin: 24px 0; }
+.guided-planner summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+.guided-planner fieldset { min-width: 0; }
+.planner-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
+.planner-review { background: var(--soft); padding: 18px; border-radius: 12px; line-height: 1.65; }
+.nina-export { margin: 20px 0; }
+.nina-export summary { font-weight: 700; cursor: pointer; }
+#nina-dialog { width: min(720px, calc(100vw - 24px)); max-height: 90vh; overflow: auto; }
+#nina-dialog .nina-confirm { display: flex; align-items: flex-start; gap: 12px; margin: 20px 0; line-height: 1.6; }
+#nina-dialog input[type="checkbox"] { flex: 0 0 auto; margin-top: 5px; }
+@media (max-width: 700px) {
+  .briefing-grid, .reliability-grid { grid-template-columns: 1fr; gap: 12px; }
+  .briefing-grid section + section, .reliability-grid section + section { border-left: 0; border-top: 1px solid var(--line); padding: 12px 0 0; }
+  .planner-steps button { font-size: .84rem; }
+  .planner-steps b { display: block; margin-bottom: 4px; }
+  .planner-actions button { flex: 1; }
+}
