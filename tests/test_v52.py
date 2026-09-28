@@ -100,6 +100,67 @@ def test_calibration_uses_later_holdout_and_a_causal_persistence():
     assert temperature["days"] >= 30 and temperature["holdout_n"] >= 30
 
 
+@pytest.mark.parametrize("native_first", [True, False])
+def test_verification_keeps_history_with_mixed_timestamp_precision(native_first):
+    forecast, obs, now = validation_data()
+    history = forecast.assign(acquired_at=forecast.issued_at)
+    # The latest research acquisition has fractional seconds, while historical
+    # model emissions and PostgreSQL observations can use whole seconds.
+    native = history.iloc[-1:].assign(
+        provider="google_weathernext2",
+        model="ensemble_mean_native6h",
+        issued_at=now - pd.Timedelta(microseconds=123456),
+        acquired_at=now - pd.Timedelta(microseconds=123456),
+        valid_time=now + pd.Timedelta(hours=6),
+        interval_hours=6,
+    )
+    history = history.assign(provider="canonical", model="baseline")
+    combined = pd.concat(
+        [native, history] if native_first else [history, native], ignore_index=True
+    )
+    expected = verify(combined, obs, now)
+    for column in ("issued_at", "valid_time", "acquired_at"):
+        combined[column] = [
+            stamp.isoformat()
+            if stamp.microsecond or i % 2
+            else stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+            for i, stamp in enumerate(combined[column])
+        ]
+    actual = verify(combined, obs, now)
+    assert expected
+    assert actual == expected
+
+
+def test_new_verification_method_recomputes_once_with_normal_cooldown(
+    sqlite_engine, monkeypatch
+):
+    from config import Settings
+    from v5_calibration import verification_key
+    from v5_extensions import read_product, refresh_product
+    from v5_pipeline import refresh_research
+
+    station_id = "rome-test"
+    old = {"scores": [], "method": "old"}
+    current = {"scores": [], "method": "current"}
+    refresh_product("verification:" + station_id, lambda: old, 21600)
+    monkeypatch.setenv("V5_RESEARCH_ENABLED", "false")
+    monkeypatch.setattr("v5_pipeline.public_stations", lambda cfg: [{"id": station_id}])
+    monkeypatch.setattr("v5_pipeline.station_settings", lambda sid, cfg: cfg)
+    monkeypatch.setattr("v5_data.scoped_forecast", lambda *a, **k: pd.DataFrame())
+    calls = []
+
+    def evaluate(identifier):
+        calls.append(identifier)
+        return current
+
+    monkeypatch.setattr("v5_calibration.update_verification", evaluate)
+    refresh_research(Settings.from_env())
+    refresh_research(Settings.from_env())
+    assert calls == [station_id]
+    assert read_product(verification_key(station_id)) == current
+    assert read_product("verification:" + station_id) == old
+
+
 def test_short_history_and_failed_validation_never_activate():
     forecast, obs, now = validation_data(10)
     assert not any(s["applied"] for s in verify(forecast, obs, now))
