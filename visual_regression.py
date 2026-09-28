@@ -18,6 +18,12 @@ from urllib.request import urlopen
 import numpy as np
 import pandas as pd
 
+# A complete, future photographic window independent of the runner's clock.
+# End before the autumn clock change; M81 stays above Rome's horizon year-round.
+_planner_day = (pd.Timestamp.now(tz="Europe/Rome") + pd.DateOffset(days=1)).date()
+PLANNER_START = pd.Timestamp(str(_planner_day) + "T21:00", tz="Europe/Rome")
+PLANNER_END = PLANNER_START.normalize() + pd.DateOffset(days=1, hours=1, minutes=30)
+
 CASES = tuple(
     (f"{tab}-{theme}-{viewport}", tab, theme, width, height)
     for tab in ("today", "system", "overview", "astronomy")
@@ -183,6 +189,23 @@ def _seed_database(path: Path) -> None:
                     "is_day": int(7 <= local_hour < 20),
                 }
             )
+            if (
+                PLANNER_START - pd.Timedelta(hours=1)
+                <= moment
+                <= PLANNER_END + pd.Timedelta(hours=1)
+            ):
+                forecast_rows[-1].update(
+                    temp=20,
+                    humidity=60,
+                    wind=5,
+                    gust=8,
+                    rain=0,
+                    probability=5,
+                    clouds=5,
+                    low=2,
+                    mid=3,
+                    high=5,
+                )
         connection.execute(
             text(
                 "INSERT INTO forecast_blend (valid_time,issued_at,temp_c,feels_like_c,"
@@ -451,10 +474,12 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 "['constructor','toString','__proto__'].every(p => window.MeteoInsights.view(p) === undefined)"
             ), "Unknown insights must never dispatch inherited object methods"
             # Exercise real planner calculation and private journal persistence.
-            page.goto(f"{base_url}/?page=planner&theme={theme}")
+            page.goto(f"{base_url}/?page=planner&station=visual-primary&theme={theme}")
             page.wait_for_selector('[name="target"]', state="attached")
             expect(page.locator("#planner-step-0")).to_be_visible()
             expect(page.locator("#planner-step-2")).to_be_hidden()
+            page.locator("#plan-start").fill(PLANNER_START.strftime("%Y-%m-%dT%H:%M"))
+            page.locator("#plan-end").fill(PLANNER_END.strftime("%Y-%m-%dT%H:%M"))
             page.locator("#planner-step-0 summary").click()
             for key, value in [
                 ("clouds", "100"),
@@ -475,6 +500,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             expect(page.locator("#eq-focal")).to_have_value("500")
             page.locator("#plan-next").click()
             expect(page.locator("#planner-review")).to_contain_text("Europe/Rome")
+            page.locator('[name="target"][value="M81"]').check()
             page.locator("#planner-step-2 summary").click()
             page.locator("#schedule-minimum_minutes").fill("15")
             page.locator("#schedule-compare_nights").fill("1")
@@ -485,6 +511,9 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             )
             expect(page.locator("#plan-result")).to_contain_text(
                 "Quale notte rende di più?"
+            )
+            expect(page.locator("#plan-result")).not_to_contain_text(
+                "Nessuna sequenza soddisfa durata minima"
             )
             expect(page.locator("#export-nina")).to_be_enabled()
             page.locator("#export-nina").click()
