@@ -392,6 +392,12 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             page = context.new_page()
             errors = []
             page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+            # Fast API/cache responses must not render before a slow extension.
+            page.route(
+                "**/assets/v5/v54.js*",
+                lambda route: (time.sleep(0.5), route.continue_()),
+                times=1,
+            )
             for view in (
                 "today",
                 "forecast",
@@ -424,6 +430,8 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                         <= 3
                     ), name + ": overflow"
                     assert page.locator("#view .card").count() > 0
+                    if view == "today":
+                        expect(page.locator(".next-hours")).to_be_visible()
                     assert not errors, errors
                     # Legend and line use the same actual computed color.
                     if page.locator(".chart-legend").count() and view != "timeline":

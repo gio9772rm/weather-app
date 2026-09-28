@@ -1138,4 +1138,6 @@ navigator.serviceWorker?.addEventListener("controllerchange", () =>
     enabled: prefs.offline,
   }),
 );
-refreshCycle();
+// The deferred extensions must be ready even when snapshots arrive from cache
+// before a script finishes downloading. This still starts only one timer.
+document.addEventListener("DOMContentLoaded", refreshCycle, { once: true });
