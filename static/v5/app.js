@@ -462,13 +462,6 @@ function airCard() {
   return `<article class="card span-6"><div class="card-header"><h2>Aria e pollini</h2><span class="tag">CAMS · PREVISIONE</span></div><div class="metric">${num(a.european_aqi, 0)}<small>AQI europeo</small></div><p class="metric-caption">${data.air ? "Dati modellistici del " + dateTime(a.time) + ". Non sono misure Ecowitt." : "Le misure ambientali della stazione non includono AQI o pollini."}</p><ul class="fact-list"><li><span>PM2.5 / PM10</span><b>${num(a.pm2_5)} / ${num(a.pm10)} µg/m³</b></li><li><span>Graminacee / ambrosia</span><b>${num(a.grass_pollen, 0)} / ${num(a.ragweed_pollen, 0)} grani/m³</b></li></ul><button class="quiet" data-go="air">Apri qualità dell’aria →</button></article>`;
 }
 function todayView() {
-  const next = (data.forecast || []).slice(0, 24),
-    rain = next.find(
-      (f) => Number(f.precip_probability) >= 40 && Number(f.rain_mm) > 0,
-    );
-  const intro = rain
-    ? `Possibile pioggia dalle ${clock(rain.valid_time)}: probabilità ${num(rain.precip_probability, 0)}%.`
-    : "Nelle ore disponibili non emerge una fase piovosa con probabilità almeno del 40%.";
   const renderers = {
     hours: hourStrip,
     chart: weatherChart,
@@ -479,8 +472,8 @@ function todayView() {
   };
   return (
     currentHero() +
+    (window.MeteoV54?.briefing() || "") +
     (window.MeteoInsights?.homeFocus() || "") +
-    `<p class="briefing">${next.length ? intro : "Previsione temporaneamente non disponibile."} <span>${esc(data.calibration || "")}</span></p>` +
     title(
       "La tua giornata, a colpo d’occhio",
       `<button class="quiet" data-settings>Personalizza</button>`,
@@ -524,14 +517,14 @@ function forecastView() {
       humidity: average("humidity"),
       wind_kmh: average("wind_kmh"),
       clouds: average("clouds"),
-      confidence: average("confidence"),
+      complete: part.length === forecastStep && ["temp_c", "rain_mm", "precip_probability", "wind_kmh", "wind_gust_kmh", "clouds"].every(k => values(k).length === part.length),
       wind_gust_kmh: maximum("wind_gust_kmh"),
       rain_mm:
         sums.length === forecastStep ? sums.reduce((a, b) => a + b, 0) : null,
       precip_probability: maximum("precip_probability"),
     });
   }
-  return `<h1>Le prossime giornate</h1><p>${esc(data.calibration)} · emissione ${dateTime(rows[0]?.issued_at)}</p><div class="grid">${(
+  return `<h1>Le prossime giornate</h1>${window.MeteoV54?.reliabilityMarkup()||""}<p>${esc(data.calibration)} · emissione ${dateTime(rows[0]?.issued_at)}</p><div class="grid">${(
     data.daily || []
   )
     .slice(0, 7)
@@ -541,7 +534,7 @@ function forecastView() {
     )
     .join(
       "",
-    )}${weatherChart()}</div><div class="controls"><button class="quiet" data-go="timeline">Grafici coordinati · cursore e zoom →</button></div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Fiducia</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${finite(f.confidence) ? num(f.confidence, 0) + "%" : "In raccolta"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${window.MeteoV53?.probabilities() || ""}${title("Verifica delle previsioni", '<button class="quiet" data-go="models">Quanto ci prende? →</button>')}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
+    )}${weatherChart()}</div><div class="controls"><button class="quiet" data-go="timeline">Grafici coordinati · cursore e zoom →</button></div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Dati del blocco</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${f.complete ? "Completi" : "Parziali"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${window.MeteoV53?.probabilities() || ""}${title("Verifica delle previsioni", '<button class="quiet" data-go="models">Quanto ci prende? →</button>')}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
 }
 function qualityTable() {
   const scores = (data.scores || []).filter((s) =>
@@ -1145,4 +1138,6 @@ navigator.serviceWorker?.addEventListener("controllerchange", () =>
     enabled: prefs.offline,
   }),
 );
-refreshCycle();
+// The deferred extensions must be ready even when snapshots arrive from cache
+// before a script finishes downloading. This still starts only one timer.
+document.addEventListener("DOMContentLoaded", refreshCycle, { once: true });

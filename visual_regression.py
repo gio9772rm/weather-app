@@ -18,6 +18,12 @@ from urllib.request import urlopen
 import numpy as np
 import pandas as pd
 
+# A complete, future photographic window independent of the runner's clock.
+# End before the autumn clock change; M81 stays above Rome's horizon year-round.
+_planner_day = (pd.Timestamp.now(tz="Europe/Rome") + pd.DateOffset(days=1)).date()
+PLANNER_START = pd.Timestamp(str(_planner_day) + "T21:00", tz="Europe/Rome")
+PLANNER_END = PLANNER_START.normalize() + pd.DateOffset(days=1, hours=1, minutes=30)
+
 CASES = tuple(
     (f"{tab}-{theme}-{viewport}", tab, theme, width, height)
     for tab in ("today", "system", "overview", "astronomy")
@@ -183,6 +189,23 @@ def _seed_database(path: Path) -> None:
                     "is_day": int(7 <= local_hour < 20),
                 }
             )
+            if (
+                PLANNER_START - pd.Timedelta(hours=1)
+                <= moment
+                <= PLANNER_END + pd.Timedelta(hours=1)
+            ):
+                forecast_rows[-1].update(
+                    temp=20,
+                    humidity=60,
+                    wind=5,
+                    gust=8,
+                    rain=0,
+                    probability=5,
+                    clouds=5,
+                    low=2,
+                    mid=3,
+                    high=5,
+                )
         connection.execute(
             text(
                 "INSERT INTO forecast_blend (valid_time,issued_at,temp_c,feels_like_c,"
@@ -369,6 +392,12 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             page = context.new_page()
             errors = []
             page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+            # Fast API/cache responses must not render before a slow extension.
+            page.route(
+                "**/assets/v5/v54.js*",
+                lambda route: (time.sleep(0.5), route.continue_()),
+                times=1,
+            )
             for view in (
                 "today",
                 "forecast",
@@ -401,6 +430,8 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                         <= 3
                     ), name + ": overflow"
                     assert page.locator("#view .card").count() > 0
+                    if view == "today":
+                        expect(page.locator(".next-hours")).to_be_visible()
                     assert not errors, errors
                     # Legend and line use the same actual computed color.
                     if page.locator(".chart-legend").count() and view != "timeline":
@@ -451,8 +482,36 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 "['constructor','toString','__proto__'].every(p => window.MeteoInsights.view(p) === undefined)"
             ), "Unknown insights must never dispatch inherited object methods"
             # Exercise real planner calculation and private journal persistence.
-            page.goto(f"{base_url}/?page=planner&theme={theme}")
-            page.wait_for_selector('[name="target"]')
+            page.goto(f"{base_url}/?page=planner&station=visual-primary&theme={theme}")
+            page.wait_for_selector('[name="target"]', state="attached")
+            expect(page.locator("#planner-step-0")).to_be_visible()
+            expect(page.locator("#planner-step-2")).to_be_hidden()
+            page.locator("#plan-start").fill(PLANNER_START.strftime("%Y-%m-%dT%H:%M"))
+            page.locator("#plan-end").fill(PLANNER_END.strftime("%Y-%m-%dT%H:%M"))
+            page.locator("#planner-step-0 summary").click()
+            for key, value in [
+                ("clouds", "100"),
+                ("wind", "100"),
+                ("gust", "150"),
+                ("pop", "100"),
+                ("dew", "0"),
+                ("alt", "0"),
+                ("moon", "0"),
+            ]:
+                page.locator("#plan-" + key).fill(value)
+            page.locator("#plan-next").click()
+            expect(page.locator("#planner-step-1")).to_be_visible()
+            page.locator("#eq-focal").fill("500")
+            page.get_by_role("button", name="Aggiorna ora", exact=True).click()
+            expect(page.locator("#refresh")).to_be_enabled()
+            expect(page.locator("#planner-step-1")).to_be_visible()
+            expect(page.locator("#eq-focal")).to_have_value("500")
+            page.locator("#plan-next").click()
+            expect(page.locator("#planner-review")).to_contain_text("Europe/Rome")
+            page.locator('[name="target"][value="M81"]').check()
+            page.locator("#planner-step-2 summary").click()
+            page.locator("#schedule-minimum_minutes").fill("15")
+            page.locator("#schedule-compare_nights").fill("1")
             page.get_by_role("button", name="Calcola il piano", exact=True).click()
             expect(page.locator("#plan-result .fov").first).to_be_visible(timeout=15000)
             expect(page.locator(".session-summary")).to_contain_text(
@@ -461,6 +520,20 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             expect(page.locator("#plan-result")).to_contain_text(
                 "Quale notte rende di più?"
             )
+            expect(page.locator("#plan-result")).not_to_contain_text(
+                "Nessuna sequenza soddisfa durata minima"
+            )
+            expect(page.locator("#export-nina")).to_be_enabled()
+            page.locator("#export-nina").click()
+            page.locator("#nina-reviewed").check()
+            with page.expect_download() as download:
+                page.get_by_role("button", name="Scarica JSON N.I.N.A.").click()
+            sequence = json.loads(Path(download.value.path()).read_text())
+            assert sequence["$type"].startswith(
+                "NINA.Sequencer.Container.SequenceRootContainer,"
+            )
+            assert len(sequence["Items"]["$values"][1]["Items"]["$values"]) > 0
+            page.locator("#nina-close").click()
             page.get_by_role(
                 "button", name="Salva sessione e avvisi", exact=True
             ).click()

@@ -422,7 +422,7 @@ def build_snapshot(
         else []
     )
     payload = {
-        "version": "5.3.0",
+        "version": "5.4.0",
         "station": {
             "id": station_id,
             "name": cfg.location_name,
@@ -510,6 +510,9 @@ def build_snapshot(
         and any(bool(row.get("local_corrections")) for row in payload["forecast"])
         else "Previsione di base · correzione locale in verifica"
     )
+    from v54_reliability import read_model_spread
+
+    payload["model_spread"] = read_model_spread(station_id, now)
     return clean_json(payload)
 
 

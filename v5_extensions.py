@@ -310,6 +310,7 @@ def planner(station_id: str, values: dict) -> dict:
             "start": start,
             "end": end,
             "generated_at": now,
+            "timezone": cfg.local_timezone,
             "summary": records(summaries),
             "tracks": records(tracks),
             "field": asdict(field_of_view(equipment)) if equipment else None,
