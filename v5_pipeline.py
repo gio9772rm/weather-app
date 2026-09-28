@@ -94,6 +94,10 @@ def refresh_secondary_forecast(cfg: Settings, *, force=False) -> int:
     )
     if not frames:
         raise RuntimeError("Previsione secondaria non disponibile")
+    from v5_calibration import archive_runs
+
+    for frame in frames:
+        archive_runs(scoped.station_id, frame)
     combined = select_secondary_forecast(frames)
     combined["issued_at"] = now
     combined["confidence"] = None
@@ -156,6 +160,7 @@ def run_v5_publication(cfg: Settings, *, force=False) -> dict:
             )
         except Exception:  # noqa: BLE001 - no substitution with Rome's ensemble
             log.warning("Ensemble secondario rinviato")
+    refresh_research(cfg)
     try:
         result["snapshots"] = publish_snapshots(cfg)
     except Exception:  # noqa: BLE001 - existing live ingestion remains independent
@@ -168,6 +173,65 @@ def run_v5_publication(cfg: Settings, *, force=False) -> dict:
     except Exception:  # noqa: BLE001 - never log push endpoint/key details
         log.warning("Avvisi V5 rinviati")
     return result
+
+
+def refresh_research(cfg: Settings) -> None:
+    """Optional work stays within the existing globally locked ten-minute cron."""
+    import os
+
+    from v5_calibration import archive_runs, update_verification
+    from v5_data import scoped_forecast
+    from v5_extensions import refresh_product
+    from v5_sources import refresh_previous_runs, refresh_weathernext
+
+    enabled = os.getenv("V5_RESEARCH_ENABLED", "true").lower() not in {
+        "false",
+        "0",
+        "no",
+    }
+    for station in public_stations(cfg):
+        identifier = station["id"]
+        scoped = station_settings(identifier, cfg)
+        try:
+            baseline = scoped_forecast(identifier, calibrated=False).copy()
+            if not baseline.empty:
+                baseline["provider"], baseline["model"] = "canonical", "baseline"
+                archive_runs(identifier, baseline)
+        except Exception:  # noqa: BLE001 - sources are independent
+            log.warning("Archivio previsione di base rinviato")
+        jobs = []
+        if enabled:
+            jobs.extend(
+                [
+                    (
+                        "weathernext:" + identifier,
+                        lambda s=scoped: refresh_weathernext(s),
+                        43200,
+                    ),
+                    (
+                        "previous:icon_seamless:" + identifier,
+                        lambda s=scoped: refresh_previous_runs(s, "icon_seamless"),
+                        86400,
+                    ),
+                    (
+                        "previous:ecmwf_ifs025:" + identifier,
+                        lambda s=scoped: refresh_previous_runs(s, "ecmwf_ifs025"),
+                        86400,
+                    ),
+                ]
+            )
+        jobs.append(
+            (
+                "verification:" + identifier,
+                lambda s=identifier: update_verification(s),
+                21600,
+            )
+        )
+        for key, loader, interval in jobs:
+            try:
+                refresh_product(key, loader, interval)
+            except Exception:  # noqa: BLE001 - cooldown persists, never log private URLs
+                log.warning("Prodotto di verifica locale rinviato")
 
 
 def refresh_environment(cfg: Settings) -> None:

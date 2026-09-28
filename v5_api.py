@@ -83,7 +83,7 @@ async def stations(request):
     try:
         result = await run_in_threadpool(public_stations)
         return JSONResponse(
-            {"stations": result, "version": "5.1.0", "refresh_seconds": 600}
+            {"stations": result, "version": "5.2.0", "refresh_seconds": 600}
         )
     except Exception:  # noqa: BLE001 - public boundary
         return JSONResponse(
@@ -337,6 +337,52 @@ async def extra_tool(request):
     headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
     try:
         action = request.path_params["action"]
+        if request.method == "GET" and action == "event":
+            from v5_extensions import cached
+            from v5_insights import event_replay
+
+            station_id = request.query_params.get("station", "")
+            start, end = (
+                request.query_params.get("start", ""),
+                request.query_params.get("end", ""),
+            )
+            value = await run_in_threadpool(
+                cached,
+                ("event", station_id, start, end),
+                lambda: event_replay(station_id, start, end),
+            )
+            return JSONResponse(value, headers=headers)
+        if request.method == "GET" and action == "dpc-download":
+            from v5_sources import dpc_download
+
+            value = await run_in_threadpool(
+                dpc_download,
+                request.query_params.get("at", ""),
+                request.query_params.get("product", "SRI"),
+            )
+            return JSONResponse(value, headers=headers)
+        if request.method == "GET" and action == "dpc-frame":
+            from v5_extensions import cached
+            from v5_sources import dpc_history_image
+
+            identifier, at = (
+                request.query_params.get("station", ""),
+                request.query_params.get("at", ""),
+            )
+            content, stamp, _ = await run_in_threadpool(
+                cached,
+                ("dpc-frame", identifier, at),
+                lambda: dpc_history_image(identifier, at),
+            )
+            return Response(
+                content,
+                media_type="image/png",
+                headers={
+                    "Cache-Control": "private, max-age=600",
+                    "X-Radar-Time": stamp.isoformat(),
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
         if request.method == "GET" and action == "catalog":
             return JSONResponse({"targets": catalog()}, headers=headers)
         if request.method == "GET" and action == "cities":

@@ -93,6 +93,10 @@ if (
     "cities",
     "journal",
     "activities",
+    "quality",
+    "models",
+    "archive",
+    "events",
     "inbox",
     "import",
   ].includes(page)
@@ -222,6 +226,7 @@ async function loadSnapshot(id) {
     const payload = await r.json();
     if (payload?.station?.id !== id) throw Error();
     const fromCache = r.headers.get("X-Meteo-Offline") === "1" || !navigator.onLine;
+    window.MeteoInsights?.observe(payload, fromCache);
     snapshots.set(id, payload);
     cachedOffline.set(id, fromCache);
     if (prefs.offline) storage.set("meteo.v5.snapshot." + id, payload);
@@ -470,15 +475,17 @@ function todayView() {
   };
   return (
     currentHero() +
+    (window.MeteoInsights?.homeFocus() || "") +
     `<p class="briefing">${next.length ? intro : "Previsione temporaneamente non disponibile."} <span>${esc(data.calibration || "")}</span></p>` +
     title(
       "La tua giornata, a colpo d’occhio",
       `<button class="quiet" data-settings>Personalizza</button>`,
     ) +
-    `<div class="grid">${prefs.cards
-      .filter((k) => !prefs.hidden.includes(k))
+    (!prefs.hidden.includes("hours") ? hourStrip() : "") +
+    `<details class="home-details" ${prefs.expert ? "open" : ""}><summary>Grafici e approfondimenti della giornata</summary><div class="grid">${prefs.cards
+      .filter((k) => k !== "hours" && !prefs.hidden.includes(k))
       .map((k) => renderers[k]())
-      .join("")}</div>`
+      .join("")}</div></details>`
   );
 }
 function forecastView() {
@@ -530,7 +537,7 @@ function forecastView() {
     )
     .join(
       "",
-    )}${weatherChart()}</div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Fiducia</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${finite(f.confidence) ? num(f.confidence, 0) + "%" : "In raccolta"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${title("Verifica delle previsioni")}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
+    )}${weatherChart()}</div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Fiducia</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${finite(f.confidence) ? num(f.confidence, 0) + "%" : "In raccolta"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${title("Verifica delle previsioni", '<button class="quiet" data-go="models">Quanto ci prende? →</button>')}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
 }
 function qualityTable() {
   const scores = (data.scores || []).filter((s) =>
@@ -595,7 +602,7 @@ function stationsView() {
     )
     .join(
       "",
-    )}</div><div class="coverage-grid">${calendar.map((d) => `<button class="day-cell ${d.status}" data-day="${d.date}" aria-label="${esc(dayLabel(d.date) + " · " + labels[d.status])}" title="${esc(dayLabel(d.date) + " · " + labels[d.status])}"></button>`).join("")}</div><p id="day-detail" class="metric-caption">Tocca un giorno per conoscere origine e numero dei campioni. Il giorno corrente rimane parziale.</p>${chart(series, { unit, reference: false, gapMs: 1.1 * 86400000 })}<p class="metric-caption">Le linee si interrompono nei giorni mancanti. Confronto descrittivo tra microclimi diversi: nessuna correzione automatica Roma–Comacchio.</p></article><div class="controls"><button class="quiet" data-go="import">Importa uno storico · amministratore</button>${proAnchor("station", "Archivio completo e rapporti mensili")}</div>`;
+    )}</div><div class="coverage-grid">${calendar.map((d) => `<button class="day-cell ${d.status}" data-day="${d.date}" aria-label="${esc(dayLabel(d.date) + " · " + labels[d.status])}" title="${esc(dayLabel(d.date) + " · " + labels[d.status])}"></button>`).join("")}</div><p id="day-detail" class="metric-caption">Tocca un giorno per conoscere origine e numero dei campioni. Il giorno corrente rimane parziale.</p>${chart(series, { unit, reference: false, gapMs: 1.1 * 86400000 })}<p class="metric-caption">Le linee si interrompono nei giorni mancanti. Confronto descrittivo tra microclimi diversi: nessuna correzione automatica Roma–Comacchio.</p></article><div class="controls"><button class="quiet" data-go="import">Importa uno storico · amministratore</button><button class="quiet" data-go="archive">Rapporti mensili e record →</button>${proAnchor("station", "Archivio completo Pro")}</div>`;
 }
 function astronomyView() {
   const a = data.astronomy?.[prefs.profile] || {},
@@ -660,6 +667,10 @@ function moreView() {
     ["journal", "▤", "Diario astronomico", "Sessioni personali e confronto con la previsione."],
     ["activities", "↗", "Le tue attività", "Finestre meteo e soglie che decidi tu."],
     ["inbox", "☷", "Centro avvisi", "Eventi rilevati e rientro delle condizioni."],
+    ["quality", "◉", "Qualità dei dati", "Origine, orari reali e anomalie delle misure."],
+    ["models", "≋", "Quanto ci prende?", "Errori locali, correzioni e nuovi modelli in verifica."],
+    ["archive", "▤", "Rapporti mensili", "Copertura, estremi e confronto tra le stazioni."],
+    ["events", "↶", "Rivedi un evento", "Misure, radar DPC storico e previsione archiviata."],
     [
       "forecast",
       "≋",
@@ -733,9 +744,10 @@ function render() {
     }
   }
   window.MeteoExtra?.beforeRender();
-  $("#view").innerHTML = window.MeteoExtra?.view(page) ?? mainView();
+  $("#view").innerHTML = window.MeteoInsights?.view(page) ?? window.MeteoExtra?.view(page) ?? mainView();
   bindView();
   window.MeteoExtra?.bind(page);
+  window.MeteoInsights?.bind(page);
   if (page === "notifications") checkPush();
 }
 function bindView() {
@@ -870,6 +882,7 @@ $("#save-preferences").addEventListener("click", async () => {
 });
 async function forgetWeather() {
   try {
+    window.MeteoInsights?.forget();
     Object.keys(localStorage)
       .filter((k) => k.startsWith("meteo.v5.snapshot."))
       .forEach((k) => localStorage.removeItem(k));

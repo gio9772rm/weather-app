@@ -52,6 +52,7 @@ FORECAST_PUBLIC = (
     "provider_count",
     "method",
     "interval_hours",
+    "local_corrections",
 )
 OBSERVATION_PUBLIC = (
     "time",
@@ -226,7 +227,17 @@ def scoped_health(station_id: str) -> dict:
     }
 
 
-def scoped_forecast(station_id: str, history=False) -> pd.DataFrame:
+def scoped_forecast(station_id: str, history=False, calibrated=True) -> pd.DataFrame:
+    frame = _scoped_base_forecast(station_id, history)
+    if calibrated and not history and not frame.empty:
+        from v5_calibration import apply_calibration
+        from v5_extensions import read_product
+
+        frame = apply_calibration(frame, read_product("verification:" + station_id))
+    return frame
+
+
+def _scoped_base_forecast(station_id: str, history=False) -> pd.DataFrame:
     cfg = Settings.from_env()
     if station_id == cfg.station_id:
         return load_forecast_history() if history else load_forecast()
@@ -408,7 +419,7 @@ def build_snapshot(
         else []
     )
     payload = {
-        "version": "5.1.0",
+        "version": "5.2.0",
         "station": {
             "id": station_id,
             "name": cfg.location_name,
@@ -455,6 +466,34 @@ def build_snapshot(
 
     payload["uncertainty"] = uncertainty(station_id, now)
     payload["radar_animation"] = read_product("radar_frames")
+    from v5_insights import forecast_revisions, monthly_archive, station_quality
+
+    previous = history.copy()
+    if not previous.empty and not forecast.empty:
+        previous = previous[previous.issued_at < forecast.issued_at.max()]
+        if not previous.empty:
+            previous = previous[previous.issued_at.eq(previous.issued_at.max())]
+    verification = read_product("verification:" + station_id)
+    active = [r for r in (verification or {}).get("scores", []) if r.get("applied")]
+    payload["insights"] = {
+        "quality": station_quality(station_id, now, cfg.station_stale_minutes),
+        "revisions": forecast_revisions(future, previous, now),
+        "archive": monthly_archive(
+            payload["history"]["calendar"], cfg.local_timezone, now
+        ),
+        "verification": verification,
+        "sources": {
+            "weathernext": read_product("weathernext:" + station_id),
+            "previous_icon": read_product("previous:icon_seamless:" + station_id),
+            "previous_ecmwf": read_product("previous:ecmwf_ifs025:" + station_id),
+        },
+    }
+    payload["calibration"] = (
+        "Correzione locale validata · " + cfg.location_name
+        if active
+        and any(bool(row.get("local_corrections")) for row in payload["forecast"])
+        else "Previsione di base · correzione locale in verifica"
+    )
     return clean_json(payload)
 
 
@@ -479,6 +518,17 @@ def publish_snapshots(cfg: Settings | None = None) -> int:
                     "at": payload["generated_at"],
                     "payload": json.dumps(payload, ensure_ascii=False, allow_nan=False),
                 },
+            )
+        # Preserve what the site actually published, for causal event replay.
+        try:
+            from v5_calibration import archive_publication
+
+            published = pd.DataFrame(payload["forecast"])
+            if not published.empty:
+                archive_publication(station["id"], published, payload["generated_at"])
+        except Exception:  # noqa: BLE001 - publication remains available
+            logging.getLogger(__name__).warning(
+                "Archivio della previsione pubblicata rinviato"
             )
         count += 1
     return count

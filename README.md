@@ -1,4 +1,4 @@
-> **V5.1**: [novità e controlli](CHANGELOG_V5_1.md) · [widget Android e recupero firma](android/README.md).
+> **V5.2**: [sette miglioramenti e nuove fonti](CHANGELOG_V5_2.md) · [novità V5.1](CHANGELOG_V5_1.md).
 
 # Meteo Pro V5
 

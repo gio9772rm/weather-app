@@ -9,6 +9,20 @@ CREATE TABLE IF NOT EXISTS public_snapshots (
   payload TEXT NOT NULL
 );
 
+-- V5.2 isolated research runs, canonical baselines and published forecasts.
+CREATE TABLE IF NOT EXISTS location_model_runs (
+  station_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  acquired_at TEXT NOT NULL,
+  basis TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (station_id, provider, model, issued_at, basis)
+);
+CREATE INDEX IF NOT EXISTS idx_location_model_runs_station_time
+  ON location_model_runs (station_id, issued_at);
+
 CREATE TABLE IF NOT EXISTS location_forecasts (
   station_id TEXT NOT NULL,
   issued_at TEXT NOT NULL,
