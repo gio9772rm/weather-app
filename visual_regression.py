@@ -293,6 +293,46 @@ def _seed_second_station() -> None:
             }
         ]
         products = {
+            "comparison:v53": {
+                "evaluated_at": now,
+                "method": "Fixture sintetica: confronto sulle stesse ore",
+                "rows": [
+                    {
+                        "basis": "live",
+                        "lead_hours": 24,
+                        "window_days": 30,
+                        "variable": "temp_c",
+                        "left": "test/ICON",
+                        "right": "test/ECMWF",
+                        "n": 360,
+                        "days": 15,
+                        "start": now - pd.Timedelta(days=15),
+                        "end": now,
+                        "mae_left": 1.1,
+                        "mae_right": 1.3,
+                        "delta_mae": -0.2,
+                        "delta_ci95": [-0.35, 0.05],
+                        "adequate": True,
+                        "evidence": "uncertain",
+                    }
+                ],
+            },
+            "windows": {
+                "acquired_at": now,
+                "model": "ICON · fixture sintetica",
+                "rows": [
+                    {
+                        "kind": kind,
+                        "start": now + pd.Timedelta(hours=8),
+                        "end": now + pd.Timedelta(hours=8 + duration),
+                        "probability": 75,
+                        "successful_members": 30,
+                        "members": 40,
+                        "total_members": 40,
+                    }
+                    for kind, duration in (("dry", 2), ("photo", 3))
+                ],
+            },
             "verification": {
                 "evaluated_at": now,
                 "method": "Dati sintetici per verifica visuale",
@@ -344,6 +384,8 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 "models",
                 "archive",
                 "events",
+                "personal",
+                "timeline",
             ):
                 name = f"v5-{view}-{theme}-{width}"
                 try:
@@ -361,7 +403,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                     assert page.locator("#view .card").count() > 0
                     assert not errors, errors
                     # Legend and line use the same actual computed color.
-                    if page.locator(".chart-legend").count():
+                    if page.locator(".chart-legend").count() and view != "timeline":
                         colors = page.evaluate("""() => {
                           const legend = document.querySelector('.chart-legend');
                           const svg = legend.nextElementSibling;
@@ -371,6 +413,27 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                           });
                         }""")
                         assert all(colors), name + ": legend mismatch"
+                    if view == "timeline":
+                        expect(page.locator(".linked-chart")).to_have_count(4)
+                        graph = page.locator(".linked-chart").first
+                        graph.focus()
+                        graph.press("ArrowRight")
+                        expect(page.locator("#timeline-cursor")).to_contain_text(
+                            "Cursore"
+                        )
+                        page.select_option("#timeline-span", "6")
+                        assert (
+                            page.evaluate(
+                                "document.querySelectorAll('.shared-cursor').length"
+                            )
+                            == 4
+                        )
+                        box = graph.bounding_box()
+                        page.mouse.move(box["x"] + box["width"] * 0.3, box["y"] + 60)
+                        page.mouse.down()
+                        page.mouse.move(box["x"] + box["width"] * 0.7, box["y"] + 60)
+                        page.mouse.up()
+                        expect(page.locator("#timeline-range")).to_be_visible()
                     if view == "astronomy":
                         page.select_option("#station", "visual-secondary")
                         expect(page.locator("#station")).to_have_value(
@@ -395,6 +458,17 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             expect(page.locator(".session-summary")).to_contain_text(
                 "SESSIONE UTILIZZABILE"
             )
+            expect(page.locator("#plan-result")).to_contain_text(
+                "Quale notte rende di più?"
+            )
+            page.get_by_role(
+                "button", name="Salva sessione e avvisi", exact=True
+            ).click()
+            page.locator("#session-name").fill("Prova piano personale")
+            page.get_by_role("button", name="Salva sessione", exact=True).click()
+            expect(page.locator(".saved-plan")).to_contain_text("Prova piano personale")
+            page.reload()
+            expect(page.locator(".saved-plan")).to_contain_text("Prova piano personale")
             assert not errors, errors
             page.goto(f"{base_url}/?page=events&theme={theme}")
             page.get_by_role("button", name="Ricostruisci evento", exact=True).click()
@@ -498,6 +572,66 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
     return digests
 
 
+def _v53_private_checks(browser, base_url: str, output: Path) -> None:
+    """Two independent browsers exercise real private sync and conflict recovery."""
+    from playwright.sync_api import expect
+
+    first = browser.new_context(viewport={"width": 1440, "height": 1000})
+    second = browser.new_context(viewport={"width": 390, "height": 844})
+    errors = []
+    a, b = first.new_page(), second.new_page()
+    for p in (a, b):
+        p.on("pageerror", lambda error: errors.append(str(error)))
+        p.goto(f"{base_url}/?page=personal")
+        p.wait_for_selector("#account-form")
+    a.locator('[data-auth-mode="register"]').click()
+    a.locator("#account-name").fill("visual-sync-user")
+    a.locator("#account-password").fill("visual-private-password-53")
+    a.locator("#account-form button").click()
+    expect(a.locator("#download-recovery")).to_be_visible()
+    a.locator("#hide-recovery").click()
+    a.locator("#add-571").click()
+    expect(a.locator("#sync-status")).to_contain_text("Sincronizzato")
+    b.locator("#account-name").fill("visual-sync-user")
+    b.locator("#account-password").fill("visual-private-password-53")
+    b.locator("#account-form button").click()
+    expect(b.locator('[data-use-equipment="0"]')).to_be_visible()
+    # Device A edits without polling B; B must expose a conflict, not overwrite.
+    a.goto(f"{base_url}/?page=journal")
+    a.wait_for_function("window.MeteoV53?.isSignedIn()")
+    a.locator("#journal-target").fill("M31 · nota privata sincronizzata")
+    a.locator("#journal-notes").fill("Solo nel profilo personale")
+    a.get_by_role("button", name="Registra sessione", exact=True).click()
+    a.wait_for_function("!JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
+    b.locator("#add-571").click()
+    expect(b.locator(".conflict")).to_be_visible()
+    assert b.evaluate("document.documentElement.scrollWidth <= innerWidth+3")
+    b.screenshot(path=str(output / "v53-private-conflict-mobile.png"), full_page=True)
+    b.once("dialog", lambda dialog: dialog.accept())
+    b.locator("#use-remote").click()
+    expect(b.locator(".conflict")).to_have_count(0)
+    b.goto(f"{base_url}/?page=journal")
+    b.wait_for_function("window.MeteoV53?.isSignedIn()")
+    expect(b.locator(".journal-text")).to_contain_text("Solo nel profilo personale")
+    # Private responses must not enter public snapshots or service-worker caches.
+    body = b.request.get(base_url + "/api/v5/snapshot/visual-primary").text()
+    assert "Solo nel profilo personale" not in body
+    assert "visual-sync-user" not in body
+    assert not b.evaluate("""async () => {
+      for(const name of await caches.keys())for(const req of await (await caches.open(name)).keys())
+        if(req.url.includes('/personal/'))return true;
+      return false;
+    }""")
+    b.goto(f"{base_url}/?page=personal")
+    b.wait_for_function("window.MeteoV53?.isSignedIn()")
+    b.locator("#logout").click()
+    expect(b.locator("#account-form")).to_be_visible()
+    assert b.evaluate("localStorage.getItem('meteo.v53.sync')") is None
+    assert not errors, errors
+    first.close()
+    second.close()
+
+
 def _wait_for_app(url: str, process: subprocess.Popen[str]) -> None:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -567,6 +701,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                     executable_path=os.getenv("METEO_BROWSER_EXECUTABLE") or None,
                 )
                 digests.update(_v5_checks(browser, base_url, output_path))
+                _v53_private_checks(browser, base_url, output_path)
                 for name, tab, theme, width, height in CASES:
                     page = browser.new_page(viewport={"width": width, "height": height})
                     screenshot = output_path / f"{name}.png"

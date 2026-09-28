@@ -24,6 +24,11 @@ from db import ensure_schema, get_engine
 from source_health import record_source_result
 
 BACKUP_TABLES = (
+    "window_predictions",
+    "personal_accounts",
+    "personal_profiles",
+    "personal_alerts",
+    "personal_devices",
     "station_raw",
     "station_3h",
     "forecast_ow",
@@ -93,7 +98,7 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
         "format": BACKUP_FORMAT,
         "version": 2,
         "application": "Meteo Pro V5",
-        "schema_version": 12,
+        "schema_version": 13,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database_dialect": engine.dialect.name,
         "tables": {},

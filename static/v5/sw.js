@@ -1,5 +1,5 @@
 "use strict";
-const SHELL = "meteo-v5-shell-6",
+const SHELL = "meteo-v5-shell-7",
   DATA = "meteo-v5-data",
   SETTINGS = "meteo-v5-settings";
 const ASSETS = [
@@ -10,6 +10,9 @@ const ASSETS = [
   "/assets/v5/extras.css",
   "/assets/v5/insights.js",
   "/assets/v5/insights.css",
+  "/assets/v5/v53.js",
+  "/assets/v5/timeline.js",
+  "/assets/v5/v53.css",
   "/assets/v5/icon.svg",
   "/assets/v5/manifest.webmanifest",
   "/app/static/icon-192.png",
@@ -152,7 +155,7 @@ self.addEventListener("push", (event) => {
               "/?" +
               new URLSearchParams({
                 station: String(data.station || ""),
-                page: ["astronomy", "forecast", "stations"].includes(data.page)
+                page: ["astronomy", "forecast", "stations", "personal"].includes(data.page)
                   ? data.page
                   : "today",
               }),

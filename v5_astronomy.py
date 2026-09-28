@@ -137,6 +137,10 @@ def observing_forecast(
             factors["Corrente in quota (proxy)"] = (
                 max(0, 70 - row["jet_quality"]) * 0.25
             )
+        if pd.notna(row.get("cams_aod")):
+            factors["Aerosol CAMS (stima)"] = min(
+                25, max(0, float(row.cams_aod) - 0.1) * 40
+            )
         score = round(max(0, 100 - sum(factors.values())), 1) if not missing else np.nan
         limiting = max(
             factors,

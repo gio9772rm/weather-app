@@ -83,7 +83,7 @@ async def stations(request):
     try:
         result = await run_in_threadpool(public_stations)
         return JSONResponse(
-            {"stations": result, "version": "5.2.0", "refresh_seconds": 600}
+            {"stations": result, "version": "5.3.0", "refresh_seconds": 600}
         )
     except Exception:  # noqa: BLE001 - public boundary
         return JSONResponse(
@@ -441,7 +441,10 @@ async def extra_tool(request):
 
 
 def public_routes():
+    from v53_profiles import private_api
+
     return [
+        Route("/api/v5/personal/{action}", private_api, methods=["GET", "POST"]),
         Route("/", home),
         Route("/sw.js", service_worker),
         Route("/_stcore/health", health),

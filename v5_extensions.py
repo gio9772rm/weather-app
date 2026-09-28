@@ -167,6 +167,10 @@ def secondary_ensemble(cfg: Settings):
     from ensemble_forecast import fetch_open_meteo_ensemble
 
     frame = fetch_open_meteo_ensemble(cfg)
+    if frame.attrs.get("member_paths"):
+        from v53_windows import archive_paths
+
+        archive_paths(cfg.station_id, frame.attrs["member_paths"], cfg)
     return {
         "rows": records(
             frame,
@@ -216,7 +220,8 @@ def planner(station_id: str, values: dict) -> dict:
         end = end.tz_localize(
             cfg.local_timezone, ambiguous="raise", nonexistent="raise"
         )
-    start = max(start.tz_convert("UTC"), now)
+    original_start = start.tz_convert("UTC")
+    start = max(original_start, now)
     end = end.tz_convert("UTC")
     if not pd.Timedelta(minutes=15) <= end - start <= pd.Timedelta(
         hours=16
@@ -239,6 +244,9 @@ def planner(station_id: str, values: dict) -> dict:
         equipment_profile(**values["equipment"]) if values.get("equipment") else None
     )
     forecast = scoped_forecast(station_id)
+    from v53_sky import add_cams, atmosphere
+
+    forecast = add_cams(forecast, atmosphere(station_id, forecast, now))
     profile = values.get("profile", "deep_sky")
     limits = session_limits(profile, values.get("limits"))
     weather = observing_forecast(forecast, cfg, profile, now)
@@ -254,6 +262,38 @@ def planner(station_id: str, values: dict) -> dict:
     )
     summaries = summarize_night_plan(tracks, equipment=equipment, rotation_deg=rotation)
     sessions, session_detail = target_sessions(tracks, weather, limits, moon)
+    from v53_schedule import optimize_schedule, schedule_options
+
+    options = schedule_options(values)
+    schedule = optimize_schedule(sessions, tracks, start, end, options)
+    nights = [{"start": start, "end": end, **schedule}]
+    for offset in range(1, options["compare_nights"]):
+        a = (
+            original_start.tz_convert(cfg.local_timezone) + pd.DateOffset(days=offset)
+        ).tz_convert("UTC")
+        b = (
+            end.tz_convert(cfg.local_timezone) + pd.DateOffset(days=offset)
+        ).tz_convert("UTC")
+        if b > now + pd.Timedelta(days=8) or b - a > pd.Timedelta(hours=16):
+            continue
+        next_tracks = night_plan_tracks(
+            weather,
+            cfg,
+            targets,
+            start=a,
+            end=b,
+            minimum_altitude=minimum,
+            minimum_moon_separation=moon,
+            horizon_mask=horizon,
+        )
+        next_sessions, _ = target_sessions(next_tracks, weather, limits, moon)
+        nights.append(
+            {
+                "start": a,
+                "end": b,
+                **optimize_schedule(next_sessions, next_tracks, a, b, options),
+            }
+        )
     geometry = (
         {
             name: framing_geometry(
@@ -278,6 +318,9 @@ def planner(station_id: str, values: dict) -> dict:
             "limits": limits,
             "sessions": sessions,
             "session_detail": session_detail,
+            "schedule": schedule,
+            "nights": nights,
+            "schedule_options": options,
         }
     )
 

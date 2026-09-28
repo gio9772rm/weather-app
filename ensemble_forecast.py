@@ -28,6 +28,7 @@ VARIABLES = {
     "precipitation": "rain_mm",
     "wind_speed_10m": "wind_kmh",
     "wind_gusts_10m": "wind_gust_kmh",
+    "cloud_cover": "clouds",
 }
 
 ENSEMBLE_COLUMNS = [
@@ -166,6 +167,11 @@ def fetch_open_meteo_ensemble(
     frame = parse_open_meteo_ensemble(payload, model=cfg.ensemble_model)
     if frame.empty:
         raise EnsembleForecastError("ensemble: risposta valida ma vuota")
+    from v53_windows import member_paths
+
+    frame.attrs["member_paths"] = member_paths(
+        payload, cfg.ensemble_model, frame.fetched_at.max()
+    )
     return frame
 
 
@@ -219,6 +225,10 @@ def refresh_ensemble(
     try:
         frame = fetch_open_meteo_ensemble(cfg)
         archive_ensemble(frame, engine)
+        if frame.attrs.get("member_paths"):
+            from v53_windows import archive_paths
+
+            archive_paths(cfg.station_id, frame.attrs["member_paths"], cfg)
     except EnsembleForecastError as exc:
         record_source_result(
             "open_meteo_ensemble",

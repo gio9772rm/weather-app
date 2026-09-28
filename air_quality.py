@@ -40,6 +40,8 @@ AIR_QUALITY_FIELDS = (
     "mugwort_pollen",
     "olive_pollen",
     "ragweed_pollen",
+    "aerosol_optical_depth",
+    "dust",
 )
 
 
@@ -68,7 +70,9 @@ def parse_air_quality(
     """Normalise the Open-Meteo air-quality response."""
     timezone = str(payload.get("timezone") or "UTC")
     current_source = payload.get("current") or {}
-    current = {field: _as_float(current_source.get(field)) for field in AIR_QUALITY_FIELDS}
+    current = {
+        field: _as_float(current_source.get(field)) for field in AIR_QUALITY_FIELDS
+    }
     current_times = _local_times([current_source.get("time")], timezone)
     current["time"] = current_times.iloc[0] if not current_times.empty else pd.NaT
 
@@ -85,7 +89,11 @@ def parse_air_quality(
     hourly = hourly.dropna(subset=["time"]).sort_values("time")
 
     fetched = pd.Timestamp(fetched_at or pd.Timestamp.now(tz="UTC"))
-    fetched = fetched.tz_localize("UTC") if fetched.tzinfo is None else fetched.tz_convert("UTC")
+    fetched = (
+        fetched.tz_localize("UTC")
+        if fetched.tzinfo is None
+        else fetched.tz_convert("UTC")
+    )
     return AirQualityForecast(
         timezone=timezone,
         current=current,

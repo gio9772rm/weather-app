@@ -1,0 +1,139 @@
+/* V5.3: shared data products and opt-in private cross-device profiles. */
+"use strict";
+(() => {
+  const keys = ["preferences", "cities", "planner", "activity-rules", "activity-choice", "journal", "plans", "equipment"];
+  const prefix = "meteo.v5.";
+  const table = (headers, rows) => `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  const dt = v => v && Number.isFinite(Date.parse(v)) ? `${dayLabel(v)} ${clock(v)}` : "—";
+  const get = (key, fallback) => storage.get(prefix + key, fallback);
+  const save = (key, value) => storage.set(prefix + key, value);
+  const download = (name, value) => { const u=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=u;a.download=name;a.click();URL.revokeObjectURL(u); };
+  let comparisonDays=30, comparisonLead=24, comparisonVar="temp_c", comparisonBasis="live";
+  let state=null, recovery="", status="Accesso facoltativo · i dati del dispositivo restano disponibili", busy=false, conflict=null, dirty=false, saving=false, saveAgain=false, hydrated=false, applying=false, mode="login";
+  const defaults = { cards: defaultCards, hidden: [], profile: "deep_sky", theme: "light", expert: false };
+  const preset = {name:"80/480 + camera 571",telescope:"Rifrattore 80/480",camera:"Camera 571 · verifica sensore",aperture_mm:80,focal_length_mm:480,sensor_width_mm:23.5,sensor_height_mm:15.7,pixel_size_um:3.76,focal_multiplier:1};
+
+  function comparisonCard(){
+    const p=data.insights?.comparison;
+    const rows=(p?.rows||[]).filter(r=>r.window_days===comparisonDays&&r.lead_hours===comparisonLead&&r.variable===comparisonVar&&r.basis===comparisonBasis);
+    const label=n=>n==="canonical/baseline"?"Previsione del sito":n.split("/").at(-1);
+    return `<article class="card"><span class="tag">CAMPIONI COMUNI · V5.3</span><h2>Confronto alla pari</h2><div class="controls"><label>Periodo<select id="paired-days">${[7,30,90].map(d=>`<option value="${d}" ${d===comparisonDays?"selected":""}>Ultimi ${d} giorni</option>`).join("")}</select></label><label>Informazioni disponibili<select id="paired-lead">${[6,24,72].map(h=>`<option value="${h}" ${h===comparisonLead?"selected":""}>${h} ore prima</option>`).join("")}</select></label><label>Parametro<select id="paired-variable">${[["temp_c","Temperatura · °C"],["humidity","Umidità · %"],["wind_kmh","Vento · km/h"],["rain_mm","Pioggia · mm/h"]].map(([k,l])=>`<option value="${k}" ${k===comparisonVar?"selected":""}>${l}</option>`).join("")}</select></label><label>Provenienza<select id="paired-basis"><option value="live" ${comparisonBasis==="live"?"selected":""}>Acquisizioni operative</option><option value="previous_run" ${comparisonBasis==="previous_run"?"selected":""}>Archivio retrospettivo</option></select></label></div>${rows.length?table(["Coppia A / B","MAE A / B","Ore / giorni comuni","Periodo effettivo","Differenza A−B · IC 95%","Evidenza"],rows.map(r=>[`${esc(label(r.left))}<br>${esc(label(r.right))}`,`${num(r.mae_left,2)} / ${num(r.mae_right,2)}`,`${r.n} / ${r.days}`,`${dt(r.start)}–${dt(r.end)}`,`${num(r.delta_mae,2)}<br>${r.adequate?`[${num(r.delta_ci95[0],2)}; ${num(r.delta_ci95[1],2)}]`:"Campione insufficiente"}`,r.evidence==="uncertain"?"Differenza non dimostrata":`Errore inferiore: ${esc(label(r[r.evidence]))}`])):'<p class="empty">Servono almeno dodici ore comuni. La mancanza di campioni non indica equivalenza dei modelli.</p>'}<details><summary>Metodo e copertura</summary><p>${esc(p?.method||"Confronti sulle stesse osservazioni, in preparazione nel normale ciclo di pubblicazione.")}</p><p>Calcolato: ${dt(p?.evaluated_at)}. Le coppie possono avere coperture diverse: confronta A e B nella stessa riga.</p></details></article>`;
+  }
+  function probabilities(){
+    const p=data.window_probabilities, fresh=p&&Date.now()-Date.parse(p.acquired_at)<=12*3600000;
+    const rows=(fresh?p.rows:[]||[]).filter(r=>Date.parse(r.start)>=Date.now());
+    const best=kind=>rows.filter(r=>r.kind===kind&&finite(r.probability)).sort((a,b)=>b.probability-a.probability||Date.parse(a.start)-Date.parse(b.start)).slice(0,3);
+    const v=data.window_validation;
+    return `<article class="card"><span class="tag">SCENARI ENSEMBLE · V5.3</span><h2>Quanto può durare la finestra?</h2><div class="grid">${[["dry","Due ore asciutte"],["photo","Tre ore per fotografare"]].map(([kind,title])=>`<section class="span-6"><h3>${title}</h3>${best(kind).length?best(kind).map(r=>`<p><b>${num(r.probability,0)}%</b> · ${dt(r.start)}–${clock(r.end)}<br><small>${r.successful_members}/${r.members} membri completi · ${r.total_members-r.members} esclusi</small></p>`).join(""):'<p class="empty">Nessuna finestra con dati completi e recenti.</p>'}</section>`).join("")}</div><p class="metric-caption">${esc(p?.note||"In attesa della prima acquisizione dei singoli membri.")} Fonte: ${esc(p?.model||"ICON ensemble")} · acquisito ${dt(p?.acquired_at)}${p&&!fresh?" · dato datato, percentuali sospese":""}.</p><details><summary>Verifica sulle finestre realmente osservate</summary><p>${esc(v?.note||"L’archivio prospettico inizia con questa versione.")}</p><p>${num(v?.n||0,0)} finestre verificate · Brier ${num(v?.brier,3)} (0 = errore minimo).</p>${v?.n?table(["Fascia prevista","Finestre","Media prevista","Frequenza osservata"],v.bins.map(b=>[`${num(b.low,0)}–${num(b.high,0)}%`,b.n,`${num(b.forecast,0)}%`,`${num(b.observed,0)}%`])):""}</details></article>`;
+  }
+  function skyCard(){
+    const p=data.atmosphere, rows=(p?.rows||[]).filter(r=>Date.parse(r.time)>=Date.now()).slice(0,24);
+    return `<article class="card"><span class="tag">CAMS · ATMOSFERA</span><h2>Trasparenza, stabilità e luminosità</h2><p>${esc(p?.note||"Dati atmosferici in preparazione.")}</p><p class="metric-caption">Acquisizione CAMS: ${dt(p?.fetched_at)}${p&&!p.fresh?" · dato mancante o datato":""}.</p>${table(["Ora","Trasparenza stimata","AOD 550 nm","Polvere al suolo","Stabilità stimata","Limiti"],rows.map(r=>[dt(r.time),finite(r.transparency_estimate)?`${num(r.transparency_estimate,0)}/100`:"Non disponibile",num(r.aod_550nm,3),`${num(r.dust_ug_m3)} µg/m³`,finite(r.stability_estimate)?`${num(r.stability_estimate,0)}/100`:"Dati in quota incompleti",r.limiting_factors.length?r.limiting_factors.map(esc).join(", "):r.cams_available?"Nessun limite CAMS rilevante":"CAMS non disponibile"]))}<p>Luminosità del cielo: non misurata. Usa il pianificatore per illuminazione e distanza della Luna.</p></article>`;
+  }
+  function scheduleControls(config){
+    return `<fieldset><legend>Sequenza fotografica automatica</legend><div class="form-grid">${[["setup_minutes","Preparazione iniziale · minuti",20,0,180],["switch_minutes","Cambio oggetto · minuti",10,0,60],["minimum_minutes","Blocco minimo · minuti",45,15,240],["compare_nights","Notti da confrontare",3,1,5]].map(([key,label,def,min,max])=>`<label>${label}<input id="schedule-${key}" type="number" min="${min}" max="${max}" value="${esc(config[key]??def)}" required></label>`).join("")}</div><label>Priorità · oggetto:valore da 1 a 5<input id="schedule-priorities" value="${esc(Object.entries(config.priorities||{}).map(([k,v])=>`${k}:${v}`).join(", "))}" placeholder="M31:3, M42:2"></label><p class="metric-caption">I blocchi rispettano buio, altezza, ostacoli, Luna e soglie meteo. Puoi assegnare più priorità agli oggetti preferiti.</p></fieldset>`;
+  }
+  function readOptions(){
+    const result={priorities:{}};
+    for(const key of ["setup_minutes","switch_minutes","minimum_minutes","compare_nights"]) result[key]=Number($("#schedule-"+key).value);
+    for(const pair of $("#schedule-priorities").value.split(",").filter(s=>s.trim())){const [k,v,...rest]=pair.trim().split(":");if(rest.length||!finite(v)||!k)throw Error("Priorità: usa per esempio M31:3.");result.priorities[k.trim()]=Number(v);}
+    return result;
+  }
+  function scheduleMarkup(plan){
+    const s=plan.schedule;if(!s)return "";
+    return `<article class="card"><span class="tag">SEQUENZA OTTIMIZZATA</span><h2>${num(s.net_hours)} ore nette di ripresa</h2><p>${num(s.overhead_minutes,0)} minuti dedicati a preparazione e cambi oggetto.</p>${s.blocks.length?table(["Preparazione / cambio","Ripresa","Oggetto","Minuti netti","Qualità stimata"],s.blocks.map(b=>[dt(b.prepare_start),`${clock(b.start)}–${clock(b.end)}`,esc(b.target),num(b.minutes,0),`${num(b.quality,0)}/100`])):'<p class="empty">Nessuna sequenza soddisfa durata minima e soglie nella finestra scelta.</p>'}<p>${esc(s.method)}</p>${s.omitted.map(o=>`<p class="metric-caption">${esc(o.target)} · ${esc(o.reason)}</p>`).join("")}<div class="controls"><button type="button" id="save-session" class="primary">Salva sessione e avvisi</button><button type="button" id="export-sequence" class="quiet">Esporta sequenza CSV</button></div></article><article class="card"><h2>Quale notte rende di più?</h2>${table(["Notte","Ore nette","Preparazione / cambi","Oggetti nella sequenza"],(plan.nights||[]).map(n=>[dt(n.start),num(n.net_hours),`${num(n.overhead_minutes,0)} min`,[...new Set(n.blocks.map(b=>b.target))].map(esc).join(", ")||"Nessuno"]))}<p class="metric-caption">Confronto negli stessi orari locali e con le stesse soglie. Zero ore può dipendere da dati incompleti: consulta i motivi delle esclusioni.</p></article>`;
+  }
+  function snapshotLocal(){const out={};for(const k of keys){const v=get(k,null);if(v!==null)out[k]=v;}if(out.preferences){out.preferences={...out.preferences};delete out.preferences.offline;}return out;}
+  function applyProfile(profile,preserveDrafts=false){
+    applying=true;
+    for(const k of keys){if(k==="preferences")continue;if(k in profile)localStorage.setItem(prefix+k,JSON.stringify(profile[k]));else localStorage.removeItem(prefix+k);}
+    const offlineChoice=prefs.offline;Object.assign(prefs,defaults,profile.preferences||{});prefs.offline=offlineChoice;
+    localStorage.setItem(prefix+"preferences",JSON.stringify(prefs));setTheme(prefs.theme);
+    window.MeteoExtra?.resetPersonal(preserveDrafts);applying=false;
+  }
+  function checkpoint(){if(state)storage.set("meteo.v53.sync",{account:state.account,revision:state.revision,dirty,profile:snapshotLocal()});}
+  function announce(text){status=text;if($("#sync-status"))$("#sync-status").textContent=text;}
+  async function api(action, value){
+    const r=await fetch("/api/v5/personal/"+action,{cache:"no-store",credentials:"same-origin",...(value===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)})});
+    const out=await r.json();if(!r.ok){const e=Error(out.error||"Profilo non disponibile");e.status=r.status;throw e;}return out;
+  }
+  function adopt(result){const sameAccount=state?.account.id===result.account.id;state=result;dirty=false;conflict=null;applyProfile(result.profile,sameAccount);checkpoint();announce("Sincronizzato · "+dt(result.updated_at));}
+  async function flush(){
+    if(!state||!dirty||conflict)return;
+    if(saving){saveAgain=true;return;}
+    saving=true;const payload=snapshotLocal();announce("Salvataggio del profilo…");
+    try{
+      const result=await api("profile",{account_id:state.account.id,revision:state.revision,profile:payload});state=result;
+      if(JSON.stringify(snapshotLocal())===JSON.stringify(payload)){dirty=false;announce("Sincronizzato · "+dt(result.updated_at));}else{saveAgain=true;}
+      checkpoint();
+    }catch(e){if(e.status===409){conflict=await api("profile").catch(()=>({}));announce("Modifiche su un altro dispositivo: apri il profilo per confrontarle.");if(page==="personal")render();}else announce("Modifiche conservate qui · "+e.message);}
+    finally{saving=false;if(saveAgain&&!conflict){saveAgain=false;if(dirty)flush();}}
+  }
+  function changed(key){if(applying||!state||!keys.includes(key.replace(prefix,"")))return;dirty=true;checkpoint();flush();}
+  async function refresh(){
+    if(busy||saving)return;
+    if(dirty&&state){await flush();return;}
+    try{
+      const result=await api("profile"), cached=storage.get("meteo.v53.sync",null);
+      if(!hydrated){
+        hydrated=true;
+        if(!getGuest())storage.set("meteo.v53.guest",snapshotLocal());
+        if(cached?.dirty&&cached.account.id===result.account.id){state=result;dirty=true;applyProfile(cached.profile);state.revision=cached.revision;if(result.revision!==cached.revision){conflict=result;announce("Modifiche locali e remote da confrontare.");}else await flush();}
+        else adopt(result);
+      }else if(!state||state.revision!==result.revision||state.account.id!==result.account.id)adopt(result);
+      else {state.alerts=result.alerts;announce("Sincronizzato · "+dt(result.updated_at));}
+      if(page==="personal")render();
+    }catch(e){if(e.status===401){if(!state)announce("Accedi per sincronizzare tra PC e telefono.");else {state=null;hydrated=false;announce("Sessione scaduta: le modifiche restano sul dispositivo. Accedi di nuovo.");if(page==="personal")render();}}else if(state)announce("Sincronizzazione sospesa · "+e.message);}
+  }
+  const getGuest=()=>storage.get("meteo.v53.guest",null);
+  function equipmentMarkup(){
+    const profiles=get("equipment",[]);
+    return `<article class="card"><h2>I tuoi strumenti</h2><button id="add-571" class="quiet">Aggiungi preset 80/480 + camera 571</button><p class="metric-caption">Valori iniziali modificabili: sensore 23,5 × 15,7 mm, pixel 3,76 µm. Verifica le dimensioni della tua camera prima di usarli.</p>${profiles.map((e,i)=>`<p><b>${esc(e.name)}</b> · ${num(e.aperture_mm,0)}/${num(e.focal_length_mm,0)} mm <button class="quiet" data-use-equipment="${i}">Usa nel piano</button><button class="quiet" data-delete-equipment="${i}">Rimuovi</button></p>`).join("")}</article>`;
+  }
+  function personalView(){
+    const plans=get("plans",[]), histories=(state?.alerts||[]).flatMap(a=>(a.history||[]).map(h=>({...h,name:a.name}))).sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
+    return `<h1>Il tuo profilo personale</h1><p>Strumenti, preferenze, città preferite, soglie, piani e diario. Accedi con lo stesso account su PC e telefono per sincronizzarli.</p><p id="sync-status" class="notice" role="status">${esc(status)}</p>${recovery?`<article class="card"><h2>Conserva il codice di recupero</h2><p>Viene mostrato una sola volta. Permette di impostare una nuova password senza email.</p><code class="recovery-code">${esc(recovery)}</code><button id="download-recovery" class="quiet">Scarica codice</button><button id="hide-recovery" class="quiet">L’ho conservato</button></article>`:""}${state?`<article class="card"><h2>${esc(state.account.username)}</h2><p>Profilo privato · revisione ${state.revision}. Le password non sono salvate in chiaro. I dati personali restano esclusi dalle risposte meteo pubbliche.</p><div class="controls"><button id="sync-now" class="primary">Sincronizza ora</button><button id="import-device" class="quiet">Importa i dati precedenti del dispositivo</button><button id="export-profile" class="quiet">Esporta profilo</button><button id="logout" class="quiet">Esci</button><button id="logout-all" class="quiet">Esci da tutti i dispositivi</button></div><details><summary>Elimina l’account e i dati sincronizzati</summary><form id="delete-account"><label>Password<input id="delete-password" type="password" autocomplete="current-password" required></label><button class="quiet">Elimina account</button></form></details></article>`:`<article class="card"><div class="controls">${[["login","Accedi"],["register","Crea profilo"],["recover","Recupera accesso"]].map(([m,l])=>`<button class="${m===mode?"primary":"quiet"}" data-auth-mode="${m}">${l}</button>`).join("")}</div><form id="account-form"><div class="form-grid"><label>Nome utente<input id="account-name" autocomplete="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9_.-]+" required></label><label>${mode==="recover"?"Nuova password":"Password"}<input id="account-password" type="password" autocomplete="${mode==="login"?"current-password":"new-password"}" minlength="12" maxlength="128" required></label>${mode==="recover"?'<label>Codice di recupero<input id="account-recovery" autocomplete="off" required maxlength="128"></label>':""}</div><button class="primary" ${busy?"disabled":""}>${mode==="login"?"Accedi e sincronizza":mode==="register"?"Crea il mio profilo":"Reimposta e accedi"}</button></form><p class="metric-caption">Senza accesso puoi continuare a usare strumenti, piani e diario sul dispositivo. Nessuna sincronizzazione automatica dei dati precedenti: puoi importarli dopo l’accesso.</p></article>`}${conflict?`<article class="card conflict"><h2>Due versioni da confrontare</h2><p>Dispositivo: ${get("journal",[]).length} note, ${plans.length} piani. Server: ${conflict.profile?.journal?.length||0} note, ${conflict.profile?.plans?.length||0} piani. Esporta entrambe prima di scegliere; nessuna viene sovrascritta automaticamente.</p><div class="controls"><button id="export-conflict" class="quiet">Scarica entrambe le versioni</button><button id="use-remote" class="primary">Usa versione server</button><button id="use-local" class="quiet">Conserva versione dispositivo</button></div></article>`:""}${equipmentMarkup()}<article class="card"><h2>Sessioni salvate</h2><button class="quiet" data-go="planner">Prepara una nuova sessione →</button>${plans.length?plans.map(p=>`<section class="saved-plan"><h3>${esc(p.name)}</h3><p>${esc(p.config.station_id)} · ${esc(p.config.start)} · ${p.config.targets.map(esc).join(", ")}</p><p>Avvisi ${p.alerts.enabled?"attivi":"spenti"} · calo minimo ${num(p.alerts.minutes,0)} minuti e ${num(p.alerts.percent,0)}% · silenzio ${esc(p.alerts.quiet_start)}–${esc(p.alerts.quiet_end)} nel fuso della stazione.</p><div class="controls"><button class="quiet" data-load-plan="${esc(p.id)}">Apri e ricalcola</button><button class="quiet" data-edit-alert="${esc(p.id)}">Configura avvisi</button><button class="quiet" data-delete-plan="${esc(p.id)}">Elimina piano</button></div></section>`).join(""):'<p class="empty">Calcola un piano e scegli «Salva sessione e avvisi».</p>'}<p class="metric-caption">Gli avvisi delle sessioni richiedono un account e il collegamento di questo browser. Sono rivalutati nel ciclo meteo, prima dell’inizio della sessione, con dati recenti. Massimo tre piani attivi.</p>${state?'<button id="link-device" class="quiet">Collega questo browser agli avvisi delle sessioni</button><button class="quiet" data-go="notifications">Attiva notifiche push →</button>':""}</article><article class="card"><h2>Cambiamenti delle tue sessioni</h2>${histories.length?table(["Sessione","Rilevato","Variazione"],histories.slice(0,30).map(h=>[esc(h.name),dt(h.at),esc(h.body)])):'<p class="empty">Nessuna variazione significativa registrata.</p>'}<p class="metric-caption">Ultime verifiche: ${(state?.alerts||[]).map(a=>`${esc(a.name)} ${dt(a.evaluated_at)}`).join(" · ")||"in attesa"}.</p></article>`;
+  }
+  function alertDialog(plan){
+    let dialog=$("#session-dialog");if(dialog)dialog.remove();dialog=document.createElement("dialog");dialog.id="session-dialog";
+    const a=plan.alerts||{enabled:false,minutes:30,percent:25,quiet_start:"23:00",quiet_end:"08:00"};
+    dialog.innerHTML=`<form id="session-settings"><h2>Salva la tua sessione</h2><label>Nome<input id="session-name" value="${esc(plan.name)}" maxlength="120" required></label><label><input id="session-alert" type="checkbox" ${a.enabled?"checked":""}> Avvisami dei cambiamenti significativi</label><div class="form-grid"><label>Calo minimo · minuti<input id="session-minutes" type="number" value="${a.minutes}" min="15" max="180" required></label><label>Calo minimo · percentuale<input id="session-percent" type="number" value="${a.percent}" min="10" max="100" required></label><label>Silenzio dalle<input id="session-quiet-start" type="time" value="${a.quiet_start}" required></label><label>Silenzio fino alle<input id="session-quiet-end" type="time" value="${a.quiet_end}" required></label></div><p>Il calo deve superare entrambe le soglie. Per un’altra notte migliore si usa il vantaggio minimo in minuti. Gli avvisi partono dopo la prima verifica sul server.</p><button class="primary">Salva sessione</button><button type="button" id="cancel-session" class="quiet">Annulla</button><p id="session-error" role="status"></p></form>`;
+    document.body.append(dialog);dialog.showModal();$("#cancel-session").onclick=()=>dialog.close();
+    $("#session-settings").onsubmit=e=>{e.preventDefault();const all=get("plans",[]), row={...plan,name:$("#session-name").value.trim(),alerts:{enabled:$("#session-alert").checked,minutes:Number($("#session-minutes").value),percent:Number($("#session-percent").value),quiet_start:$("#session-quiet-start").value,quiet_end:$("#session-quiet-end").value}};const next=[...all.filter(p=>p.id!==row.id),row];if(next.length>12||next.filter(p=>p.alerts.enabled).length>3){$("#session-error").textContent="Massimo dodici piani salvati, tre con avvisi attivi.";return;}save("plans",next);dialog.close();navigate("personal");};
+  }
+  function bindPlan(plan,values){
+    if($("#save-session"))$("#save-session").onclick=()=>alertDialog({id:crypto.randomUUID(),name:values.targets.join(" + "),config:{...values,start:plan.start,end:plan.end},alerts:{enabled:false,minutes:30,percent:25,quiet_start:"23:00",quiet_end:"08:00"}});
+    if($("#export-sequence"))$("#export-sequence").onclick=()=>{const cols=["target","prepare_start","start","end","minutes","overhead_minutes","quality"];const text=cols.join(",")+"\n"+plan.schedule.blocks.map(b=>cols.map(k=>JSON.stringify(b[k]??"")).join(",")).join("\n");const u=URL.createObjectURL(new Blob([text],{type:"text/csv"}));const a=document.createElement("a");a.href=u;a.download="sequenza-fotografica.csv";a.click();URL.revokeObjectURL(u);};
+  }
+  async function logout(action){
+    if(dirty&&!confirm("Ci sono modifiche non sincronizzate. Esportale prima di uscire. Uscire comunque?"))return;
+    await api(action,{});const guest=getGuest();state=null;dirty=false;conflict=null;recovery="";hydrated=false;localStorage.removeItem("meteo.v53.sync");localStorage.removeItem("meteo.v53.guest");applyProfile(guest||{});announce("Disconnesso · dati locali precedenti ripristinati");render();
+  }
+  function bind(pageName){
+    for(const [id,set] of [["paired-days",v=>comparisonDays=Number(v)],["paired-lead",v=>comparisonLead=Number(v)],["paired-variable",v=>comparisonVar=v],["paired-basis",v=>comparisonBasis=v]])if($("#"+id))$("#"+id).onchange=e=>{set(e.target.value);render();};
+    if(pageName!=="personal")return;
+    const safe=fn=>async e=>{try{await fn(e);}catch(error){announce(error.message);notice(error.message);}};
+    document.querySelectorAll("[data-auth-mode]").forEach(b=>b.onclick=()=>{mode=b.dataset.authMode;render();});
+    if($("#account-form"))$("#account-form").onsubmit=safe(async e=>{e.preventDefault();busy=true;try{const local=snapshotLocal(),r=await api(mode,{username:$("#account-name").value,password:$("#account-password").value,...(mode==="recover"?{recovery:$("#account-recovery").value}:{})});if(!getGuest())storage.set("meteo.v53.guest",local);const cached=storage.get("meteo.v53.sync",null);recovery=r.recovery||"";hydrated=true;if(cached?.dirty&&cached.account.id===r.account.id){state={...r,revision:cached.revision};applyProfile(cached.profile);dirty=true;if(r.revision!==cached.revision){conflict=r;announce("Modifiche locali da confrontare con il server.");}else await flush();}else adopt(r);render();}finally{busy=false;}});
+    if($("#download-recovery"))$("#download-recovery").onclick=()=>download("meteo-codice-recupero.json",{username:state.account.username,recovery});
+    if($("#hide-recovery"))$("#hide-recovery").onclick=()=>{recovery="";render();};
+    if($("#sync-now"))$("#sync-now").onclick=safe(async()=>{await refresh();render();});
+    if($("#export-profile"))$("#export-profile").onclick=()=>download("meteo-profilo.json",{format:"meteo-personal-v1",profile:snapshotLocal()});
+    if($("#import-device"))$("#import-device").onclick=()=>{if(!confirm("Sostituire il profilo sincronizzato con i dati precedenti di questo dispositivo? Puoi esportare prima il profilo attuale."))return;applyProfile(getGuest()||{});changed(prefix+"preferences");render();};
+    if($("#logout"))$("#logout").onclick=safe(()=>logout("logout"));
+    if($("#logout-all"))$("#logout-all").onclick=safe(()=>logout("logout-all"));
+    if($("#delete-account"))$("#delete-account").onsubmit=safe(async e=>{e.preventDefault();if(!confirm("Eliminare definitivamente account, diario e piani sincronizzati?"))return;await api("delete",{password:$("#delete-password").value});state=null;dirty=false;conflict=null;recovery="";const guest=getGuest();localStorage.removeItem("meteo.v53.sync");localStorage.removeItem("meteo.v53.guest");applyProfile(guest||{});announce("Account eliminato");render();});
+    if($("#export-conflict"))$("#export-conflict").onclick=()=>download("meteo-versioni-profilo.json",{device:snapshotLocal(),server:conflict.profile});
+    if($("#use-remote"))$("#use-remote").onclick=()=>{if(confirm("Sostituire la versione locale con quella del server?")){adopt(conflict);render();}};
+    if($("#use-local"))$("#use-local").onclick=safe(async()=>{if(!confirm("Sostituire la versione server con quella di questo dispositivo?"))return;state.revision=conflict.revision;conflict=null;dirty=true;await flush();render();});
+    $("#add-571").onclick=()=>{const a=get("equipment",[]);if(a.length>=10){notice("Massimo dieci strumenti.");return;}save("equipment",[...a,preset]);render();};
+    document.querySelectorAll("[data-use-equipment]").forEach(b=>b.onclick=()=>{window.MeteoExtra?.useEquipment(get("equipment",[])[Number(b.dataset.useEquipment)]);navigate("planner");});
+    document.querySelectorAll("[data-delete-equipment]").forEach(b=>b.onclick=()=>{save("equipment",get("equipment",[]).filter((_,i)=>i!==Number(b.dataset.deleteEquipment)));render();});
+    document.querySelectorAll("[data-load-plan]").forEach(b=>b.onclick=()=>{const p=get("plans",[]).find(p=>p.id===b.dataset.loadPlan);window.MeteoExtra?.loadPlan(p.config);if(snapshots.has(p.config.station_id)){activeId=p.config.station_id;data=snapshots.get(activeId);$("#station").value=activeId;}navigate("planner");});
+    document.querySelectorAll("[data-edit-alert]").forEach(b=>b.onclick=()=>alertDialog(get("plans",[]).find(p=>p.id===b.dataset.editAlert)));
+    document.querySelectorAll("[data-delete-plan]").forEach(b=>b.onclick=()=>{if(confirm("Eliminare il piano e i suoi avvisi?")){save("plans",get("plans",[]).filter(p=>p.id!==b.dataset.deletePlan));render();}});
+    if($("#link-device"))$("#link-device").onclick=safe(async()=>{const p=get("push",{});if(!p.id||!p.token)throw Error("Attiva prima le notifiche push su questo browser.");await api("device",{id:p.id,token:p.token});announce("Browser collegato agli avvisi delle sessioni.");});
+  }
+  window.addEventListener("storage",e=>{if(e.key?.startsWith(prefix)&&keys.includes(e.key.slice(prefix.length))&&state&&!applying){dirty=true;checkpoint();announce("Modifiche da un’altra scheda: sincronizzazione al prossimo ciclo.");}});
+  window.MeteoV53={comparisonCard,probabilities,skyCard,scheduleControls,readOptions,scheduleMarkup,bindPlan,changed,refresh,bind,preset,view:p=>p==="personal"?personalView():undefined,isSignedIn:()=>Boolean(state)};
+})();

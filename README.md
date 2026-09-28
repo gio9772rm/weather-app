@@ -1,4 +1,4 @@
-> **V5.2**: [sette miglioramenti e nuove fonti](CHANGELOG_V5_2.md) · [novità V5.1](CHANGELOG_V5_1.md).
+> **V5.3**: [confronti omogenei, sessioni e profili sincronizzati](CHANGELOG_V5_3.md) · [novità V5.2](CHANGELOG_V5_2.md).
 
 # Meteo Pro V5
 

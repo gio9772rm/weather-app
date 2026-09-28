@@ -356,12 +356,14 @@ def send_pending(*, now=None, sender=None) -> int:
 
     with NoRedirectSession() as session:
         for sub in subscriptions:
+            from v53_alerts import device_candidates
+
             snapshot = snapshots.get(sub["station_id"])
             if not snapshot:
                 continue
             for candidate in notification_candidates(
                 snapshot, json.loads(sub["rules"]), now
-            ):
+            ) + device_candidates(sub["id"], now):
                 if attempts >= 30:
                     return sent
                 params = {
