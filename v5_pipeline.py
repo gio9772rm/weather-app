@@ -167,6 +167,12 @@ def run_v5_publication(cfg: Settings, *, force=False) -> dict:
         log.warning("Pubblicazione V5 rinviata; snapshot precedente conservato")
         result["warnings"].append("Snapshot V5 rinviato")
     try:
+        from v53_alerts import refresh_plan_alerts
+
+        refresh_plan_alerts()
+    except Exception:  # noqa: BLE001 - private optional work
+        log.warning("Avvisi delle sessioni personali rinviati")
+    try:
         from v5_push import send_pending
 
         result["notifications"] = send_pending()
@@ -183,6 +189,8 @@ def refresh_research(cfg: Settings) -> None:
     from v5_data import scoped_forecast
     from v5_extensions import refresh_product
     from v5_sources import refresh_previous_runs, refresh_weathernext
+    from v53_comparison import update_comparison
+    from v53_windows import validate_windows
 
     enabled = os.getenv("V5_RESEARCH_ENABLED", "true").lower() not in {
         "false",
@@ -226,6 +234,20 @@ def refresh_research(cfg: Settings) -> None:
                 lambda s=identifier: update_verification(s),
                 21600,
             )
+        )
+        jobs.extend(
+            [
+                (
+                    "comparison:v53:" + identifier,
+                    lambda s=identifier: update_comparison(s),
+                    21600,
+                ),
+                (
+                    "window-validation:" + identifier,
+                    lambda s=identifier: validate_windows(s),
+                    21600,
+                ),
+            ]
         )
         for key, loader, interval in jobs:
             try:

@@ -3,6 +3,51 @@
 -- Meteo V3 schema. SQL is deliberately portable between SQLite and PostgreSQL.
 
 -- V5 derived public read models. Raw observations remain unchanged.
+CREATE TABLE IF NOT EXISTS window_predictions (
+  station_id TEXT NOT NULL,
+  cycle TEXT NOT NULL,
+  acquired_at TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (station_id, cycle)
+);
+
+-- Private profiles: never part of the public weather snapshot or offline API cache.
+CREATE TABLE IF NOT EXISTS personal_accounts (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  recovery_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS personal_sessions (
+  token_hash TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_personal_sessions_account ON personal_sessions(account_id);
+CREATE TABLE IF NOT EXISTS personal_profiles (
+  account_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS personal_alerts (
+  account_id TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  evaluated_at TEXT NOT NULL,
+  PRIMARY KEY(account_id, plan_id)
+);
+CREATE TABLE IF NOT EXISTS personal_devices (
+  subscription_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS personal_auth_limits (
+  bucket TEXT PRIMARY KEY,
+  attempts INTEGER NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS public_snapshots (
   station_id TEXT PRIMARY KEY,
   generated_at TEXT NOT NULL,

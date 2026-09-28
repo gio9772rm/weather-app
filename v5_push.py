@@ -356,12 +356,14 @@ def send_pending(*, now=None, sender=None) -> int:
 
     with NoRedirectSession() as session:
         for sub in subscriptions:
+            from v53_alerts import device_candidates
+
             snapshot = snapshots.get(sub["station_id"])
             if not snapshot:
                 continue
             for candidate in notification_candidates(
                 snapshot, json.loads(sub["rules"]), now
-            ):
+            ) + device_candidates(sub["id"], now):
                 if attempts >= 30:
                     return sent
                 params = {
@@ -369,7 +371,14 @@ def send_pending(*, now=None, sender=None) -> int:
                     "kind": candidate["kind"],
                     "event": candidate["event_key"],
                     "at": now.isoformat(),
-                    "cutoff": (now - pd.Timedelta(hours=4)).isoformat(),
+                    "cutoff": (
+                        now
+                        - pd.Timedelta(
+                            minutes=30
+                            if candidate["kind"].startswith("session:")
+                            else 240
+                        )
+                    ).isoformat(),
                 }
                 with get_engine().begin() as con:
                     claimed = con.execute(

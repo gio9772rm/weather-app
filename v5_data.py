@@ -346,6 +346,9 @@ def build_snapshot(
     now = now if now is not None else pd.Timestamp.now(tz="UTC")
     station = load_station(240, station_id)
     forecast = scoped_forecast(station_id)
+    from v53_sky import add_cams, atmosphere
+
+    forecast = add_cams(forecast, atmosphere(station_id, forecast, now))
     history = scoped_forecast(station_id, history=True)
     daily = load_station_daily_summaries(365) if daily is None else daily
     current = records(station.tail(1), OBSERVATION_PUBLIC)
@@ -419,7 +422,7 @@ def build_snapshot(
         else []
     )
     payload = {
-        "version": "5.2.0",
+        "version": "5.3.0",
         "station": {
             "id": station_id,
             "name": cfg.location_name,
@@ -466,6 +469,16 @@ def build_snapshot(
 
     payload["uncertainty"] = uncertainty(station_id, now)
     payload["radar_animation"] = read_product("radar_frames")
+    from v53_sky import sky_rows
+
+    payload["atmosphere"] = sky_rows(future, payload["air"], now)
+    payload["window_probabilities"] = read_product("windows:" + station_id)
+    payload["window_validation"] = read_product("window-validation:" + station_id)
+    from v5_calibration import observed_hourly
+    from v53_comparison import published_history
+
+    payload["timeline_history"] = published_history(station_id, now)
+    payload["observed_hourly"] = records(observed_hourly(station.tail(600)))
     from v5_insights import forecast_revisions, monthly_archive, station_quality
 
     previous = history.copy()
@@ -484,6 +497,7 @@ def build_snapshot(
             payload["history"]["calendar"], cfg.local_timezone, now
         ),
         "verification": verification,
+        "comparison": read_product("comparison:v53:" + station_id),
         "sources": {
             "weathernext": read_product("weathernext:" + station_id),
             "previous_icon": read_product("previous:icon_seamless:" + station_id),
