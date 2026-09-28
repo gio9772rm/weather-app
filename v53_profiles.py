@@ -10,8 +10,6 @@ import threading
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from starlette.concurrency import run_in_threadpool
-from starlette.responses import JSONResponse
 
 from db import ensure_schema, get_engine
 
@@ -587,6 +585,11 @@ def account_action(action, values, account, token):
 
 
 async def private_api(request):
+    # Profile helpers are also imported by the lean ingest worker. Only the
+    # HTTP boundary needs Starlette, which is supplied by the web application.
+    from starlette.concurrency import run_in_threadpool
+    from starlette.responses import JSONResponse
+
     from v5_api import origin_matches
 
     action = request.path_params["action"]
