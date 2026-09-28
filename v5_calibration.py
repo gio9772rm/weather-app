@@ -26,7 +26,16 @@ HORIZONS = ["0–6 h", "6–24 h", "24–72 h"]
 
 
 def utc(value):
-    return pd.to_datetime(value, utc=True, errors="coerce")
+    # Research acquisitions include microseconds; older model emissions may
+    # use whole seconds or Z. Inferring one format from the first row drops
+    # valid historical rows when these sources are concatenated.
+    return pd.to_datetime(value, utc=True, errors="coerce", format="ISO8601")
+
+
+def verification_key(station_id):
+    # Recompute once in the ordinary publication cycle after a method change,
+    # without waiting for or bypassing the old product's six-hour cooldown.
+    return "verification:v2:" + station_id
 
 
 def archive_runs(station_id, frame, *, basis="live", acquired_at=None):

@@ -29,3 +29,7 @@ Documentazione: [Previous Runs](https://open-meteo.com/en/docs/previous-runs-api
 ## Verifiche
 
 Suite Python, Ruff, audit privacy e controlli di sintassi JavaScript. Contratti visuali estesi a qualità, modelli, archivio ed eventi in entrambi i temi, desktop e mobile; esecuzione completa nel workflow GitHub. Nuovi test per causalità, isolamento delle stazioni, accumuli, lacune, sessioni, fonti native e revisioni pubblicate.
+
+### Correzione dei riscontri dopo il primo rilascio
+
+La verifica sui dati reali ha rilevato che mescolare timestamp ISO con e senza frazioni di secondo poteva escludere emissioni storiche valide, lasciando vuoti i riscontri di Roma. Il parser accetta ora entrambe le precisioni, mantenendo UTC. Test di regressione confrontano gli stessi risultati con fonti in ordine diverso. La cache della verifica ha una nuova revisione: si ricalcola nel successivo ciclo ordinario e poi rispetta nuovamente il cooldown di sei ore. Nessuna modifica alle misure archiviate, alle soglie di calibrazione o alla cadenza di dieci minuti.

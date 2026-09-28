@@ -179,7 +179,7 @@ def refresh_research(cfg: Settings) -> None:
     """Optional work stays within the existing globally locked ten-minute cron."""
     import os
 
-    from v5_calibration import archive_runs, update_verification
+    from v5_calibration import archive_runs, update_verification, verification_key
     from v5_data import scoped_forecast
     from v5_extensions import refresh_product
     from v5_sources import refresh_previous_runs, refresh_weathernext
@@ -222,7 +222,7 @@ def refresh_research(cfg: Settings) -> None:
             )
         jobs.append(
             (
-                "verification:" + identifier,
+                verification_key(identifier),
                 lambda s=identifier: update_verification(s),
                 21600,
             )

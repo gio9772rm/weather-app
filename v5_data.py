@@ -230,10 +230,10 @@ def scoped_health(station_id: str) -> dict:
 def scoped_forecast(station_id: str, history=False, calibrated=True) -> pd.DataFrame:
     frame = _scoped_base_forecast(station_id, history)
     if calibrated and not history and not frame.empty:
-        from v5_calibration import apply_calibration
+        from v5_calibration import apply_calibration, verification_key
         from v5_extensions import read_product
 
-        frame = apply_calibration(frame, read_product("verification:" + station_id))
+        frame = apply_calibration(frame, read_product(verification_key(station_id)))
     return frame
 
 
@@ -473,7 +473,9 @@ def build_snapshot(
         previous = previous[previous.issued_at < forecast.issued_at.max()]
         if not previous.empty:
             previous = previous[previous.issued_at.eq(previous.issued_at.max())]
-    verification = read_product("verification:" + station_id)
+    from v5_calibration import verification_key
+
+    verification = read_product(verification_key(station_id))
     active = [r for r in (verification or {}).get("scores", []) if r.get("applied")]
     payload["insights"] = {
         "quality": station_quality(station_id, now, cfg.station_stale_minutes),
