@@ -643,6 +643,14 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     assert synced["body"]["profile"]["journal"][-1]["notes"] == (
         "Nota offline da sincronizzare"
     )
+    a.locator("#journal-notes").fill("Bozza da conservare durante la sincronizzazione")
+    a.get_by_role("button", name="Aggiorna ora", exact=True).click()
+    expect(a.locator(".journal-text").first).to_contain_text(
+        "Nota offline da sincronizzare"
+    )
+    expect(a.locator("#journal-notes")).to_have_value(
+        "Bozza da conservare durante la sincronizzazione"
+    )
     a.reload()
     expect(a.locator(".journal-text").first).to_contain_text(
         "Nota offline da sincronizzare"

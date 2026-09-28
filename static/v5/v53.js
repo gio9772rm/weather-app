@@ -77,6 +77,7 @@
     if(dirty&&state&&!needsLogin){await flush();return;}
     try{
       const result=await api("profile"), cached=storage.get("meteo.v53.sync",null);
+      const profileChanged=!hydrated||!state||state.revision!==result.revision||state.account.id!==result.account.id;
       if(!hydrated){
         hydrated=true;
         if(!getGuest())storage.set("meteo.v53.guest",snapshotLocal());
@@ -84,7 +85,7 @@
         else adopt(result);
       }else if(!state||state.revision!==result.revision||state.account.id!==result.account.id)adopt(result);
       else {state.alerts=result.alerts;announce("Sincronizzato · "+dt(result.updated_at));}
-      if(page==="personal")render();
+      if(profileChanged||page==="personal")render();
     }catch(e){if(e.status===401){if(!state)announce("Accedi per sincronizzare tra PC e telefono.");else {needsLogin=true;hydrated=false;announce("Sessione scaduta: le modifiche restano sul dispositivo. Accedi di nuovo.");if(page==="personal")render();}}else if(state)announce("Sincronizzazione sospesa · "+e.message);}
   }
   const getGuest=()=>storage.get("meteo.v53.guest",null);
