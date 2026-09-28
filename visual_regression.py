@@ -621,6 +621,9 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     b.locator("#journal-notes").fill("Nota offline da sincronizzare")
     b.get_by_role("button", name="Registra sessione", exact=True).click()
     b.reload()
+    expect(b.locator(".journal-text").first).to_contain_text(
+        "Nota offline da sincronizzare"
+    )
     expect(b.locator(".journal-text").last).to_contain_text(
         "Solo nel profilo personale"
     )
@@ -628,11 +631,21 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     second.set_offline(False)
     b.get_by_role("button", name="Aggiorna ora", exact=True).click()
     b.wait_for_function("!JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
-    assert (
-        b.request.get(base_url + "/api/v5/personal/profile").json()["profile"][
-            "journal"
-        ][-1]["notes"]
-        == "Nota offline da sincronizzare"
+    # Use the browser's cookie handling: Chromium accepts Secure cookies on
+    # loopback HTTP, whereas Playwright's separate API request client does not.
+    synced = b.evaluate("""async () => {
+      const response = await fetch('/api/v5/personal/profile', {
+        credentials: 'same-origin', cache: 'no-store'
+      });
+      return {status: response.status, body: await response.json()};
+    }""")
+    assert synced["status"] == 200, synced
+    assert synced["body"]["profile"]["journal"][-1]["notes"] == (
+        "Nota offline da sincronizzare"
+    )
+    a.reload()
+    expect(a.locator(".journal-text").first).to_contain_text(
+        "Nota offline da sincronizzare"
     )
     # Private responses must not enter public snapshots or service-worker caches.
     body = b.request.get(base_url + "/api/v5/snapshot/visual-primary").text()
