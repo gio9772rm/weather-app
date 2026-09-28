@@ -230,6 +230,10 @@ def account_login(action, values, address):
                     text("DELETE FROM personal_sessions WHERE account_id=:id"),
                     {"id": account_id},
                 )
+                con.execute(
+                    text("DELETE FROM personal_devices WHERE account_id=:id"),
+                    {"id": account_id},
+                )
             token = issue_session(account_id, con)
     return {"id": account_id, "username": username, "recovery": recovery}, token
 
@@ -508,6 +512,21 @@ def account_action(action, values, account, token):
         return write_profile(account, values)
     with get_engine().begin() as con:
         if action == "logout":
+            # Detach only the device whose existing push-management token is
+            # presented. A guessed subscription ID must not revoke another device.
+            device = values.get("device", {})
+            if isinstance(device, dict) and isinstance(device.get("token"), str):
+                stored = con.execute(
+                    text("SELECT token_hash FROM push_subscriptions WHERE id=:id"),
+                    {"id": str(device.get("id", ""))},
+                ).scalar()
+                if stored and hmac.compare_digest(stored, digest(device["token"])):
+                    con.execute(
+                        text(
+                            "DELETE FROM personal_devices WHERE account_id=:id AND subscription_id=:sub"
+                        ),
+                        {"id": identifier, "sub": device.get("id")},
+                    )
             con.execute(
                 text("DELETE FROM personal_sessions WHERE token_hash=:token"),
                 {"token": digest(token)},
@@ -587,6 +606,9 @@ async def private_api(request):
             )
         if request.headers.get("content-type", "").split(";")[0] != "application/json":
             raise ValueError("Formato JSON richiesto")
+        account = None
+        if action not in {"register", "login", "recover"}:
+            account = await run_in_threadpool(authenticate, token)
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
@@ -627,7 +649,6 @@ async def private_api(request):
                 path="/",
             )
             return response
-        account = await run_in_threadpool(authenticate, token)
         result = await run_in_threadpool(account_action, action, values, account, token)
         response = JSONResponse(result, headers=HEADERS)
         if action in {"logout", "logout-all", "delete"}:

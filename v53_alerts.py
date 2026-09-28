@@ -104,6 +104,13 @@ def refresh_plan_alerts(now=None):
             ):
                 continue
             current_plan = planner(station, config)
+            # Missing meteorology is not evidence that an observed or modelled
+            # photographic window has deteriorated.
+            if any(
+                "Dati meteo incompleti" in r.get("reasons", [])
+                for r in current_plan.get("session_detail", [])
+            ):
+                continue
             metrics = clean_json(plan_metrics(current_plan))
             fingerprint = digest(json.dumps(saved, sort_keys=True))
             same = previous.get("plan_hash") == fingerprint
@@ -145,6 +152,27 @@ def refresh_plan_alerts(now=None):
                 "timezone": cfg.local_timezone,
             }
             with get_engine().begin() as con:
+                lock = " FOR UPDATE" if con.dialect.name == "postgresql" else ""
+                current_profile = con.execute(
+                    text(
+                        "SELECT payload FROM personal_profiles WHERE account_id=:id"
+                        + lock
+                    ),
+                    {"id": account},
+                ).scalar()
+                latest = next(
+                    (
+                        p
+                        for p in json.loads(current_profile or "{}").get("plans", [])
+                        if p["id"] == saved["id"]
+                    ),
+                    None,
+                )
+                if (
+                    not latest
+                    or digest(json.dumps(latest, sort_keys=True)) != fingerprint
+                ):
+                    continue
                 con.execute(
                     text(
                         "INSERT INTO personal_alerts(account_id,plan_id,payload,evaluated_at) VALUES(:id,:plan,:payload,:at) ON CONFLICT(account_id,plan_id) DO UPDATE SET payload=excluded.payload,evaluated_at=excluded.evaluated_at"

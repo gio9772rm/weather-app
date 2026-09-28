@@ -371,7 +371,14 @@ def send_pending(*, now=None, sender=None) -> int:
                     "kind": candidate["kind"],
                     "event": candidate["event_key"],
                     "at": now.isoformat(),
-                    "cutoff": (now - pd.Timedelta(hours=4)).isoformat(),
+                    "cutoff": (
+                        now
+                        - pd.Timedelta(
+                            minutes=30
+                            if candidate["kind"].startswith("session:")
+                            else 240
+                        )
+                    ).isoformat(),
                 }
                 with get_engine().begin() as con:
                     claimed = con.execute(

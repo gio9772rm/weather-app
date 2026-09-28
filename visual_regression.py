@@ -613,6 +613,27 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     b.goto(f"{base_url}/?page=journal")
     b.wait_for_function("window.MeteoV53?.isSignedIn()")
     expect(b.locator(".journal-text")).to_contain_text("Solo nel profilo personale")
+    b.evaluate("navigator.serviceWorker.ready.then(()=>true)")
+    second.set_offline(True)
+    b.reload()
+    b.wait_for_selector("#journal-form")
+    b.locator("#journal-target").fill("Sessione offline")
+    b.locator("#journal-notes").fill("Nota offline da sincronizzare")
+    b.get_by_role("button", name="Registra sessione", exact=True).click()
+    b.reload()
+    expect(b.locator(".journal-text").last).to_contain_text(
+        "Solo nel profilo personale"
+    )
+    assert b.evaluate("JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
+    second.set_offline(False)
+    b.get_by_role("button", name="Aggiorna ora", exact=True).click()
+    b.wait_for_function("!JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
+    assert (
+        b.request.get(base_url + "/api/v5/personal/profile").json()["profile"][
+            "journal"
+        ][-1]["notes"]
+        == "Nota offline da sincronizzare"
+    )
     # Private responses must not enter public snapshots or service-worker caches.
     body = b.request.get(base_url + "/api/v5/snapshot/visual-primary").text()
     assert "Solo nel profilo personale" not in body

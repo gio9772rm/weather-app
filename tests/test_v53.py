@@ -517,3 +517,90 @@ def test_profile_limits_keep_device_secrets_out():
     assert p["preferences"] == {"theme": "dark", "station": "roma-primary"}
     with pytest.raises(ValueError):
         validate_profile({"plans": [{}] * 13})
+
+
+def test_streamed_comparison_retains_same_cutoff_and_scope(sqlite_engine, monkeypatch):
+    from v53_comparison import load_common_runs
+
+    monkeypatch.setenv("STATION_ID", "one")
+    now = pd.Timestamp("2026-09-02T12:00Z")
+    valid = now - pd.Timedelta(hours=1)
+    with sqlite_engine.begin() as con:
+        for station, lead, temp in (
+            ("one", 25, 20),
+            ("one", 23, 99),
+            ("other", 24, 80),
+        ):
+            issued = valid - pd.Timedelta(hours=lead)
+            con.execute(
+                text(
+                    "INSERT INTO location_model_runs VALUES(:id,'test','model',:at,:at,'live',:payload)"
+                ),
+                {
+                    "id": station,
+                    "at": issued.isoformat(),
+                    "payload": json.dumps(
+                        [{"valid_time": valid.isoformat(), "temp_c": temp}]
+                    ),
+                },
+            )
+    frame = load_common_runs("one", now)
+    assert len(frame) == 1 and frame.temp_c.iloc[0] == 20
+
+
+def test_logout_detaches_only_proven_private_push_device(sqlite_engine):
+    from v53_profiles import digest
+
+    c = client()
+    s = register(c)
+    with sqlite_engine.begin() as con:
+        for device in ("this-device", "another-device"):
+            con.execute(
+                text(
+                    "INSERT INTO push_subscriptions VALUES(:id,:token,'{}','one','{}','2026-09-01T00:00Z')"
+                ),
+                {"id": device, "token": digest(device + "-token")},
+            )
+            con.execute(
+                text("INSERT INTO personal_devices VALUES(:device,:account)"),
+                {"device": device, "account": s["account"]["id"]},
+            )
+    r = c.post(
+        "/api/v5/personal/logout",
+        json={"device": {"id": "this-device", "token": "this-device-token"}},
+        headers={"origin": "https://testserver"},
+    )
+    assert r.status_code == 200
+    with sqlite_engine.connect() as con:
+        assert con.execute(
+            text("SELECT subscription_id FROM personal_devices")
+        ).scalars().all() == ["another-device"]
+
+
+def test_private_session_alerts_require_owner_recent_event_and_quiet_hours(
+    sqlite_engine,
+):
+    from v53_alerts import device_candidates
+
+    now = pd.Timestamp("2026-09-02T20:00Z")
+    state = {
+        "start": (now + pd.Timedelta(hours=12)).isoformat(),
+        "rules": {"quiet_start": "23:00", "quiet_end": "08:00"},
+        "timezone": "Europe/Rome",
+        "pending": {
+            "created_at": now.isoformat(),
+            "body": "M31 ridotta",
+            "kind": "session:a",
+        },
+    }
+    with sqlite_engine.begin() as con:
+        con.execute(text("INSERT INTO personal_devices VALUES('own','account')"))
+        con.execute(text("INSERT INTO personal_devices VALUES('other','another')"))
+        con.execute(
+            text("INSERT INTO personal_alerts VALUES('account','plan',:payload,:at)"),
+            {"payload": json.dumps(state), "at": now.isoformat()},
+        )
+    assert len(device_candidates("own", now)) == 1
+    assert device_candidates("other", now) == []
+    assert device_candidates("own", now + pd.Timedelta(hours=1)) == []
+    assert device_candidates("own", now + pd.Timedelta(hours=2)) == []
