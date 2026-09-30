@@ -114,8 +114,8 @@ def test_v5_snapshot_does_not_expose_private_configuration(sqlite_engine, monkey
             "lightning_observed_at": None,
             "sri_max_mm_h": 2.5,
             "nearest_lightning_km": None,
-            "latitude": 1.23456,
-            "longitude": 2.34567,
+            "latitude": 1.2,
+            "longitude": 2.3,
             "raw_payload": "test-secret-value",
         }]),
     )
