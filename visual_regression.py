@@ -398,6 +398,14 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 lambda route: (time.sleep(0.5), route.continue_()),
                 times=1,
             )
+            # Test the real integration without depending on third-party tiles.
+            page.route(
+                "https://embed.windy.com/**",
+                lambda route: route.fulfill(
+                    content_type="text/html",
+                    body="<html lang='it'><meta charset='utf-8'><body>Mappa Windy · fixture</body></html>",
+                ),
+            )
             for view in (
                 "today",
                 "forecast",
@@ -432,6 +440,49 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                     assert page.locator("#view .card").count() > 0
                     if view == "today":
                         expect(page.locator(".next-hours")).to_be_visible()
+                        expect(page.locator("#expert-radar")).to_have_count(0)
+                    if view == "maps":
+                        expect(page.locator('[data-page="maps"]')).to_have_attribute(
+                            "aria-current", "page"
+                        )
+                        expect(page.locator("#expert-radar")).to_be_visible()
+                        expect(page.locator("#expert-radar")).to_have_attribute(
+                            "src", re.compile(r"overlay=radar&product=radar")
+                        )
+                        if page.evaluate("document.fullscreenEnabled"):
+                            page.locator("#radar-fullscreen").click()
+                            page.wait_for_function(
+                                "document.fullscreenElement?.id === 'expert-radar-holder'"
+                            )
+                            page.evaluate("document.exitFullscreen()")
+                        page.select_option("#radar-layer", "satellite")
+                        expect(page.locator("#expert-radar")).to_have_attribute(
+                            "src", re.compile(r"overlay=satellite&product=satellite")
+                        )
+                        page.select_option("#radar-layer", "clouds")
+                        expect(page.locator("#radar-kind")).to_contain_text("PREVISIONE")
+                        expect(page.locator("#expert-radar")).to_have_attribute(
+                            "src", re.compile(r"overlay=clouds&product=ecmwf")
+                        )
+                        page.select_option("#station", "visual-secondary")
+                        expect(page.locator("#expert-radar")).to_have_attribute(
+                            "src", re.compile(r"lat=44\.69&lon=12\.18")
+                        )
+                        page.get_by_role("button", name="Aggiorna ora", exact=True).click()
+                        expect(page.locator("#refresh")).to_be_enabled()
+                        expect(page.locator("#radar-layer")).to_have_value("clouds")
+                        page.select_option("#station", "visual-primary")
+                        expect(page.locator("#expert-radar")).to_have_attribute(
+                            "src", re.compile(r"lat=41\.90&lon=12\.50")
+                        )
+                        # No weather refresh is introduced by map interactions.
+                        if width == 390:
+                            page.set_viewport_size({"width": 320, "height": height})
+                            assert page.evaluate(
+                                "document.documentElement.scrollWidth-window.innerWidth"
+                            ) <= 3, "Radar navigation overflow at 320px"
+                            page.set_viewport_size({"width": width, "height": height})
+                        page.select_option("#radar-layer", "radar")
                     assert not errors, errors
                     # Legend and line use the same actual computed color.
                     if page.locator(".chart-legend").count() and view != "timeline":
@@ -622,6 +673,11 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             "Non sono un aggiornamento live"
         )
         expect(page.locator("#view .card").first).to_be_visible()
+        page.locator('[data-page="maps"]').click()
+        expect(page.locator("#expert-radar")).to_have_count(0)
+        expect(page.locator("#expert-radar-holder")).to_contain_text(
+            "richiedono la connessione"
+        )
         assert not errors, errors
     except Exception:
         print(

@@ -105,6 +105,20 @@ def test_v5_coverage_counts_dst_and_distinguishes_daily_import():
 
 def test_v5_snapshot_does_not_expose_private_configuration(sqlite_engine, monkeypatch):
     monkeypatch.setenv("ECOWITT_API_KEY", "test-secret-value")
+    monkeypatch.setattr(
+        "v5_data.load_latest_dpc_radar",
+        lambda station_id: pd.DataFrame([{
+            "observed_at": "2026-09-30T20:00:00Z",
+            "sri_observed_at": "2026-09-30T20:00:00Z",
+            "vmi_observed_at": "2026-09-30T19:55:00Z",
+            "lightning_observed_at": None,
+            "sri_max_mm_h": 2.5,
+            "nearest_lightning_km": None,
+            "latitude": 1.23456,
+            "longitude": 2.34567,
+            "raw_payload": "test-secret-value",
+        }]),
+    )
     result = build_snapshot(Settings.from_env().station_id)
     serialized = json.dumps(result, allow_nan=False)
     for secret in (
@@ -117,6 +131,9 @@ def test_v5_snapshot_does_not_expose_private_configuration(sqlite_engine, monkey
         assert secret not in serialized
     assert result["refresh_seconds"] == 600
     assert result["live"] is False
+    assert result["radar"][0]["sri_max_mm_h"] == 2.5
+    assert result["radar"][0]["lightning_observed_at"] is None
+    assert result["radar"][0]["sri_observed_at"] != result["radar"][0]["vmi_observed_at"]
 
 
 def test_v5_unknown_station_is_not_primary_fallback(sqlite_engine):

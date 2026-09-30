@@ -27,7 +27,7 @@ jobs:
       - name: Unit tests
         run: |
           python -m pytest -q
-          node --test tests/v54.test.cjs
+          node --test tests/*.test.cjs
 
   visual:
     runs-on: ubuntu-22.04

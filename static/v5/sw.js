@@ -1,5 +1,5 @@
 "use strict";
-const SHELL = "meteo-v5-shell-8",
+const SHELL = "meteo-v5-shell-9",
   DATA = "meteo-v5-data",
   SETTINGS = "meteo-v5-settings";
 const ASSETS = [
@@ -7,6 +7,7 @@ const ASSETS = [
   "/assets/v5/app.css",
   "/assets/v5/app.js",
   "/assets/v5/extras.js",
+  "/assets/v5/radar.js",
   "/assets/v5/extras.css",
   "/assets/v5/insights.js",
   "/assets/v5/insights.css",
