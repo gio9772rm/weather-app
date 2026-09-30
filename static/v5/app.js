@@ -721,7 +721,7 @@ function importView() {
 function render() {
   if (!data) return;
   updateMeta();
-  const active = ["today", "forecast", "stations", "astronomy"].includes(page)
+  const active = ["today", "forecast", "maps", "stations", "astronomy"].includes(page)
     ? page
     : "more";
   document.querySelectorAll("#navigation button").forEach((b) => {

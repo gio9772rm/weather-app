@@ -422,7 +422,7 @@ def build_snapshot(
         else []
     )
     payload = {
-        "version": "5.4.0",
+        "version": "5.4.1",
         "station": {
             "id": station_id,
             "name": cfg.location_name,
@@ -449,7 +449,12 @@ def build_snapshot(
             (
                 "time",
                 "observed_at",
+                "sri_observed_at",
+                "vmi_observed_at",
+                "lightning_observed_at",
                 "sri_point_mm_h",
+                "sri_max_mm_h",
+                "nearest_lightning_km",
                 "vmi_point_dbz",
                 "lightning_10km",
                 "lightning_25km",
