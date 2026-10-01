@@ -478,7 +478,10 @@ def build_snapshot(
 
     payload["atmosphere"] = sky_rows(future, payload["air"], now)
     payload["window_probabilities"] = read_product("windows:" + station_id)
-    payload["window_validation"] = read_product("window-validation:" + station_id)
+    from v53_windows import validation_key
+
+    payload["window_validation"] = read_product(validation_key(station_id))
+    payload["alert_verification"] = read_product("alert-verification:v55:" + station_id)
     from v5_calibration import observed_hourly
     from v53_comparison import published_history
 

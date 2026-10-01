@@ -190,7 +190,8 @@ def refresh_research(cfg: Settings) -> None:
     from v5_extensions import refresh_product
     from v5_sources import refresh_previous_runs, refresh_weathernext
     from v53_comparison import update_comparison
-    from v53_windows import validate_windows
+    from v53_windows import validate_windows, validation_key
+    from v55_alert_verification import update_alert_verification
 
     enabled = os.getenv("V5_RESEARCH_ENABLED", "true").lower() not in {
         "false",
@@ -243,8 +244,13 @@ def refresh_research(cfg: Settings) -> None:
                     21600,
                 ),
                 (
-                    "window-validation:" + identifier,
+                    validation_key(identifier),
                     lambda s=identifier: validate_windows(s),
+                    21600,
+                ),
+                (
+                    "alert-verification:v55:" + identifier,
+                    lambda s=identifier: update_alert_verification(s),
                     21600,
                 ),
             ]

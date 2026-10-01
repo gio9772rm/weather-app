@@ -1,0 +1,97 @@
+name: Android OTA - Release
+
+on:
+  workflow_run:
+    workflows: ["Meteo Pro V5 - Test"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: android-ota-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check release version, successful CI and signing availability
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          config = json.loads(pathlib.Path('android/release.json').read_text())
+          manifest = pathlib.Path('static/android/manifest.json')
+          published = json.loads(manifest.read_text())['versionCode'] if manifest.exists() else 0
+          if config['versionCode'] <= published:
+              print('No new native version. Web updates do not require an APK.')
+              raise SystemExit(0)
+          if not os.environ.get('ANDROID_KEYSTORE_B64') or not os.environ.get('ANDROID_KEYSTORE_PASSWORD'):
+              print('::warning::Configure ANDROID_KEYSTORE_B64 and ANDROID_KEYSTORE_PASSWORD to enable automatic signing. No APK published.')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+                  f.write('Release pending: signing secrets are not configured. No unsigned APK is published.\n')
+              raise SystemExit(0)
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          runs = json.loads(subprocess.check_output(['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/tests.yml/runs?branch=main&event=push&head_sha={sha}"], text=True))
+          if not any(r['head_sha'] == sha and r['conclusion'] == 'success' for r in runs['workflow_runs']):
+              raise SystemExit('Current main has no successful complete test run. Release blocked.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('ready=true\n')
+          PY
+      - name: Install pinned Gradle
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.13-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.13-bin.zip.sha256 -o "$RUNNER_TEMP/gradle.sha256"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/gradle.sha256")" "$RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP/gradle"
+          echo "$RUNNER_TEMP/gradle/gradle-8.13/bin" >> "$GITHUB_PATH"
+      - name: Build, test and lint release
+        if: steps.gate.outputs.ready == 'true'
+        run: gradle -p android --no-daemon :app:assembleRelease :app:lintRelease :app:testReleaseUnitTest
+      - name: Sign and verify release
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set +x
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/meteo.jks"
+          trap 'rm -f "$RUNNER_TEMP/meteo.jks"' EXIT
+          tools_dir="$(dirname "$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner | sort -V | tail -1)")"
+          "$tools_dir/apksigner" sign --ks "$RUNNER_TEMP/meteo.jks" --ks-key-alias meteo-pro \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --out "$RUNNER_TEMP/MeteoPro.apk" android/app/build/outputs/apk/release/app-release-unsigned.apk
+          python android/release_tools.py --apk "$RUNNER_TEMP/MeteoPro.apk" \
+            --apksigner "$tools_dir/apksigner" --aapt "$tools_dir/aapt"
+      - name: Publish signed APK and version manifest together
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add static/android/
+          git commit -m "Publish verified Android OTA release"
+          gh auth setup-git
+          git push origin HEAD:main
+          echo 'Signed APK and manifest published together. Render deploys the new release.' >> "$GITHUB_STEP_SUMMARY"

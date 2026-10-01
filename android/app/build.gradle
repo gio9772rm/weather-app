@@ -1,19 +1,25 @@
 plugins { id 'com.android.application' }
 android {
-    namespace 'com.gio9772rm.meteov4'
+    namespace 'com.gio9772rm.meteopro'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.gio9772rm.meteov4'
+        applicationId 'com.gio9772rm.meteopro'
         minSdk 23
         targetSdk 36
-        versionCode 5
-        versionName '5.1'
+        def release = new groovy.json.JsonSlurper().parse(file('../release.json'))
+        versionCode release.versionCode
+        versionName release.versionName
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildFeatures { buildConfig true }
     buildTypes {
-        // CI makes an unsigned release. Sign locally with the original key.
+        // Signing is a separate, verified release step. Never commit a keystore.
         release { minifyEnabled false }
         debug { applicationIdSuffix '.preview'; versionNameSuffix '-preview' }
     }
 }
-dependencies { implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.3' }
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.3'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}
