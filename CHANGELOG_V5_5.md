@@ -28,6 +28,14 @@ il cambio di chiave della verifica finestre permette il primo calcolo al normale
 ciclo dopo il deploy. Nessuna migrazione database. Radar esperto mantenuto nella
 vista semplificata, aggiornamento meteo ogni 600 secondi.
 
+Il backup e il ripristino portatile accettano i campi CSV grandi delle fotografie
+meteo: il limite del lettore viene adeguato alla dimensione delle voci dell'archivio
+e ripristinato a fine operazione, anche in caso di errore. Rimangono obbligatori
+checksum, conteggio delle righe e verifica del ripristino. Una regressione verifica
+due fotografie con campi oltre 128 KiB, Unicode, virgole e righe multiple, oltre
+al rifiuto di un archivio manomesso. Corregge il fallimento del backup automatico
+nel run GitHub 36792177005 del 1 ottobre 2026 (ora italiana).
+
 ## Android
 
 Integrata la PR #75: Meteo Pro nativa **5.2.0**, identità distinta da MeteoV4,
