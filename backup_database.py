@@ -12,6 +12,7 @@ import re
 import sqlite3
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,28 @@ BACKUP_TABLES = (
 
 BACKUP_FORMAT = "meteo-v4-portable-backup"
 LEGACY_BACKUP_FORMATS = {"meteo-v3-portable-backup"}
+
+
+@contextmanager
+def _backup_csv_limit(archive: zipfile.ZipFile):
+    """Allow snapshot fields up to their CSV entry size, then restore the limit."""
+    previous = csv.field_size_limit()
+    csv.field_size_limit(
+        max(
+            [
+                previous,
+                *(
+                    item.file_size
+                    for item in archive.infolist()
+                    if item.filename.endswith(".csv")
+                ),
+            ]
+        )
+    )
+    try:
+        yield
+    finally:
+        csv.field_size_limit(previous)
 
 
 def _sha256(path: Path) -> str:
@@ -177,7 +200,7 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
 def verify_backup(archive_path: str | Path) -> dict[str, Any]:
     """Validate archive paths, hashes and CSV row counts without restoring data."""
     archive_path = Path(archive_path)
-    with zipfile.ZipFile(archive_path) as archive:
+    with zipfile.ZipFile(archive_path) as archive, _backup_csv_limit(archive):
         names = set(archive.namelist())
         if any(Path(name).is_absolute() or ".." in Path(name).parts for name in names):
             raise ValueError("Archivio non valido: percorso non sicuro")
@@ -195,7 +218,7 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
             payload = archive.read(filename)
             if hashlib.sha256(payload).hexdigest() != details.get("sha256"):
                 raise ValueError(f"Checksum non valido: {filename}")
-            decoded = payload.decode("utf-8").splitlines()
+            decoded = io.StringIO(payload.decode("utf-8"), newline="")
             row_count = max(0, sum(1 for _ in csv.reader(decoded)) - 1)
             if row_count != int(details.get("rows", -1)):
                 raise ValueError(f"Conteggio righe non valido: {filename}")
@@ -226,7 +249,11 @@ def restore_backup(
     staged = Path(staged_name)
     restored_rows = 0
     try:
-        with zipfile.ZipFile(archive_path) as archive, sqlite3.connect(staged) as db:
+        with (
+            zipfile.ZipFile(archive_path) as archive,
+            _backup_csv_limit(archive),
+            sqlite3.connect(staged) as db,
+        ):
             db.execute("PRAGMA foreign_keys=OFF")
             db.executescript(archive.read("schema.sql").decode("utf-8"))
             for table, details in manifest.get("tables", {}).items():
@@ -235,7 +262,7 @@ def restore_backup(
                 ):
                     raise ValueError(f"Tabella non ripristinabile: {table}")
                 decoded = archive.read(details["file"]).decode("utf-8")
-                reader = csv.DictReader(io.StringIO(decoded))
+                reader = csv.DictReader(io.StringIO(decoded, newline=""))
                 columns = reader.fieldnames or []
                 if not columns or any(
                     not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column)

@@ -195,6 +195,49 @@ def archive_paths(station_id, paths, cfg):
         )
 
 
+def validation_key(station_id):
+    return "window-validation:v55:" + station_id
+
+
+def sample_readiness(selected, timezone="Europe/Rome"):
+    """Operational review gates, not a promise of statistical calibration."""
+    days = {t.tz_convert(timezone).date() for t in selected}
+    wet_days = {
+        t.tz_convert(timezone).date() for t, (_, o) in selected.items() if not o
+    }
+    dry = sum(o for _, o in selected.values())
+    requirements = [
+        ("days", "Giorni con riscontri", len(days), 30),
+        ("windows", "Finestre verificate", len(selected), 200),
+        ("dry", "Finestre asciutte", dry, 30),
+        ("wet", "Finestre con pioggia", len(selected) - dry, 30),
+        ("wet_days", "Giorni con pioggia nelle finestre", len(wet_days), 5),
+    ]
+    gates = [
+        {
+            "key": key,
+            "label": label,
+            "current": current,
+            "minimum": minimum,
+            "remaining": max(0, minimum - current),
+            "met": current >= minimum,
+        }
+        for key, label, current, minimum in requirements
+    ]
+    return {
+        "status": "ready_for_study" if all(g["met"] for g in gates) else "collecting",
+        "applied": False,
+        "days": len(days),
+        "wet_days": len(wet_days),
+        "dry": dry,
+        "wet": len(selected) - dry,
+        "requirements": gates,
+        "first_verified": min(selected) if selected else None,
+        "last_verified": max(selected) if selected else None,
+        "note": "Soglie prudenziali del progetto per iniziare uno studio, non una garanzia di affidabilità. Le finestre dello stesso giorno possono essere correlate. Servono poi una prova su giorni successivi tenuti separati e un vantaggio rispetto alle frequenze di riferimento. Nessuna attivazione automatica; i tempi dipendono anche dalla pioggia. Le finestre fotografiche restano senza calibrazione osservativa del cielo.",
+    }
+
+
 def validate_windows(station_id, now=None):
     from data_access import load_station
     from v5_data import clean_json
@@ -213,27 +256,49 @@ def validate_windows(station_id, now=None):
         if "rain_mm" in hourly
         else pd.Series(dtype=float)
     )
-    selected = {}
+    candidates = {}
+    acquisitions = []
     for acquired, payload in archive:
+        acquired = utc(acquired)
+        if pd.isna(acquired) or acquired > now:
+            continue
+        acquisitions.append(acquired)
         for row in json.loads(payload).get("rows", []):
             start, end = utc(row["start"]), utc(row["end"])
-            lead = (start - utc(acquired)).total_seconds() / 3600
+            lead = (start - acquired).total_seconds() / 3600
             if (
                 row["kind"] != "dry"
-                or row["probability"] is None
-                or end > now
+                or pd.isna(start)
+                or pd.isna(end)
+                or start < now - pd.Timedelta(days=90)
+                or end - start != pd.Timedelta(hours=2)
                 or not 6 <= lead < 12
                 or start.hour % 2
+                or start != start.floor("h")
             ):
                 continue
-            if start in selected:
-                continue
-            values = rain.reindex(
-                pd.date_range(start + pd.Timedelta(hours=1), end, freq="h")
-            )
-            if len(values) != 2 or values.isna().any():
-                continue
-            selected[start] = (row["probability"] / 100, int(values.lt(0.1).all()))
+            if start not in candidates or acquired > candidates[start][0]:
+                candidates[start] = (acquired, end, row.get("probability"))
+    selected = {}
+    pending = missing_forecast = missing_observations = 0
+    for start, (_, end, probability) in candidates.items():
+        if end > now:
+            pending += 1
+            continue
+        try:
+            probability = float(probability)
+        except (TypeError, ValueError):
+            probability = float("nan")
+        if not np.isfinite(probability) or not 0 <= probability <= 100:
+            missing_forecast += 1
+            continue
+        values = rain.reindex(
+            pd.date_range(start + pd.Timedelta(hours=1), end, freq="h")
+        )
+        if len(values) != 2 or values.isna().any():
+            missing_observations += 1
+            continue
+        selected[start] = (probability / 100, int(values.lt(0.1).all()))
     bins = []
     for low in (0, 0.2, 0.4, 0.6, 0.8):
         values = [
@@ -258,6 +323,20 @@ def validate_windows(station_id, now=None):
             if selected
             else None,
             "bins": bins,
+            "collection": {
+                "cycles": len(acquisitions),
+                "first_acquired": min(acquisitions) if acquisitions else None,
+                "last_acquired": max(acquisitions) if acquisitions else None,
+                "eligible_windows": len(candidates),
+                "pending": pending,
+                "missing_forecast": missing_forecast,
+                "missing_observations": missing_observations,
+                "coverage_percent": 100 * len(selected) / (len(candidates) - pending)
+                if len(candidates) > pending
+                else None,
+                "retention_days": 90,
+            },
+            "readiness": sample_readiness(selected),
             "note": "Riscontri prospettici di finestre asciutte non sovrapposte, previste 6–12 ore prima; ogni ora osservata richiede 12 campioni validi. La fotografia non è validabile automaticamente senza misure di nuvole e qualità del cielo. Campione in raccolta; nessuna ricalibrazione automatica.",
         }
     )

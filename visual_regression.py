@@ -316,6 +316,72 @@ def _seed_second_station() -> None:
             }
         ]
         products = {
+            "window-validation:v55": {
+                "evaluated_at": now,
+                "n": 72,
+                "brier": 0.12,
+                "bins": [
+                    {"low": 0, "high": 20, "n": 12, "forecast": 15, "observed": 10},
+                    {"low": 80, "high": 100, "n": 60, "forecast": 90, "observed": 95},
+                ],
+                "note": "Riscontri sintetici di finestre asciutte per il collaudo.",
+                "collection": {
+                    "cycles": 24,
+                    "first_acquired": now - pd.Timedelta(days=6),
+                    "last_acquired": now,
+                    "retention_days": 90,
+                    "pending": 8,
+                    "missing_observations": 3,
+                    "missing_forecast": 1,
+                    "coverage_percent": 94.7,
+                },
+                "readiness": {
+                    "status": "collecting",
+                    "days": 6,
+                    "dry": 60,
+                    "wet": 12,
+                    "wet_days": 2,
+                    "first_verified": now - pd.Timedelta(days=6),
+                    "last_verified": now,
+                    "requirements": [
+                        {
+                            "label": "Giorni con riscontri",
+                            "current": 6,
+                            "minimum": 30,
+                            "remaining": 24,
+                            "met": False,
+                        }
+                    ],
+                    "note": "Campione sintetico per la verifica dell’interfaccia.",
+                },
+            },
+            "alert-verification:v55": {
+                "evaluated_at": now,
+                "period_days": 30,
+                "candidate_hours": 20,
+                "note": "Simulazione sintetica, non consegne delle notifiche.",
+                "rows": [
+                    {
+                        "kind": kind,
+                        "threshold": threshold,
+                        "n": 16,
+                        "days": 2,
+                        "hits": 4,
+                        "false_alarms": 2,
+                        "misses": 1,
+                        "correct_negatives": 9,
+                        "precision_percent": 66.7,
+                        "recall_percent": 80,
+                        "missing_forecast": 1,
+                        "missing_observations": 3,
+                    }
+                    for kind, thresholds in (
+                        ("rain", (30, 40, 60, 80)),
+                        ("wind", (30, 40, 60)),
+                    )
+                    for threshold in thresholds
+                ],
+            },
             "comparison:v53": {
                 "evaluated_at": now,
                 "method": "Fixture sintetica: confronto sulle stesse ore",
@@ -419,6 +485,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 "activities",
                 "quality",
                 "models",
+                "notifications",
                 "archive",
                 "events",
                 "personal",
@@ -441,6 +508,22 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                     if view == "today":
                         expect(page.locator(".next-hours")).to_be_visible()
                         expect(page.locator("#expert-radar")).to_have_count(0)
+                    if view == "models":
+                        expect(page.locator(".sample-readiness")).to_contain_text("72")
+                        expect(page.locator(".sample-readiness")).to_contain_text(
+                            "Calibrazione delle probabilità non attiva"
+                        )
+                    if view in {"models", "notifications"}:
+                        expect(page.locator(".alert-verification")).to_contain_text(
+                            "Assenze corrette"
+                        )
+                        assert page.locator(".alert-verification tbody tr").count() == 7
+                        if width == 390:
+                            page.set_viewport_size({"width": 320, "height": height})
+                            assert page.evaluate(
+                                "document.documentElement.scrollWidth <= innerWidth+3"
+                            )
+                            page.set_viewport_size({"width": width, "height": height})
                     if view == "maps":
                         expect(page.locator('[data-page="maps"]')).to_have_attribute(
                             "aria-current", "page"
@@ -460,7 +543,9 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                             "src", re.compile(r"overlay=satellite&product=satellite")
                         )
                         page.select_option("#radar-layer", "clouds")
-                        expect(page.locator("#radar-kind")).to_contain_text("PREVISIONE")
+                        expect(page.locator("#radar-kind")).to_contain_text(
+                            "PREVISIONE"
+                        )
                         expect(page.locator("#expert-radar")).to_have_attribute(
                             "src", re.compile(r"overlay=clouds&product=ecmwf")
                         )
@@ -468,7 +553,9 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                         expect(page.locator("#expert-radar")).to_have_attribute(
                             "src", re.compile(r"lat=44\.69&lon=12\.18")
                         )
-                        page.get_by_role("button", name="Aggiorna ora", exact=True).click()
+                        page.get_by_role(
+                            "button", name="Aggiorna ora", exact=True
+                        ).click()
                         expect(page.locator("#refresh")).to_be_enabled()
                         expect(page.locator("#radar-layer")).to_have_value("clouds")
                         page.select_option("#station", "visual-primary")
@@ -478,9 +565,12 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                         # No weather refresh is introduced by map interactions.
                         if width == 390:
                             page.set_viewport_size({"width": 320, "height": height})
-                            assert page.evaluate(
-                                "document.documentElement.scrollWidth-window.innerWidth"
-                            ) <= 3, "Radar navigation overflow at 320px"
+                            assert (
+                                page.evaluate(
+                                    "document.documentElement.scrollWidth-window.innerWidth"
+                                )
+                                <= 3
+                            ), "Radar navigation overflow at 320px"
                             page.set_viewport_size({"width": width, "height": height})
                         page.select_option("#radar-layer", "radar")
                     assert not errors, errors
@@ -803,6 +893,54 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     second.close()
 
 
+def _android_update_checks(browser, base_url: str, output: Path) -> dict:
+    """The standalone download screen stays usable without a weather snapshot."""
+    from playwright.sync_api import expect
+
+    config = json.loads(Path("android/release.json").read_text())
+    valid = {
+        "schema": 1,
+        **config,
+        "sizeBytes": 3500000,
+        "sha256": "a" * 64,
+        "apkUrl": f"https://weather-app-v3-w2jd.onrender.com/app/static/android/MeteoPro-{config['versionName']}.apk",
+    }
+    results = {}
+    for theme in ("light", "dark"):
+        for width in (390, 1440):
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, color_scheme=theme
+            )
+            page.route(
+                "**/app/static/android/manifest.json",
+                lambda route: route.fulfill(json=valid),
+            )
+            page.goto(f"{base_url}/app/static/android/index.html")
+            expect(page.locator("#download")).to_be_visible()
+            expect(page.locator("#download")).to_have_attribute("href", valid["apkUrl"])
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= innerWidth + 3"
+            )
+            name = f"android-updates-{theme}-{width}"
+            image = output / f"{name}.png"
+            page.screenshot(path=str(image), full_page=True)
+            results[name] = hashlib.sha256(image.read_bytes()).hexdigest()
+            page.unroute("**/app/static/android/manifest.json")
+            page.route(
+                "**/app/static/android/manifest.json",
+                lambda route: route.fulfill(
+                    json={**valid, "apkUrl": "https://untrusted.example/app.apk"}
+                ),
+            )
+            page.reload()
+            expect(page.locator("#status")).to_contain_text(
+                "Non è possibile verificare"
+            )
+            expect(page.locator("#download")).to_be_hidden()
+            page.close()
+    return results
+
+
 def _wait_for_app(url: str, process: subprocess.Popen[str]) -> None:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -873,6 +1011,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                 )
                 digests.update(_v5_checks(browser, base_url, output_path))
                 _v53_private_checks(browser, base_url, output_path)
+                digests.update(_android_update_checks(browser, base_url, output_path))
                 for name, tab, theme, width, height in CASES:
                     page = browser.new_page(viewport={"width": width, "height": height})
                     screenshot = output_path / f"{name}.png"

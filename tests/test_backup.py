@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
+import sqlite3
 import zipfile
 
+import pytest
 from sqlalchemy import text
 
 from backup_database import (
@@ -12,6 +15,57 @@ from backup_database import (
     restore_backup,
     verify_backup,
 )
+
+
+def test_large_multiline_snapshot_survives_backup_verification_and_restore(
+    sqlite_engine, tmp_path
+):
+    payload = json.dumps(
+        {"values": ['Pioggia, vento e "nuvole" Ω'] * 12000},
+        ensure_ascii=False,
+        indent=2,
+    )
+    payload += "\r\n"
+    assert len(payload) > 131072
+    with sqlite_engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO public_snapshots VALUES (:id, :at, :payload)"),
+            [
+                {"id": station, "at": "2026-10-01T10:00:00Z", "payload": payload}
+                for station in ("roma", "comacchio")
+            ],
+        )
+    previous_limit = csv.field_size_limit()
+    try:
+        csv.field_size_limit(131072)
+        archive_path = create_backup(tmp_path / "large.zip", sqlite_engine)
+        assert csv.field_size_limit() == 131072
+        manifest = verify_backup(archive_path)
+        assert manifest["tables"]["public_snapshots"]["rows"] == 2
+        assert csv.field_size_limit() == 131072
+        destination = tmp_path / "restored.sqlite"
+        restore_backup(archive_path, destination)
+        assert csv.field_size_limit() == 131072
+        with sqlite3.connect(destination) as db:
+            rows = db.execute("SELECT payload FROM public_snapshots").fetchall()
+        assert rows == [(payload,), (payload,)]
+
+        # Raising the parser limit must not bypass checksums, even on large CSVs.
+        corrupt_path = tmp_path / "corrupt.zip"
+        with (
+            zipfile.ZipFile(archive_path) as source,
+            zipfile.ZipFile(corrupt_path, "w") as corrupt,
+        ):
+            for name in source.namelist():
+                body = source.read(name)
+                if name == "public_snapshots.csv":
+                    body = body.replace(b"Pioggia", b"Erroree", 1)
+                corrupt.writestr(name, body)
+        with pytest.raises(ValueError, match="Checksum non valido"):
+            verify_backup(corrupt_path)
+        assert csv.field_size_limit() == 131072
+    finally:
+        csv.field_size_limit(previous_limit)
 
 
 def test_backup_is_portable_checksummed_and_contains_no_connection_string(

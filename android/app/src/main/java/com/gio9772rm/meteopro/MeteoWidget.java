@@ -1,4 +1,4 @@
-package com.gio9772rm.meteov4;
+package com.gio9772rm.meteopro;
 
 import android.app.PendingIntent;
 import android.app.job.JobInfo;
