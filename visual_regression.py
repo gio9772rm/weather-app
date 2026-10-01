@@ -319,6 +319,12 @@ def _seed_second_station() -> None:
             "window-validation:v55": {
                 "evaluated_at": now,
                 "n": 72,
+                "brier": 0.12,
+                "bins": [
+                    {"low": 0, "high": 20, "n": 12, "forecast": 15, "observed": 10},
+                    {"low": 80, "high": 100, "n": 60, "forecast": 90, "observed": 95},
+                ],
+                "note": "Riscontri sintetici di finestre asciutte per il collaudo.",
                 "collection": {
                     "cycles": 24,
                     "first_acquired": now - pd.Timedelta(days=6),
