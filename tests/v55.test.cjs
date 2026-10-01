@@ -24,14 +24,17 @@ test("a ready study never claims active calibration; offline and untrusted label
   const v = view({ station: { name: "<Roma>" }, window_validation: {
     evaluated_at: new Date().toISOString(), n: 200,
     collection: { cycles: 120, retention_days: 90 },
-    readiness: { status: "ready_for_study", requirements: [{ label: "<script>", met: true }] }
+    readiness: { status: "ready_for_study", requirements:
+      ["<script>", "<SCRIPT>", "<ScRiPt src=x>"].map(label => ({ label, met: true })) }
   } }, true);
   const html = v.readinessCard();
   assert.match(html, /REQUISITI PER LO STUDIO RAGGIUNTI/);
   assert.match(html, /Calibrazione delle probabilità non attiva/);
   assert.match(html, /copia salvata/);
   assert.match(html, /&lt;Roma&gt;/);
-  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /&lt;SCRIPT&gt;/);
+  assert.match(html, /&lt;ScRiPt src=x&gt;/);
+  assert.doesNotMatch(html, /<script\b/i);
 });
 
 test("undefined precision stays unavailable while a real zero recall remains zero", () => {
