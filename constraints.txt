@@ -205,7 +205,7 @@ pygments==2.21.0
     # via
     #   -c constraints.txt
     #   pytest
-pytest==8.4.2
+pytest==9.0.3
     # via
     #   -c constraints.txt
     #   -r requirements-dev.txt

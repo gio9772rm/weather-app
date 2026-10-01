@@ -1,6 +1,6 @@
 -c constraints.txt
 -r requirements.txt
-pytest>=8.2,<9
+pytest>=9.0.3,<10
 ruff>=0.6,<1
 playwright>=1.50,<2
 httpx>=0.28,<0.29
