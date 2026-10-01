@@ -127,7 +127,7 @@ narwhals==2.26.0
     #   -c constraints.txt
     #   altair
     #   plotly
-numpy==2.3.5
+numpy==2.4.6
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -255,7 +255,7 @@ six==1.17.0
     # via
     #   -c constraints.txt
     #   python-dateutil
-sqlalchemy==2.0.52
+sqlalchemy==2.1.1
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -263,7 +263,7 @@ starlette==1.7.0
     # via
     #   -c constraints.txt
     #   streamlit
-streamlit==1.62.0
+streamlit==1.64.0
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -294,7 +294,7 @@ urllib3==2.8.0
     # via
     #   -c constraints.txt
     #   requests
-uvicorn==0.53.0
+uvicorn==0.54.0
     # via
     #   -c constraints.txt
     #   streamlit
