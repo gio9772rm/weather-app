@@ -38,7 +38,7 @@ certifi==2026.7.22
     #   requests
 cffi==2.1.1 ; platform_python_implementation != 'PyPy'
     # via cryptography
-charset-normalizer==3.5.1
+charset-normalizer==3.5.2
     # via
     #   -c constraints.txt
     #   reportlab
@@ -53,7 +53,7 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   -c constraints.txt
     #   click
     #   pytest
-cryptography==50.0.1
+cryptography==50.0.2
     # via
     #   http-ece
     #   py-vapid
@@ -127,7 +127,7 @@ narwhals==2.26.0
     #   -c constraints.txt
     #   altair
     #   plotly
-numpy==2.3.5
+numpy==2.4.6
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -213,7 +213,7 @@ python-dateutil==2.9.0.post0
     # via
     #   -c constraints.txt
     #   pandas
-python-dotenv==1.2.3
+python-dotenv==1.2.4
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -247,7 +247,7 @@ rpds-py==2026.6.3
     #   -c constraints.txt
     #   jsonschema
     #   referencing
-ruff==0.16.9
+ruff==0.16.10
     # via
     #   -c constraints.txt
     #   -r requirements-dev.txt
@@ -255,7 +255,7 @@ six==1.17.0
     # via
     #   -c constraints.txt
     #   python-dateutil
-sqlalchemy==2.0.52
+sqlalchemy==2.1.1
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -263,7 +263,7 @@ starlette==1.7.0
     # via
     #   -c constraints.txt
     #   streamlit
-streamlit==1.62.0
+streamlit==1.64.0
     # via
     #   -c constraints.txt
     #   -r requirements.txt
@@ -294,7 +294,7 @@ urllib3==2.8.0
     # via
     #   -c constraints.txt
     #   requests
-uvicorn==0.53.0
+uvicorn==0.54.0
     # via
     #   -c constraints.txt
     #   streamlit
