@@ -19,6 +19,9 @@ jobs:
   backup:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - name: Checkout
@@ -76,7 +79,7 @@ jobs:
           path: ${{ steps.backup.outputs.encrypted_path }}
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
+          retention-days: 90
 
       - name: Record cloud-backup outcome
         if: ${{ always() && steps.backup.outcome == 'success' }}
@@ -99,6 +102,14 @@ jobs:
             --rows "$BACKUP_ROWS" \
             --observed-at "$BACKUP_CREATED_AT" \
             --error "$cloud_error"
+
+      - name: Keep latest verified backup and two verified predecessors
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          BACKUP_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: python backup_retention.py
 
   notify:
     needs: backup
