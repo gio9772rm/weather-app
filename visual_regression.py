@@ -316,7 +316,7 @@ def _seed_second_station() -> None:
             }
         ]
         products = {
-            "window-validation:v55": {
+            "window-validation:v56": {
                 "evaluated_at": now,
                 "n": 72,
                 "brier": 0.12,

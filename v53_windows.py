@@ -205,7 +205,7 @@ def archive_paths(station_id, paths, cfg):
 
 
 def validation_key(station_id):
-    return "window-validation:v55:" + station_id
+    return "window-validation:v56:" + station_id
 
 
 def sample_readiness(selected, timezone="Europe/Rome"):
