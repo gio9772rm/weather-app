@@ -3,6 +3,20 @@
 -- Meteo V3 schema. SQL is deliberately portable between SQLite and PostgreSQL.
 
 -- V5 derived public read models. Raw observations remain unchanged.
+CREATE TABLE IF NOT EXISTS compact_archives (
+  archive_key TEXT PRIMARY KEY,
+  source_table TEXT NOT NULL,
+  time_min TEXT NOT NULL,
+  time_max TEXT NOT NULL,
+  codec TEXT NOT NULL,
+  row_count INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  archived_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_compact_archives_table_time
+  ON compact_archives (source_table, time_min, time_max);
+
 CREATE TABLE IF NOT EXISTS window_predictions (
   station_id TEXT NOT NULL,
   cycle TEXT NOT NULL,
@@ -234,9 +248,6 @@ CREATE TABLE IF NOT EXISTS station_observations (
   PRIMARY KEY (station_id, time),
   FOREIGN KEY (station_id) REFERENCES station_profiles(station_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_station_observations_time
-  ON station_observations (station_id, time);
 
 -- Daily Ecowitt exports contain aggregates rather than timestamped samples.
 -- Keeping them separate prevents a daily mean from being presented as a live

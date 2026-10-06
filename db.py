@@ -7,12 +7,14 @@ same way and existing installations can be migrated without destructive changes.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 load_dotenv()
 
@@ -153,10 +155,32 @@ def ensure_schema() -> None:
         for statement in _schema_statements():
             connection.execute(text(statement))
     _additive_migrations(engine)
+    try:
+        with engine.begin() as connection:
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("SET LOCAL lock_timeout = '2s'"))
+            inspector = inspect(connection)
+            pk = inspector.get_pk_constraint("station_observations")[
+                "constrained_columns"
+            ]
+            duplicate = next(
+                (
+                    idx
+                    for idx in inspector.get_indexes("station_observations")
+                    if idx["name"] == "idx_station_observations_time"
+                    and idx["column_names"] == pk
+                    and not idx["unique"]
+                ),
+                None,
+            )
+            if duplicate:
+                connection.execute(text("DROP INDEX idx_station_observations_time"))
+    except SQLAlchemyError:
+        logging.getLogger(__name__).warning("Indice duplicato: manutenzione rinviata")
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO meta (k,v) VALUES ('schema_version','13') "
+                "INSERT INTO meta (k,v) VALUES ('schema_version','14') "
                 "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
             )
         )

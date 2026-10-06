@@ -25,6 +25,7 @@ from db import ensure_schema, get_engine
 from source_health import record_source_result
 
 BACKUP_TABLES = (
+    "compact_archives",
     "window_predictions",
     "personal_accounts",
     "personal_profiles",
@@ -110,6 +111,29 @@ def _destination(output: str | Path) -> Path:
     return destination / f"meteo-database-{stamp}.zip"
 
 
+@contextmanager
+def _backup_connection(engine):
+    """One snapshot covers hot rows and cold blocks during concurrent moves."""
+    from compact_history import TARGETS
+
+    # Discover outside the snapshot: locks must precede its first SELECT.
+    tables = set(inspect(engine).get_table_names())
+    with engine.connect() as connection:
+        if engine.dialect.name == "postgresql":
+            connection = connection.execution_options(isolation_level="REPEATABLE READ")
+        with connection.begin():
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("SET TRANSACTION READ ONLY"))
+                # Also prevent a table swap between the archive and hot-table
+                # exports. DELETE-based moves remain concurrent and MVCC-safe.
+                hot = ",".join(f'"{table}"' for table in TARGETS if table in tables)
+                if hot:
+                    connection.execute(text(f"LOCK TABLE {hot} IN ACCESS SHARE MODE"))
+            elif engine.dialect.name == "sqlite":
+                connection.exec_driver_sql("BEGIN")
+            yield connection
+
+
 def create_backup(output: str | Path = "backups", engine: Engine | None = None) -> Path:
     """Export known tables to CSV plus a checksummed manifest in one ZIP file."""
     if engine is None:
@@ -121,7 +145,7 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
         "format": BACKUP_FORMAT,
         "version": 2,
         "application": "Meteo Pro V5",
-        "schema_version": 13,
+        "schema_version": 14,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database_dialect": engine.dialect.name,
         "tables": {},
@@ -132,7 +156,7 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
         ) as temporary:
             temporary_path = Path(temporary)
             staged_archive = temporary_path / "database-backup.zip"
-            with engine.connect() as connection:
+            with _backup_connection(engine) as connection:
                 for table in BACKUP_TABLES:
                     if table not in existing:
                         continue
@@ -222,6 +246,17 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
             row_count = max(0, sum(1 for _ in csv.reader(decoded)) - 1)
             if row_count != int(details.get("rows", -1)):
                 raise ValueError(f"Conteggio righe non valido: {filename}")
+            if table == "compact_archives":
+                from compact_history import decode_block
+
+                decoded.seek(0)
+                for block in csv.DictReader(decoded):
+                    decode_block(
+                        block["payload"],
+                        block["sha256"],
+                        int(block["row_count"]),
+                        block["codec"],
+                    )
     return manifest
 
 

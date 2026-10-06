@@ -44,3 +44,21 @@ test("undefined precision stays unavailable while a real zero recall remains zer
   assert.match(html, /Assenze corrette/);
   assert.match(html, /Mancate/);
 });
+
+test("a validated local correction is explicit and its offline copy is suspended", () => {
+  const data = { station: { name: "Roma" }, window_validation: {
+    evaluated_at: new Date().toISOString(), n: 200,
+    collection: { cycles: 120 }, readiness: { requirements: [] }
+  }, window_calibration: { status: "active", evaluated_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 86400000).toISOString(), reason: "<script>x</script>",
+    validation: { raw_brier: 0.2, calibrated_brier: 0.1, reference_brier: 0.3,
+      holdout: { n: 60, days: 7 }, improvement_percent: 50 }
+  } };
+  const html = view(data).readinessCard();
+  assert.match(html, /Calibrazione locale attiva/);
+  assert.match(html, /Brier originale/);
+  assert.doesNotMatch(html, /<script\b/i);
+  const offline = view(data, true).readinessCard();
+  assert.match(offline, /copia offline: usa le frequenze originali/);
+  assert.doesNotMatch(offline, /Calibrazione locale attiva/);
+});

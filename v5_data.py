@@ -481,6 +481,12 @@ def build_snapshot(
     from v53_windows import validation_key
 
     payload["window_validation"] = read_product(validation_key(station_id))
+    from v56_probability_calibration import calibration_key, public_windows
+
+    payload["window_calibration"] = read_product(calibration_key(station_id))
+    payload["window_probabilities"] = public_windows(
+        payload["window_probabilities"], payload["window_calibration"], now
+    )
     payload["alert_verification"] = read_product("alert-verification:v55:" + station_id)
     from v5_calibration import observed_hourly
     from v53_comparison import published_history
