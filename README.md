@@ -60,7 +60,7 @@ Vedi [CHANGELOG_V5.md](CHANGELOG_V5.md) per comportamento, verifiche e limiti op
 - scheda **Sistema** con riepilogo immediato del controllo automatico, backup e fonti utilizzabili, seguito da fallback, latenza, errori consecutivi, copertura a 10 minuti e anomalie;
 - diagnostica Ecowitt per singolo sensore con freschezza, copertura, buchi e motivazione delle anomalie di temperatura/umidità; il Sensor Array interpreta `Normal/Normale` come batteria carica e colora ogni altro stato testuale come problema, senza archiviare MAC o payload completi;
 - pianificatore astronomico personale con target catalogo o RA/Dec, altezza/azimut, massa d'aria, distanza dalla Luna, ostacoli locali, stima opzionale dell'orizzonte dal terreno Copernicus GLO-90, profili ottica/camera, simulatore del campo inquadrato, atlante CDS opzionale, piano notturno multi-target in ora locale, calendario ICS e CSV;
-- backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale, con scadenza a 30 giorni, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
+- backup automatico cifrato su GitHub alle 22:07 `Europe/Rome`, indipendente dal PC locale: ultima copia verificata e due precedenti verificate, verifica SHA-256 e prova mensile di ripristino su database usa-e-getta;
 - controllo salute indipendente a ogni merge e ogni 30 minuti; se GitHub ritarda, la UI distingue per 24 ore l'ultimo esito valido dal controllo continuo Render;
 - issue GitHub operative deduplicate per salute, ingestione, backup e ripristino: si aprono/aggiornano al guasto e si chiudono alla ripresa;
 - controllo visuale Playwright su desktop/mobile e tema chiaro/scuro, audit privacy e riferimenti GitHub Actions bloccati a commit immutabili;
@@ -86,7 +86,7 @@ flowchart TD
   DPC["DPC + Regione Lazio · bollettini"] --> P
   P --> DB["PostgreSQL / SQLite"]
   GH["GitHub · riconciliazione 7 giorni"] --> DB
-  DB --> BK["Backup GitHub cifrato · 30 giorni"]
+  DB --> BK["Backup GitHub cifrato · 3 copie verificate"]
   BK --> DR["Ripristino isolato · mensile"]
   DB --> PITR["PITR Render · se incluso nel piano"]
   DB --> UI["Dashboard Streamlit su Render"]
@@ -282,7 +282,7 @@ Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. U
 
 Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.4 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:07 Europe/Rome**, anche se il PC locale è spento; i sette minuti evitano il picco dei runner GitHub al cambio dell'ora.
 
-Poiché il repository è pubblico, lo ZIP non lascia mai il runner in chiaro: viene cifrato con AES-256-CBC/PBKDF2 usando una chiave derivata dal `DATABASE_URL` segreto in vigore al momento della copia. GitHub conserva ogni artefatto cifrato per 30 giorni e lo fa scadere automaticamente: con una copia giornaliera restano disponibili le circa 30 copie più recenti, senza concedere al workflow permessi di cancellazione. La pagina Sistema distingue la creazione/verifica dello ZIP dal caricamento cloud, così un upload fallito non viene mostrato come backup remoto riuscito. Se `DATABASE_URL` viene ruotato, conserva in modo sicuro il vecchio valore finché i relativi backup non sono scaduti.
+Poiché il repository è pubblico, lo ZIP non lascia mai il runner in chiaro: viene cifrato con AES-256-CBC/PBKDF2 usando una chiave derivata dal `DATABASE_URL` segreto in vigore al momento della copia. Dopo un nuovo backup verificato e caricato su `main`, `backup_retention.py` conserva quella copia e le due precedenti per cui risultano riuscite verifica, cifratura e upload. Solo allora elimina gli altri backup dello stesso workflow, leggendo prima tutte le pagine dell'elenco e confrontando identificativo e SHA-256 del nuovo artefatto. Un errore o prove insufficienti rinviano la pulizia; artefatti di test, altri workflow e altre branch non vengono toccati. Il permesso `actions: write` è limitato al job backup. La scadenza tecnica GitHub è di 90 giorni, per tollerare interruzioni prolungate; il numero ordinario di copie è tre, non novanta. La pagina Sistema distingue la creazione/verifica dello ZIP dal caricamento cloud, così un upload fallito non viene mostrato come backup remoto riuscito. Se `DATABASE_URL` viene ruotato, conserva in modo sicuro il vecchio valore finché esistono backup cifrati con quel valore.
 
 I backup gestiti dal provider PostgreSQL restano una protezione indipendente. Render documenta il point-in-time recovery nella pagina [PostgreSQL Backups](https://render.com/docs/postgresql-backups); disponibilità e profondità dipendono dal piano del database.
 

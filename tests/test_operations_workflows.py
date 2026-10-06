@@ -5,16 +5,20 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_daily_backup_is_off_device_encrypted_and_keeps_thirty_copies():
+def test_daily_backup_is_off_device_encrypted_and_rotates_three_verified_copies():
     workflow = (ROOT / ".github/workflows/daily_backup.yml").read_text(encoding="utf-8")
 
     assert 'cron: "7 22 * * *"' in workflow
     assert 'timezone: "Europe/Rome"' in workflow
     assert "aes-256-cbc" in workflow
     assert "steps.backup.outputs.encrypted_path" in workflow
-    assert "retention-days: 30" in workflow
-    assert "actions: write" not in workflow
-    assert "gh api --method DELETE" not in workflow
+    assert "retention-days: 90" in workflow
+    assert "actions: write" in workflow
+    assert "run: python backup_retention.py" in workflow
+    assert "success() && github.ref == 'refs/heads/main'" in workflow
+    assert "steps.upload.outputs.artifact-id" in workflow
+    assert "steps.upload.outputs.artifact-digest" in workflow
+    assert workflow.index("--record-cloud-status") < workflow.index("backup_retention.py")
     assert "path: ${{ steps.backup.outputs.encrypted_path }}" in workflow
     assert "path: ${{ steps.backup.outputs.path }}" not in workflow
     assert "operations_alert.py --key daily-backup" in workflow
