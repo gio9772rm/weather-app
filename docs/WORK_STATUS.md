@@ -1,8 +1,40 @@
-# Ripresa verificabile del lavoro — 1 ottobre 2026
+# Stato verificabile del lavoro — 6 ottobre 2026
+
+## V5.6: stato attuale
+
+- PR #86 integrata in `main`, commit
+  `fe9aeb8101f4cd9eebbe2e960830d2233f0f1ba4`. Tutti i gate CI verdi, anche
+  PostgreSQL 18, browser, Android e CodeQL. Sito e cron live su questo commit.
+- Schema 14. Rimosso il solo indice duplicato su `station_observations`:
+  circa 15,5 MiB recuperati inizialmente. Primo cron V5.6 riuscito il 6 ottobre
+  alle 21:45 UTC: 50.000 righe archiviate in circa 1 MiB. Il recupero fisico
+  maggiore richiede i cicli successivi; non dichiararlo già completato.
+- La manutenzione conserva lo storico ensemble e i punteggi in blocchi
+  verificati, inclusi nei backup; nessuna cancellazione delle misure.
+  Dettagli, budget e requisiti in `CHANGELOG_V5_6.md`.
+- Quel primo ciclo ha rinviato `forecast_scores` perché i vecchi Brier
+  contengono `NaN`. L'aggiornamento di questo documento accompagna il codec v2
+  che conserva NaN/infinito con tipi espliciti e legge anche i blocchi v1.
+  Verificare la PR della correzione, CI PostgreSQL e deploy prima di concludere.
+- Calibrazione automatica predisposta **solo per due ore asciutte previste
+  6–12 ore prima**, separata per stazione/modello. Si attiva con dati sufficienti
+  e beneficio verificato su un periodo successivo indipendente; peggioramento,
+  scadenza o controllo datato riportano alle frequenze originali. La richiesta
+  dell'utente del 6 ottobre autorizza questa attivazione automatica prudente.
+- Stato pubblico verificato dopo il primo ciclo: Roma 68 finestre e Comacchio
+  89, entrambe su nove giorni e senza casi piovosi completi nel campione.
+  Mancano almeno 21 giorni al requisito temporale, intorno al 27 ottobre;
+  pioggia, copertura e prova possono rinviare l'attivazione. Non promettere date.
+- Probabilità orarie di pioggia, altri anticipi e fotografia restano originali.
+  Nessun nuovo APK, piano Render, provider o timer meteo.
+
+## Riferimento storico V5.5
 
 Questo file registra la ripresa V5.5. Per conoscere l'esito della pubblicazione
 controllare la PR che contiene questo commit, i suoi controlli e i deploy Render.
 Non ricostruire il lavoro dalle vecchie chat e non ripubblicare gli stessi APK.
+I limiti sulla calibrazione indicati nella sezione storica sono superati dalla
+richiesta V5.6 e dalla predisposizione descritta sopra.
 
 ## Base verificata
 

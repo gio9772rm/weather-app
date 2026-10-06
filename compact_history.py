@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import time
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -26,7 +27,8 @@ TARGETS = {
     "forecast_reference_scores": ("evaluated_at", 7),
     "forecast_ensemble_runs": ("issued_at", 2),
 }
-CODEC = "json-zlib-base64-v1"
+CODEC = "json-zlib-base64-v2"
+LEGACY_CODEC = "json-zlib-base64-v1"
 LOCK_KEY = 0x4D4554454F5636
 
 
@@ -37,8 +39,22 @@ def _target(table):
 
 
 def encode_block(columns, rows):
+    def encoded(value):
+        if isinstance(value, float) and not math.isfinite(value):
+            return {
+                "__meteo_float__": "nan"
+                if math.isnan(value)
+                else "inf"
+                if value > 0
+                else "-inf"
+            }
+        return value
+
     raw = json.dumps(
-        {"columns": columns, "rows": rows},
+        {
+            "columns": columns,
+            "rows": [[encoded(value) for value in row] for row in rows],
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         allow_nan=False,
@@ -49,7 +65,7 @@ def encode_block(columns, rows):
 
 
 def decode_block(payload, checksum, row_count, codec=CODEC):
-    if codec != CODEC:
+    if codec not in {CODEC, LEGACY_CODEC}:
         raise ValueError("Unsupported history codec")
     raw = zlib.decompress(base64.b64decode(payload, validate=True))
     if hashlib.sha256(raw).hexdigest() != checksum:
@@ -59,6 +75,18 @@ def decode_block(payload, checksum, row_count, codec=CODEC):
         len(row) != len(block["columns"]) for row in block["rows"]
     ):
         raise ValueError("Cold history row count mismatch")
+    if codec == CODEC:
+
+        def decoded(value):
+            if isinstance(value, dict):
+                if set(value) != {"__meteo_float__"} or value[
+                    "__meteo_float__"
+                ] not in {"nan", "inf", "-inf"}:
+                    raise ValueError("Cold history scalar type mismatch")
+                return float(value["__meteo_float__"])
+            return value
+
+        block["rows"] = [[decoded(value) for value in row] for row in block["rows"]]
     return block
 
 
@@ -100,7 +128,7 @@ def compact_batch(table, cutoff, *, engine=None, limit=2500):
         rows.sort(key=lambda row: tuple(row[columns.index(key)] for key in pk))
         checksum, payload = encode_block(columns, rows)
         block = decode_block(payload, checksum, len(rows))
-        if block != {"columns": columns, "rows": rows}:
+        if encode_block(block["columns"], block["rows"]) != (checksum, payload):
             raise ValueError("Cold history round trip mismatch")
         times = [row[columns.index(time_column)] for row in rows]
         con.execute(
@@ -290,8 +318,10 @@ def maintain_history(*, engine=None, now=None, max_batches=20, seconds=35):
                     break
                 batches += 1
                 moved += n
-        except Exception:  # noqa: BLE001 - rollback, retry on the next normal cycle
-            log.warning("Manutenzione storico rinviata: %s", table)
+        except Exception as exc:  # noqa: BLE001 - rollback, retry on the next normal cycle
+            log.warning(
+                "Manutenzione storico rinviata: %s (%s)", table, type(exc).__name__
+            )
             errors.append(table)
         if batches >= max_batches or time.monotonic() >= deadline:
             break

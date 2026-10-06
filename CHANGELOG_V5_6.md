@@ -10,6 +10,10 @@
 - Ogni blocco conserva tutte le colonne e tutti i valori originali, con checksum
   SHA-256 e verifica della decompressione. Spostamento e rimozione dalle tabelle
   operative sono nella stessa transazione: un errore annulla entrambi.
+- I vecchi valori PostgreSQL `NaN` e infinito sono conservati con marcatori
+  tipizzati nel codec v2, senza trasformarli in zero o NULL. I blocchi v1 già
+  creati restano leggibili. Il test PostgreSQL verifica anche questi valori
+  attraverso compressione, backup e ripristino in SQLite.
 - Lavoro incrementale dopo la pubblicazione, nel cron esistente: massimo 20
   blocchi da 2.500 righe e un budget di 35 secondi per ciclo. Un errore rinvia
   questa manutenzione, senza invalidare l'acquisizione meteo.
