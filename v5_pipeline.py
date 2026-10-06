@@ -192,6 +192,7 @@ def refresh_research(cfg: Settings) -> None:
     from v53_comparison import update_comparison
     from v53_windows import validate_windows, validation_key
     from v55_alert_verification import update_alert_verification
+    from v56_probability_calibration import calibration_key, update_calibration
 
     enabled = os.getenv("V5_RESEARCH_ENABLED", "true").lower() not in {
         "false",
@@ -246,6 +247,11 @@ def refresh_research(cfg: Settings) -> None:
                 (
                     validation_key(identifier),
                     lambda s=identifier: validate_windows(s),
+                    21600,
+                ),
+                (
+                    calibration_key(identifier),
+                    lambda s=identifier: update_calibration(s),
                     21600,
                 ),
                 (

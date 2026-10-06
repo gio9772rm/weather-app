@@ -147,15 +147,24 @@ def window_probabilities(paths, cfg=None):
 
 def archive_paths(station_id, paths, cfg):
     from v5_data import clean_json
+    from v56_probability_calibration import apply_to_rows, calibration_key
 
     acquired = utc(paths["acquired_at"])
+    with get_engine().connect() as con:
+        saved = con.execute(
+            text("SELECT payload FROM v5_products WHERE product_key=:key"),
+            {"key": calibration_key(station_id)},
+        ).scalar()
+    calibration = json.loads(saved) if saved else None
+    rows = window_probabilities(paths, cfg)
+    apply_to_rows(rows, station_id, paths["model"], acquired, calibration)
     product = clean_json(
         {
             "station_id": station_id,
             "acquired_at": acquired,
             "model": paths["model"],
-            "rows": window_probabilities(paths, cfg),
-            "note": "Frequenza dei membri completi dello stesso ensemble; non è ancora una probabilità calibrata. Due ore con meno di 0,1 mm per ora; fotografia: tre ore di buio, nuvole ≤35%, vento ≤8 km/h, raffiche ≤16 km/h, margine rugiada ≥2 °C. Campioni orari, non garanzia al minuto; geometria del target nel piano notturno.",
+            "rows": rows,
+            "note": "Frequenze dei membri completi dello stesso ensemble. La correzione locale, quando indicata, riguarda solo due ore asciutte previste 6–12 ore prima e supera una prova su giorni successivi. Due ore con meno di 0,1 mm per ora; fotografia: tre ore di buio, nuvole ≤35%, vento ≤8 km/h, raffiche ≤16 km/h, margine rugiada ≥2 °C. Fotografia non calibrata; campioni orari, non garanzia al minuto.",
         }
     )
     with get_engine().begin() as con:
@@ -196,7 +205,7 @@ def archive_paths(station_id, paths, cfg):
 
 
 def validation_key(station_id):
-    return "window-validation:v55:" + station_id
+    return "window-validation:v56:" + station_id
 
 
 def sample_readiness(selected, timezone="Europe/Rome"):
@@ -234,13 +243,12 @@ def sample_readiness(selected, timezone="Europe/Rome"):
         "requirements": gates,
         "first_verified": min(selected) if selected else None,
         "last_verified": max(selected) if selected else None,
-        "note": "Soglie prudenziali del progetto per iniziare uno studio, non una garanzia di affidabilità. Le finestre dello stesso giorno possono essere correlate. Servono poi una prova su giorni successivi tenuti separati e un vantaggio rispetto alle frequenze di riferimento. Nessuna attivazione automatica; i tempi dipendono anche dalla pioggia. Le finestre fotografiche restano senza calibrazione osservativa del cielo.",
+        "note": "Soglie prudenziali del progetto per iniziare la prova. Le finestre dello stesso giorno possono essere correlate. L’attivazione automatica richiede anche un miglioramento su giorni successivi tenuti separati, rispetto alla frequenza originale e a quella di riferimento. I tempi dipendono dalla pioggia e dalla copertura dei riscontri. La fotografia resta senza calibrazione osservativa del cielo.",
     }
 
 
-def validate_windows(station_id, now=None):
+def collect_window_samples(station_id, now=None):
     from data_access import load_station
-    from v5_data import clean_json
 
     now = utc(now if now is not None else pd.Timestamp.now(tz="UTC"))
     with get_engine().connect() as con:
@@ -250,7 +258,7 @@ def validate_windows(station_id, now=None):
             ),
             {"id": station_id},
         ).all()
-    hourly = observed_hourly(load_station(24 * 92, station_id))
+    hourly = window_rain_hourly(load_station(24 * 92, station_id))
     rain = (
         hourly.set_index("time").rain_mm
         if "rain_mm" in hourly
@@ -263,7 +271,8 @@ def validate_windows(station_id, now=None):
         if pd.isna(acquired) or acquired > now:
             continue
         acquisitions.append(acquired)
-        for row in json.loads(payload).get("rows", []):
+        product = json.loads(payload)
+        for row in product.get("rows", []):
             start, end = utc(row["start"]), utc(row["end"])
             lead = (start - acquired).total_seconds() / 3600
             if (
@@ -278,15 +287,15 @@ def validate_windows(station_id, now=None):
             ):
                 continue
             if start not in candidates or acquired > candidates[start][0]:
-                candidates[start] = (acquired, end, row.get("probability"))
+                candidates[start] = (acquired, end, row, product.get("model"))
     selected = {}
     pending = missing_forecast = missing_observations = 0
-    for start, (_, end, probability) in candidates.items():
+    for start, (acquired, end, row, model) in candidates.items():
         if end > now:
             pending += 1
             continue
         try:
-            probability = float(probability)
+            probability = float(row.get("raw_probability", row.get("probability")))
         except (TypeError, ValueError):
             probability = float("nan")
         if not np.isfinite(probability) or not 0 <= probability <= 100:
@@ -298,7 +307,71 @@ def validate_windows(station_id, now=None):
         if len(values) != 2 or values.isna().any():
             missing_observations += 1
             continue
-        selected[start] = (probability / 100, int(values.lt(0.1).all()))
+        selected[start] = {
+            "start": start,
+            "end": end,
+            "known_at": acquired,
+            "raw": probability / 100,
+            "observed": int(values.lt(0.1).all()),
+            "model": model,
+            "calibration_id": row.get("calibration_id"),
+            "calibrated": row.get("calibrated_probability"),
+        }
+    return selected, {
+        "cycles": len(acquisitions),
+        "first_acquired": min(acquisitions) if acquisitions else None,
+        "last_acquired": max(acquisitions) if acquisitions else None,
+        "eligible_windows": len(candidates),
+        "pending": pending,
+        "missing_forecast": missing_forecast,
+        "missing_observations": missing_observations,
+        "coverage_percent": 100 * len(selected) / (len(candidates) - pending)
+        if len(candidates) > pending
+        else None,
+        "retention_days": 90,
+    }
+
+
+def window_rain_hourly(observations):
+    """Keep valid rain when a different sensor is flagged, never estimated rain."""
+    observations = observations.copy()
+    if "data_quality" in observations:
+        unrelated = {
+            f"{flag}_{variable}"
+            for flag in ("stuck", "spike")
+            for variable in (
+                "temp_c",
+                "humidity",
+                "pressure_hpa",
+                "wind_kmh",
+                "windgust_kmh",
+            )
+        } | {"gust_below_mean_wind"}
+
+        def rain_quality(value):
+            flags = [
+                flag for flag in str(value or "").split(";") if flag not in unrelated
+            ]
+            if any(flag in {"estimated_rain", "legacy_unknown_rain"} for flag in flags):
+                flags.append("invalid_rain")
+            return ";".join(flags)
+
+        observations["data_quality"] = observations.data_quality.fillna("").map(
+            rain_quality
+        )
+    return observed_hourly(
+        observations[
+            [c for c in ("time", "rain_mm", "data_quality") if c in observations]
+        ]
+    )
+
+
+def validate_windows(station_id, now=None):
+    from v5_data import clean_json
+
+    now = utc(now if now is not None else pd.Timestamp.now(tz="UTC"))
+    samples, collection = collect_window_samples(station_id, now)
+    selected = {start: (s["raw"], s["observed"]) for start, s in samples.items()}
     bins = []
     for low in (0, 0.2, 0.4, 0.6, 0.8):
         values = [
@@ -323,20 +396,8 @@ def validate_windows(station_id, now=None):
             if selected
             else None,
             "bins": bins,
-            "collection": {
-                "cycles": len(acquisitions),
-                "first_acquired": min(acquisitions) if acquisitions else None,
-                "last_acquired": max(acquisitions) if acquisitions else None,
-                "eligible_windows": len(candidates),
-                "pending": pending,
-                "missing_forecast": missing_forecast,
-                "missing_observations": missing_observations,
-                "coverage_percent": 100 * len(selected) / (len(candidates) - pending)
-                if len(candidates) > pending
-                else None,
-                "retention_days": 90,
-            },
+            "collection": collection,
             "readiness": sample_readiness(selected),
-            "note": "Riscontri prospettici di finestre asciutte non sovrapposte, previste 6–12 ore prima; ogni ora osservata richiede 12 campioni validi. La fotografia non è validabile automaticamente senza misure di nuvole e qualità del cielo. Campione in raccolta; nessuna ricalibrazione automatica.",
+            "note": "Riscontri prospettici di finestre asciutte non sovrapposte, previste 6–12 ore prima; ogni ora osservata richiede 12 campioni validi. Brier e diagramma riguardano le frequenze originali, conservate anche dopo una correzione. La fotografia non è validabile automaticamente senza misure di nuvole e qualità del cielo.",
         }
     )

@@ -358,22 +358,8 @@ def prune_derived_history() -> None:
             text("DELETE FROM forecast_blend_history WHERE issued_at < :cutoff"),
             {"cutoff": forecast_cutoff},
         )
-        connection.execute(
-            text("DELETE FROM forecast_ensemble_runs WHERE issued_at < :cutoff"),
-            {"cutoff": forecast_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM forecast_scores WHERE evaluated_at < :cutoff"),
-            {"cutoff": score_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM forecast_regime_scores WHERE evaluated_at < :cutoff"),
-            {"cutoff": score_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM forecast_reference_scores WHERE evaluated_at < :cutoff"),
-            {"cutoff": score_cutoff},
-        )
+        # Latest-run readers use hot tables; older ensemble/score rows are
+        # preserved losslessly by compact_history, including beyond 120 days.
         connection.execute(
             text("DELETE FROM official_observations WHERE time < :cutoff"),
             {"cutoff": observation_cutoff},
@@ -1097,6 +1083,12 @@ def run_all(
     from v5_pipeline import run_v5_publication
 
     result["v5"] = run_v5_publication(cfg, force=force_forecast)
+    from compact_history import maintain_history
+
+    try:
+        result["storage"] = maintain_history()
+    except Exception:  # noqa: BLE001 - storage maintenance is optional
+        result["storage"] = {"deferred": True}
     return result
 
 

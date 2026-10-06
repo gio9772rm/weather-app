@@ -84,7 +84,7 @@ def test_backup_is_portable_checksummed_and_contains_no_connection_string(
 
     assert manifest["format"] == "meteo-v4-portable-backup"
     assert manifest["version"] == 2
-    assert manifest["schema_version"] == 13
+    assert manifest["schema_version"] == 14
     assert manifest["tables"]["station_raw"]["rows"] == 1
     assert {
         "station_profiles",
