@@ -1,6 +1,10 @@
+import base64
+import hashlib
 import json
+import math
 import os
 import uuid
+import zlib
 from datetime import datetime, timezone
 
 import pytest
@@ -10,8 +14,11 @@ from sqlalchemy.exc import DBAPIError
 
 from backup_database import _backup_connection, create_backup, restore_backup
 from compact_history import (
+    CODEC,
+    LEGACY_CODEC,
     compact_batch,
     decode_block,
+    encode_block,
     iter_history,
     maintain_history,
     reclaim_table,
@@ -72,6 +79,63 @@ def seed(engine):
             ],
         )
     return list(iter_history("forecast_ensemble_runs", engine=engine))
+
+
+def test_codec_preserves_special_floats_without_using_invalid_json():
+    columns = ["value"]
+    rows = [[float("nan")], [float("inf")], [float("-inf")], [None], [-0.0]]
+    sha, payload = encode_block(columns, rows)
+    raw = zlib.decompress(base64.b64decode(payload)).decode()
+    assert "NaN" not in raw and "Infinity" not in raw
+    restored = decode_block(payload, sha, len(rows), CODEC)
+    values = [row[0] for row in restored["rows"]]
+    assert math.isnan(values[0]) and values[1:4] == [float("inf"), float("-inf"), None]
+    assert math.copysign(1, values[4]) == -1
+    assert encode_block(restored["columns"], restored["rows"]) == (sha, payload)
+    old = json.dumps({"columns": columns, "rows": [[None], [0.1]]}).encode()
+    old_payload = base64.b64encode(zlib.compress(old)).decode()
+    assert decode_block(old_payload, hashlib.sha256(old).hexdigest(), 2, LEGACY_CODEC)[
+        "rows"
+    ] == [[None], [0.1]]
+
+
+def test_postgres_legacy_nan_and_infinity_survive_compaction_and_backup(
+    storage_engine, tmp_path
+):
+    engine = storage_engine
+    if engine.dialect.name != "postgresql":
+        pytest.skip("SQLite maps SQL NaN to NULL; use PostgreSQL's native values")
+    with engine.begin() as con:
+        con.execute(
+            text(
+                "INSERT INTO forecast_scores(evaluated_at,provider,model,variable,horizon,n,brier) "
+                "VALUES(:at,'legacy','model',:variable,'0-6',5,:brier)"
+            ),
+            [
+                {"at": "2026-08-19T12:00:00Z", "variable": str(i), "brier": value}
+                for i, value in enumerate([float("nan"), float("inf"), float("-inf")])
+            ]
+            + [{"at": "2026-10-06T12:00:00Z", "variable": "current", "brier": 0.25}],
+        )
+    assert compact_batch("forecast_scores", "2026-10-01", engine=engine) == 3
+    backup = create_backup(tmp_path / "special.zip", engine)
+    destination = tmp_path / "restored-special.sqlite"
+    restore_backup(backup, destination)
+    restored = create_engine(f"sqlite:///{destination}")
+    try:
+        for db in (engine, restored):
+            values = {
+                r["variable"]: r["brier"]
+                for r in iter_history("forecast_scores", engine=db)
+            }
+            assert (
+                math.isnan(values["0"])
+                and values["1"] == float("inf")
+                and values["2"] == float("-inf")
+            )
+            assert values["current"] == 0.25
+    finally:
+        restored.dispose()
 
 
 def normalized(rows):
