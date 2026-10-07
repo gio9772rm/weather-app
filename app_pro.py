@@ -7033,6 +7033,7 @@ def _render_system_tab_content() -> None:
     archive = storage_status()
     archive_labels = {
         "disabled": "Da configurare",
+        "paused": "Trasferimenti sospesi",
         "waiting": "In attesa del cron",
         "online": "Operativo",
         "deferred": "Trasferimento rinviato",
@@ -7051,7 +7052,7 @@ def _render_system_tab_content() -> None:
     archive_columns[2].metric("Da trasferire", f"{archive['pending_blocks']} blocchi")
     if archive.get("used_bytes") is not None:
         st.caption(
-            f"Bucket: {archive['used_bytes'] / 1_000_000_000:.3f} GB su un limite interno di {archive['max_bytes'] / 1_000_000_000:g} GB. Quote Cloudflare condivise con gli altri bucket dell'account."
+            f"Spazio conteggiato: {archive['used_bytes'] / 1_000_000_000:.3f} GB su un limite interno di {archive['max_bytes'] / 1_000_000_000:g} GB. Inventario completo ogni 6 ore; quote Cloudflare condivise con gli altri bucket dell'account."
         )
     if archive["state"] in {"capacity", "deferred"}:
         st.warning(
