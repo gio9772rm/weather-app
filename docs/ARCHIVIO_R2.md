@@ -65,7 +65,11 @@ spazio inventariato nel bucket.
   impediscono sovrascritture. Dopo ogni upload il cron rilegge l'intero oggetto,
   verifica hash, codec e conteggio e solo dopo libera il payload nel DB.
   Errori conservano la copia locale. Upload senza commit vengono riutilizzati.
-- Il cron conta tutto il bucket, anche oggetti estranei o non indicizzati.
+- Il cron inventaria tutto il bucket ogni sei ore, anche oggetti estranei o non
+  indicizzati. Prima di ogni upload prenota persistentemente i byte nel DB;
+  un errore può sovrastimare fino al successivo inventario, senza dimenticare
+  upload senza commit. Questo evita milioni di richieste di elenco man mano
+  che lo storico cresce e limita anche il costo delle operazioni.
   I nuovi caricamenti si fermano a **8 GB**. Si può abbassare il limite;
   valori superiori sono rifiutati. Usare un bucket dedicato all'app: altri
   scrittori concorrenti possono consumare spazio fra i controlli.
