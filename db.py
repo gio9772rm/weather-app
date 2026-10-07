@@ -81,6 +81,11 @@ def _schema_statements() -> list[str]:
 def _additive_migrations(engine: Engine) -> None:
     """Add V3 observation columns to pre-existing V1/V2 databases."""
     additions = {
+        "compact_archives": {
+            "object_key": "TEXT",
+            "object_bytes": "BIGINT",
+            "object_store": "TEXT",
+        },
         "station_raw": {
             "wind_ms": "REAL",
             "rain_rate_mm_h": "REAL",
@@ -180,7 +185,7 @@ def ensure_schema() -> None:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO meta (k,v) VALUES ('schema_version','14') "
+                "INSERT INTO meta (k,v) VALUES ('schema_version','15') "
                 "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
             )
         )

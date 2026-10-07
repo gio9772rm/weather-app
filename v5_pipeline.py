@@ -103,7 +103,6 @@ def refresh_secondary_forecast(cfg: Settings, *, force=False) -> int:
     combined["confidence"] = None
     combined["provider_count"] = 1
     combined["method"] = "independent_uncalibrated"
-    cutoff = (now - pd.Timedelta(days=90)).isoformat()
     with get_engine().begin() as con:
         con.execute(
             text(
@@ -115,13 +114,7 @@ def refresh_secondary_forecast(cfg: Settings, *, force=False) -> int:
                 "payload": json.dumps(clean_json(records(combined)), allow_nan=False),
             },
         )
-        # Only obsolete derived emissions, never station measurements/imports.
-        con.execute(
-            text(
-                "DELETE FROM location_forecasts WHERE station_id=:id AND issued_at<:cutoff"
-            ),
-            {"id": scoped.station_id, "cutoff": cutoff},
-        )
+        # Older forecasts move losslessly to compact_history after 90 days.
     if warnings:
         log.warning("Previsione secondaria: %d provider non disponibili", len(warnings))
     return len(combined)

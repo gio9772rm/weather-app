@@ -12,7 +12,10 @@ CREATE TABLE IF NOT EXISTS compact_archives (
   row_count INTEGER NOT NULL,
   sha256 TEXT NOT NULL,
   payload TEXT NOT NULL,
-  archived_at TEXT NOT NULL
+  archived_at TEXT NOT NULL,
+  object_key TEXT,
+  object_bytes BIGINT,
+  object_store TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_compact_archives_table_time
   ON compact_archives (source_table, time_min, time_max);

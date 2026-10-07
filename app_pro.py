@@ -6965,7 +6965,7 @@ def _render_system_tab_content() -> None:
         delta_color="off",
     )
     st.caption(
-        "Schema dati v8 · migrazioni additive · controllo Render continuo + verifica "
+        "Schema dati v15 · migrazioni additive · controllo Render continuo + verifica "
         "indipendente GitHub ogni 30 minuti."
     )
     status_labels = {
@@ -7028,6 +7028,36 @@ def _render_system_tab_content() -> None:
             "fallback inclusi; dettagli sotto",
             delta_color="off",
         )
+    from r2_archive import storage_status
+
+    archive = storage_status()
+    archive_labels = {
+        "disabled": "Da configurare",
+        "paused": "Trasferimenti sospesi",
+        "waiting": "In attesa del cron",
+        "online": "Operativo",
+        "deferred": "Trasferimento rinviato",
+        "capacity": "Limite raggiunto",
+        "busy": "Trasferimento in corso",
+    }
+    archive_columns = st.columns(3)
+    archive_columns[0].metric(
+        "Archivio storico R2", archive_labels.get(archive["state"], "Da controllare")
+    )
+    archive_columns[1].metric(
+        "Storico trasferito",
+        f"{archive['remote_bytes'] / 1_000_000:.1f} MB",
+        f"{archive['remote_blocks']} blocchi verificati",
+    )
+    archive_columns[2].metric("Da trasferire", f"{archive['pending_blocks']} blocchi")
+    if archive.get("used_bytes") is not None:
+        st.caption(
+            f"Spazio conteggiato: {archive['used_bytes'] / 1_000_000_000:.3f} GB su un limite interno di {archive['max_bytes'] / 1_000_000_000:g} GB. Inventario completo ogni 6 ore; quote Cloudflare condivise con gli altri bucket dell'account."
+        )
+    if archive["state"] in {"capacity", "deferred"}:
+        st.warning(
+            "Lo storico nuovo resta nel database finché il trasferimento non riprende. Previsioni e calibrazione usano i dati recenti locali."
+        )
     st.markdown("#### Fonti e processi indipendenti")
     st.caption(
         "Un errore di una fonte non interrompe le altre. Lo stato considera sia "
@@ -7050,7 +7080,7 @@ def _render_system_tab_content() -> None:
         scheduled_backup = sources["source"].isin(
             {"database_backup", "github_backup"}
         ) & sources["display_status"].eq("scheduled")
-        readable_status.loc[scheduled_backup] = "Pianificata · ore 22:00"
+        readable_status.loc[scheduled_backup] = "Pianificata · ore 22:07"
         scheduled_arsial = sources["source"].eq("arsial_siarl") & sources[
             "display_status"
         ].eq("scheduled")

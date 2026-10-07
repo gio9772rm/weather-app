@@ -1,6 +1,27 @@
-# Stato verificabile del lavoro — 6 ottobre 2026
+# Stato verificabile del lavoro — 7 ottobre 2026
 
-## V5.6: stato attuale
+## Archivio R2 predisposto
+
+- Database misurato il 7 ottobre: circa 377 MB rispetto ai circa 772 MB
+  precedenti. Il recupero maggiore della compattazione è ora avvenuto.
+- Schema 15, blocchi immutabili R2 verificati con upload e rilettura prima
+  di liberare il payload locale. Limite interno di 8 GB con inventario completo
+  del bucket; gli errori conservano i nuovi blocchi nel DB.
+- R2 resta disabilitato senza configurazione dell'account: non sono stati
+  trasferiti oggetti esterni da questa modifica. Passaggi e limiti nella
+  guida `docs/ARCHIVIO_R2.md`.
+- Tre backup operativi con riferimenti allo storico, ricostruzione completa
+  mensile e ZIP autosufficiente su richiesta. I riferimenti non costituiscono
+  tre copie autonome degli oggetti esterni.
+- Previsioni e calibrazione continuano con i dati recenti locali; le precedenti
+  eliminazioni a scadenza dello storico meteo diventano archiviazioni verificate.
+- Comacchio mantenuta: previsioni e calibrazione proprie, nessuna correzione
+  automatica di Roma. Circa 9,1 MB di valori nei tre archivi principali,
+  esclusi indici e strutture ausiliarie.
+- Validazione SQLite e SDK R2 simulato; PostgreSQL 18 e gate di rilascio in CI.
+  Verificare merge e deploy prima di dichiarare l'aggiornamento online.
+
+## V5.6: precedente rilascio
 
 - PR #86 integrata in `main`, commit
   `fe9aeb8101f4cd9eebbe2e960830d2233f0f1ba4`. Tutti i gate CI verdi, anche
@@ -8,7 +29,7 @@
 - Schema 14. Rimosso il solo indice duplicato su `station_observations`:
   circa 15,5 MiB recuperati inizialmente. Primo cron V5.6 riuscito il 6 ottobre
   alle 21:45 UTC: 50.000 righe archiviate in circa 1 MiB. Il recupero fisico
-  maggiore richiede i cicli successivi; non dichiararlo già completato.
+  maggiore è stato completato nei cicli successivi, come misurato sopra.
 - La manutenzione conserva lo storico ensemble e i punteggi in blocchi
   verificati, inclusi nei backup; nessuna cancellazione delle misure.
   Dettagli, budget e requisiti in `CHANGELOG_V5_6.md`.

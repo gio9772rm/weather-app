@@ -1,8 +1,8 @@
 """Lossless cold history, maintained inside the existing ingestion gate.
 
-Only tables whose operational readers use the latest run are eligible. Source
-rows and their verified compressed replacement change in one transaction.
-Observations, model verification runs and window trajectories are untouched.
+Recent verification data stays hot; older weather records are preserved in
+checked blocks. Raw station measurements remain in their original tables.
+Source rows and their compressed replacement change in one transaction.
 """
 
 from __future__ import annotations
@@ -26,6 +26,31 @@ TARGETS = {
     "forecast_regime_scores": ("evaluated_at", 7),
     "forecast_reference_scores": ("evaluated_at", 7),
     "forecast_ensemble_runs": ("issued_at", 2),
+    "forecast_runs": ("issued_at", 120),
+    "forecast_blend_history": ("issued_at", 120),
+    "location_model_runs": ("issued_at", 90),
+    "location_forecasts": ("issued_at", 90),
+    "window_predictions": ("acquired_at", 90),
+    "official_observations": ("time", 180),
+    "environment_observations": ("time", 180),
+    "official_alerts": ("issued_at", 180),
+    "radar_local_snapshots": ("observed_at", 14),
+}
+# Preserve each source/station's last emission through a prolonged outage.
+LATEST_GROUPS = {
+    "forecast_ensemble_runs": ("source", "model"),
+    "forecast_runs": ("provider", "model"),
+    "location_model_runs": ("station_id", "provider", "model", "basis"),
+    "location_forecasts": ("station_id",),
+    "window_predictions": ("station_id",),
+    "official_observations": ("source", "station_id"),
+    "environment_observations": ("source", "station_id", "metric"),
+    "radar_local_snapshots": ("station_id",),
+}
+BATCH_LIMITS = {
+    "location_model_runs": 20,
+    "location_forecasts": 5,
+    "window_predictions": 50,
 }
 CODEC = "json-zlib-base64-v2"
 LEGACY_CODEC = "json-zlib-base64-v1"
@@ -36,6 +61,13 @@ def _target(table):
     if table not in TARGETS:
         raise ValueError("Table is not eligible for cold history")
     return TARGETS[table]
+
+
+def _older_than_latest(table, column):
+    group = LATEST_GROUPS.get(table, ())
+    match = " AND ".join(f'latest."{key}"="{table}"."{key}"' for key in group)
+    where = " WHERE " + match if match else ""
+    return f'"{column}" < (SELECT MAX(latest."{column}") FROM "{table}" latest{where})'
 
 
 def encode_block(columns, rows):
@@ -114,8 +146,8 @@ def compact_batch(table, cutoff, *, engine=None, limit=2500):
         result = con.execute(
             text(
                 f'WITH batch AS (SELECT {keys} FROM "{table}" '
-                f'WHERE "{time_column}" < :cutoff AND "{time_column}" < '
-                f'(SELECT MAX("{time_column}") FROM "{table}") ORDER BY "{time_column}",{keys} '
+                f'WHERE "{time_column}" < :cutoff AND {_older_than_latest(table, time_column)} '
+                f'ORDER BY "{time_column}",{keys} '
                 f"LIMIT :limit {'FOR UPDATE' if postgres else ''}) "
                 f'DELETE FROM "{table}" WHERE ({keys}) IN (SELECT {keys} FROM batch) RETURNING *'
             ),
@@ -153,7 +185,7 @@ def compact_batch(table, cutoff, *, engine=None, limit=2500):
 
 
 def iter_history(table, *, since=None, until=None, engine=None):
-    """Stream verified cold rows and hot rows for export/research (no network)."""
+    """Stream verified cold rows (local or R2) and hot rows for export/research."""
     time_column, _ = _target(table)
     engine = engine or get_engine()
     with engine.connect() as con:
@@ -163,17 +195,31 @@ def iter_history(table, *, since=None, until=None, engine=None):
             if con.dialect.name == "sqlite":
                 con.exec_driver_sql("BEGIN")
             else:
-                con.execute(text(f'LOCK TABLE "{table}" IN ACCESS SHARE MODE'))
+                con.execute(
+                    text(f'LOCK TABLE "{table}",compact_archives IN ACCESS SHARE MODE')
+                )
             blocks = con.execute(
                 text(
-                    "SELECT payload,sha256,row_count,codec FROM compact_archives "
+                    "SELECT * FROM compact_archives "
                     "WHERE source_table=:table AND (CAST(:since AS TEXT) IS NULL OR time_max>=:since) "
                     "AND (CAST(:until AS TEXT) IS NULL OR time_min<:until) ORDER BY time_min,archive_key"
                 ),
                 {"table": table, "since": since, "until": until},
             )
-            for payload, checksum, count, codec in blocks:
-                block = decode_block(payload, checksum, count, codec)
+            from r2_archive import resolve_payload
+
+            external_store = None
+            for archived in blocks.mappings():
+                if not archived["payload"] and external_store is None:
+                    from r2_archive import R2Config, R2Store
+
+                    external_store = R2Store(R2Config.from_env())
+                block = decode_block(
+                    resolve_payload(archived, store=external_store),
+                    archived["sha256"],
+                    archived["row_count"],
+                    archived["codec"],
+                )
                 for values in block["rows"]:
                     row = dict(zip(block["columns"], values, strict=True))
                     stamp = row[time_column]
@@ -191,18 +237,19 @@ def iter_history(table, *, since=None, until=None, engine=None):
                 yield dict(row)
 
 
-def reclaim_table(table, cutoff, *, engine=None):
+def reclaim_table(table, cutoff=None, *, engine=None):
     """Free PostgreSQL files with a small, atomic hot-table copy, never VACUUM FULL.
 
     Called only after all eligible rows are safe in cold storage. A short lock
     timeout postpones this work if a reader/backup is busy. Unsupported schema,
     dependencies, inadequate headroom or any mismatch leaves the original.
     """
-    time_column, _ = _target(table)
+    external_index = table == "compact_archives"
+    time_column = None if external_index else _target(table)[0]
     engine = engine or get_engine()
     if engine.dialect.name != "postgresql":
         return False
-    marker = "compact-repacked:v56:" + table
+    marker = ("r2-repacked:v1:" if external_index else "compact-repacked:v56:") + table
     shadow = "_compact_" + table
     with engine.begin() as con:
         con.execute(text("SET LOCAL lock_timeout = '2s'"))
@@ -216,18 +263,37 @@ def reclaim_table(table, cutoff, *, engine=None):
         ).scalar():
             return False
         con.execute(text(f'LOCK TABLE "{table}" IN ACCESS EXCLUSIVE MODE'))
-        if con.execute(
+        if external_index:
+            from r2_archive import validate_reference
+
+            if con.execute(
+                text("SELECT 1 FROM compact_archives WHERE payload<>'' LIMIT 1")
+            ).first():
+                return False
+            blocks = (
+                con.execute(text("SELECT * FROM compact_archives")).mappings().all()
+            )
+            if not blocks:
+                return False
+            for block in blocks:
+                validate_reference(block)
+        elif con.execute(
             text(
-                f'SELECT 1 FROM "{table}" WHERE "{time_column}"<:cutoff AND "{time_column}" < '
-                f'(SELECT MAX("{time_column}") FROM "{table}") LIMIT 1'
+                f'SELECT 1 FROM "{table}" WHERE "{time_column}"<:cutoff AND '
+                f"{_older_than_latest(table, time_column)} LIMIT 1"
             ),
             {"cutoff": cutoff},
         ).first():
             return False
-        if not con.execute(
-            text("SELECT 1 FROM compact_archives WHERE source_table=:table LIMIT 1"),
-            {"table": table},
-        ).first():
+        if (
+            not external_index
+            and not con.execute(
+                text(
+                    "SELECT 1 FROM compact_archives WHERE source_table=:table LIMIT 1"
+                ),
+                {"table": table},
+            ).first()
+        ):
             return False
         # These application-owned tables have no custom privileges, triggers,
         # RLS, sequences or foreign keys. Decline a rewrite if that changes.
@@ -308,10 +374,20 @@ def maintain_history(*, engine=None, now=None, max_batches=20, seconds=35):
     reclaimed = []
     errors = []
     for table, (_, days) in TARGETS.items():
+        if table in {
+            "forecast_runs",
+            "forecast_blend_history",
+            "official_observations",
+        }:
+            from config import Settings
+
+            days = max(days, Settings.from_env().score_lookback_days + 7)
         cutoff = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
         try:
             while batches < max_batches and time.monotonic() < deadline:
-                n = compact_batch(table, cutoff, engine=engine)
+                n = compact_batch(
+                    table, cutoff, engine=engine, limit=BATCH_LIMITS.get(table, 2500)
+                )
                 if not n:
                     if reclaim_table(table, cutoff, engine=engine):
                         reclaimed.append(table)

@@ -2,6 +2,10 @@
 
 # Meteo Pro V5
 
+**Storico R2 predisposto**: [configurazione dei 10 GB Standard gratuiti e ripristino](docs/ARCHIVIO_R2.md).
+Trasferimenti privati e verificati, limite interno di 8 GB, dati recenti di calibrazione nel DB.
+Prima delle chiavi lo storico resta locale; Comacchio mantiene previsioni e calibrazione proprie.
+
 Osservatorio meteo multi-stazione: nuova PWA responsive e strumenti scientifici Streamlit completi in `/pro/`, nello stesso servizio Render.
 
 La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`. Ogni rilascio passa da test, audit privacy e CI prima del merge su `main`.
@@ -280,7 +284,7 @@ Queste protezioni possono recuperare solo dati già arrivati al cloud Ecowitt. U
 
 ### Backup verificato
 
-Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` V4.4 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:07 Europe/Rome**, anche se il PC locale è spento; i sette minuti evitano il picco dei runner GitHub al cambio dell'ora.
+Lo script `backup_database.py` esporta ogni tabella conosciuta in CSV, aggiunge `schema.sql` e un `manifest.json` v3 e verifica conteggi e SHA-256 prima di dichiarare riuscita la copia. Quando R2 è attivo, il manifest dichiara gli oggetti esterni necessari: i backup ordinari contengono i riferimenti allo storico, mentre `--include-external-history` crea uno ZIP completo e indipendente. La prova mensile materializza e verifica anche tutti gli oggetti R2; configurare prima le quattro chiavi GitHub descritte nella [guida](docs/ARCHIVIO_R2.md). Non scrive la stringa di connessione nel file. Il workflow `daily_backup.yml` lo esegue ogni giorno alle **22:07 Europe/Rome**, anche se il PC locale è spento; i sette minuti evitano il picco dei runner GitHub al cambio dell'ora.
 
 Poiché il repository è pubblico, lo ZIP non lascia mai il runner in chiaro: viene cifrato con AES-256-CBC/PBKDF2 usando una chiave derivata dal `DATABASE_URL` segreto in vigore al momento della copia. Dopo un nuovo backup verificato e caricato su `main`, `backup_retention.py` conserva quella copia e le due precedenti per cui risultano riuscite verifica, cifratura e upload. Solo allora elimina gli altri backup dello stesso workflow, leggendo prima tutte le pagine dell'elenco e confrontando identificativo e SHA-256 del nuovo artefatto. Un errore o prove insufficienti rinviano la pulizia; artefatti di test, altri workflow e altre branch non vengono toccati. Il permesso `actions: write` è limitato al job backup. La scadenza tecnica GitHub è di 90 giorni, per tollerare interruzioni prolungate; il numero ordinario di copie è tre, non novanta. La pagina Sistema distingue la creazione/verifica dello ZIP dal caricamento cloud, così un upload fallito non viene mostrato come backup remoto riuscito. Se `DATABASE_URL` viene ruotato, conserva in modo sicuro il vecchio valore finché esistono backup cifrati con quel valore.
 

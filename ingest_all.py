@@ -343,39 +343,10 @@ def run_forecast_pipeline(cfg: Settings) -> dict[str, Any]:
 
 
 def prune_derived_history() -> None:
-    """Bound database growth while retaining more history than scoring needs."""
+    """Bound operational logs; old weather rows are archived losslessly."""
     now = pd.Timestamp.now(tz="UTC")
-    forecast_cutoff = (now - pd.Timedelta(days=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    score_cutoff = (now - pd.Timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    observation_cutoff = (now - pd.Timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_cutoff = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with get_engine().begin() as connection:
-        connection.execute(
-            text("DELETE FROM forecast_runs WHERE issued_at < :cutoff"),
-            {"cutoff": forecast_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM forecast_blend_history WHERE issued_at < :cutoff"),
-            {"cutoff": forecast_cutoff},
-        )
-        # Latest-run readers use hot tables; older ensemble/score rows are
-        # preserved losslessly by compact_history, including beyond 120 days.
-        connection.execute(
-            text("DELETE FROM official_observations WHERE time < :cutoff"),
-            {"cutoff": observation_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM environment_observations WHERE time < :cutoff"),
-            {"cutoff": observation_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM official_alerts WHERE issued_at < :cutoff"),
-            {"cutoff": score_cutoff},
-        )
-        connection.execute(
-            text("DELETE FROM radar_local_snapshots WHERE observed_at < :cutoff"),
-            {"cutoff": (now - pd.Timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")},
-        )
         connection.execute(
             text("DELETE FROM ingest_log WHERE started_at < :cutoff"),
             {"cutoff": log_cutoff},
@@ -1087,6 +1058,13 @@ def run_all(
 
     try:
         result["storage"] = maintain_history()
+        from r2_archive import offload_history
+
+        result["storage"]["r2"] = offload_history()
+        if result["storage"]["r2"]["state"] == "online":
+            from compact_history import reclaim_table
+
+            result["storage"]["r2"]["reclaimed"] = reclaim_table("compact_archives")
     except Exception:  # noqa: BLE001 - storage maintenance is optional
         result["storage"] = {"deferred": True}
     return result
