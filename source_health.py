@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -205,7 +206,15 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             True,
             24 * 60,
             "protezione",
-            continuity="ZIP portatile con manifest e checksum",
+            continuity="ZIP verificato; manifest dello storico esterno quando attivo",
+        ),
+        SourceDefinition(
+            "r2_history",
+            "Archivio storico R2 privato",
+            os.getenv("R2_ARCHIVE_ENABLED", "false").lower() in {"true", "1", "yes"},
+            30,
+            "protezione",
+            continuity="Trasferimento verificato; un errore conserva la copia nel DB",
         ),
         SourceDefinition(
             "github_backup",
@@ -213,7 +222,7 @@ def configured_sources(cfg: Settings = settings) -> tuple[SourceDefinition, ...]
             True,
             24 * 60,
             "protezione",
-            continuity="Artefatto cifrato con scadenza automatica dopo 30 giorni",
+            continuity="Ultima copia verificata e due precedenti; scadenza tecnica 90 giorni",
         ),
     )
 
