@@ -89,12 +89,7 @@ def archive_runs(station_id, frame, *, basis="live", acquired_at=None):
                 ),
                 pending,
             )
-        con.execute(
-            text(
-                "DELETE FROM location_model_runs WHERE station_id=:id AND issued_at<:at"
-            ),
-            {"id": station_id, "at": (now - pd.Timedelta(days=90)).isoformat()},
-        )
+        # compact_history preserves older runs after the 90-day hot window.
     return count
 
 
