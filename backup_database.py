@@ -12,7 +12,7 @@ import re
 import sqlite3
 import tempfile
 import zipfile
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -101,6 +101,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+@contextmanager
+def _csv_reader(archive, filename):
+    """Stream large cold-history files instead of loading the entire CSV."""
+    with (
+        archive.open(filename) as binary,
+        io.TextIOWrapper(binary, encoding="utf-8", newline="") as decoded,
+    ):
+        yield csv.DictReader(decoded)
+
+
 def _destination(output: str | Path) -> Path:
     destination = Path(output)
     if destination.suffix.lower() == ".zip":
@@ -126,7 +136,11 @@ def _backup_connection(engine):
                 connection.execute(text("SET TRANSACTION READ ONLY"))
                 # Also prevent a table swap between the archive and hot-table
                 # exports. DELETE-based moves remain concurrent and MVCC-safe.
-                hot = ",".join(f'"{table}"' for table in TARGETS if table in tables)
+                hot = ",".join(
+                    f'"{table}"'
+                    for table in (*TARGETS, "compact_archives")
+                    if table in tables
+                )
                 if hot:
                     connection.execute(text(f"LOCK TABLE {hot} IN ACCESS SHARE MODE"))
             elif engine.dialect.name == "sqlite":
@@ -134,7 +148,12 @@ def _backup_connection(engine):
             yield connection
 
 
-def create_backup(output: str | Path = "backups", engine: Engine | None = None) -> Path:
+def create_backup(
+    output: str | Path = "backups",
+    engine: Engine | None = None,
+    *,
+    include_external=False,
+) -> Path:
     """Export known tables to CSV plus a checksummed manifest in one ZIP file."""
     if engine is None:
         ensure_schema()
@@ -143,13 +162,20 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
     existing = set(inspect(engine).get_table_names())
     manifest: dict[str, Any] = {
         "format": BACKUP_FORMAT,
-        "version": 2,
+        "version": 3,
         "application": "Meteo Pro V5",
-        "schema_version": 14,
+        "schema_version": 15,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "database_dialect": engine.dialect.name,
         "tables": {},
+        "external_history": {
+            "blocks": 0,
+            "bytes": 0,
+            "stores": [],
+            "verification": "references-only",
+        },
     }
+    external_store = None
     try:
         with tempfile.TemporaryDirectory(
             prefix=".meteo-backup-", dir=destination.parent
@@ -166,8 +192,44 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
                     for chunk in pd.read_sql(
                         text(f'SELECT * FROM "{table}"'),
                         connection,
-                        chunksize=10_000,
+                        chunksize=25 if table == "compact_archives" else 10_000,
                     ):
+                        if table == "compact_archives":
+                            if "object_bytes" in chunk:
+                                chunk["object_bytes"] = pd.to_numeric(
+                                    chunk["object_bytes"]
+                                ).astype("Int64")
+                            from r2_archive import (
+                                R2Config,
+                                R2Store,
+                                resolve_payload,
+                                validate_reference,
+                            )
+
+                            for index, row in chunk.iterrows():
+                                if row["payload"]:
+                                    continue
+                                block = row.to_dict()
+                                if include_external:
+                                    external_store = external_store or R2Store(
+                                        R2Config.from_env()
+                                    )
+                                    chunk.loc[index, "payload"] = resolve_payload(
+                                        block, store=external_store
+                                    )
+                                    for column in (
+                                        "object_key",
+                                        "object_bytes",
+                                        "object_store",
+                                    ):
+                                        chunk.loc[index, column] = None
+                                else:
+                                    validate_reference(block)
+                                    external = manifest["external_history"]
+                                    external["blocks"] += 1
+                                    external["bytes"] += int(block["object_bytes"])
+                                    if block["object_store"] not in external["stores"]:
+                                        external["stores"].append(block["object_store"])
                         chunk.to_csv(
                             csv_path,
                             mode="w" if first else "a",
@@ -191,6 +253,9 @@ def create_backup(output: str | Path = "backups", engine: Engine | None = None) 
                     }
 
             schema_path = Path(__file__).with_name("schema.sql")
+            manifest["external_history"]["required"] = bool(
+                manifest["external_history"]["blocks"]
+            )
             with zipfile.ZipFile(
                 staged_archive,
                 "w",
@@ -233,36 +298,62 @@ def verify_backup(archive_path: str | Path) -> dict[str, Any]:
         manifest = json.loads(archive.read("manifest.json"))
         if manifest.get("format") not in {BACKUP_FORMAT, *LEGACY_BACKUP_FORMATS}:
             raise ValueError("Formato backup non riconosciuto")
+        external_count = external_bytes = 0
+        external_stores = set()
         for table, details in manifest.get("tables", {}).items():
             if table not in BACKUP_TABLES:
                 raise ValueError(f"Tabella inattesa nel manifest: {table}")
             filename = details.get("file")
             if filename not in names:
                 raise ValueError(f"File mancante: {filename}")
-            payload = archive.read(filename)
-            if hashlib.sha256(payload).hexdigest() != details.get("sha256"):
+            digest = hashlib.sha256()
+            with archive.open(filename) as handle:
+                for data in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(data)
+            if digest.hexdigest() != details.get("sha256"):
                 raise ValueError(f"Checksum non valido: {filename}")
-            decoded = io.StringIO(payload.decode("utf-8"), newline="")
-            row_count = max(0, sum(1 for _ in csv.reader(decoded)) - 1)
+            with _csv_reader(archive, filename) as reader:
+                row_count = sum(1 for _ in reader)
             if row_count != int(details.get("rows", -1)):
                 raise ValueError(f"Conteggio righe non valido: {filename}")
             if table == "compact_archives":
                 from compact_history import decode_block
 
-                decoded.seek(0)
-                for block in csv.DictReader(decoded):
-                    decode_block(
-                        block["payload"],
-                        block["sha256"],
-                        int(block["row_count"]),
-                        block["codec"],
-                    )
+                with _csv_reader(archive, filename) as reader:
+                    blocks = reader
+                    for block in blocks:
+                        if block["payload"]:
+                            decode_block(
+                                block["payload"],
+                                block["sha256"],
+                                int(block["row_count"]),
+                                block["codec"],
+                            )
+                        else:
+                            from r2_archive import validate_reference
+
+                            validate_reference(block)
+                            external_count += 1
+                            external_bytes += int(block["object_bytes"])
+                            external_stores.add(block["object_store"])
+        external = manifest.get("external_history", {})
+        if external_count and manifest.get("version", 1) < 3:
+            raise ValueError("Backup requires an explicit external history manifest")
+        if (
+            external_count != int(external.get("blocks", 0))
+            or external_bytes != int(external.get("bytes", 0))
+            or external_stores != set(external.get("stores", []))
+            or bool(external_count) != bool(external.get("required", False))
+        ):
+            raise ValueError("External history manifest mismatch")
     return manifest
 
 
 def restore_backup(
     archive_path: str | Path,
     destination_sqlite: str | Path,
+    *,
+    materialize_external=False,
 ) -> dict[str, Any]:
     """Restore a verified archive into a new disposable SQLite database.
 
@@ -283,11 +374,13 @@ def restore_backup(
     os.close(staged_descriptor)
     staged = Path(staged_name)
     restored_rows = 0
+    external_store = None
     try:
         with (
             zipfile.ZipFile(archive_path) as archive,
             _backup_csv_limit(archive),
             sqlite3.connect(staged) as db,
+            ExitStack() as csv_streams,
         ):
             db.execute("PRAGMA foreign_keys=OFF")
             db.executescript(archive.read("schema.sql").decode("utf-8"))
@@ -296,8 +389,9 @@ def restore_backup(
                     r"[A-Za-z_][A-Za-z0-9_]*", table
                 ):
                     raise ValueError(f"Tabella non ripristinabile: {table}")
-                decoded = archive.read(details["file"]).decode("utf-8")
-                reader = csv.DictReader(io.StringIO(decoded, newline=""))
+                reader = csv_streams.enter_context(
+                    _csv_reader(archive, details["file"])
+                )
                 columns = reader.fieldnames or []
                 if not columns or any(
                     not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column)
@@ -312,13 +406,30 @@ def restore_backup(
                 batch: list[tuple[Any, ...]] = []
                 table_rows = 0
                 for row in reader:
+                    if (
+                        table == "compact_archives"
+                        and not row["payload"]
+                        and materialize_external
+                    ):
+                        from r2_archive import R2Config, R2Store, resolve_payload
+
+                        external_store = external_store or R2Store(R2Config.from_env())
+                        row["payload"] = resolve_payload(row, store=external_store)
+                        for key in ("object_key", "object_bytes", "object_store"):
+                            row[key] = ""
                     batch.append(
                         tuple(
-                            None if row.get(column, "") == "" else row[column]
+                            ""
+                            if table == "compact_archives"
+                            and column == "payload"
+                            and row.get(column, "") == ""
+                            else None
+                            if row.get(column, "") == ""
+                            else row[column]
                             for column in columns
                         )
                     )
-                    if len(batch) >= 2_000:
+                    if len(batch) >= (1 if table == "compact_archives" else 2_000):
                         db.executemany(statement, batch)
                         table_rows += len(batch)
                         batch.clear()
@@ -341,6 +452,10 @@ def restore_backup(
         "tables": len(manifest.get("tables", {})),
         "rows": restored_rows,
         "created_at": manifest.get("created_at"),
+        "external_history_required": bool(
+            manifest.get("external_history", {}).get("required")
+        )
+        and not materialize_external,
     }
 
 
@@ -391,6 +506,16 @@ def main() -> int:
     parser.add_argument("--verify", help="Verifica un archivio esistente")
     parser.add_argument("--restore", help="Ripristina un archivio verificato")
     parser.add_argument(
+        "--include-external-history",
+        action="store_true",
+        help="Crea uno ZIP autosufficiente, scaricando e verificando lo storico R2",
+    )
+    parser.add_argument(
+        "--materialize-external-history",
+        action="store_true",
+        help="Durante il ripristino verifica e scarica tutti i blocchi R2 nel nuovo SQLite",
+    )
+    parser.add_argument(
         "--restore-sqlite",
         help="Nuovo file SQLite di destinazione (non deve esistere)",
     )
@@ -418,11 +543,19 @@ def main() -> int:
     if bool(args.restore) != bool(args.restore_sqlite):
         parser.error("--restore e --restore-sqlite devono essere usati insieme")
     if args.restore:
-        summary = restore_backup(args.restore, args.restore_sqlite)
+        summary = restore_backup(
+            args.restore,
+            args.restore_sqlite,
+            materialize_external=args.materialize_external_history,
+        )
         print(
             f"Ripristino valido: {summary['tables']} tabelle, "
             f"{summary['rows']} righe, destinazione {summary['path']}"
         )
+        if summary["external_history_required"]:
+            print(
+                "Lo storico esterno richiede il bucket R2 indicato nel backup; usare --materialize-external-history per una copia offline completa."
+            )
         return 0
     if args.verify:
         manifest = verify_backup(args.verify)
@@ -431,7 +564,9 @@ def main() -> int:
             f"creato {manifest.get('created_at', '—')}"
         )
         return 0
-    destination = create_backup(args.output)
+    destination = create_backup(
+        args.output, include_external=args.include_external_history
+    )
     manifest = verify_backup(destination)
     if args.github_output:
         _append_github_outputs(args.github_output, destination, manifest)
