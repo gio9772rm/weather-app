@@ -35,9 +35,11 @@ class MemoryStore:
         )
         self.objects = {}
         self.puts = 0
+        self.inventories = 0
         self.fail = None
 
     def inventory(self, deadline):
+        self.inventories += 1
         if self.fail == "inventory":
             raise ConnectionError("credential secret must not appear in logs")
         return sum(len(data) for data in self.objects.values())
@@ -169,6 +171,8 @@ def test_capacity_counts_orphans_and_recovers_same_object(storage_engine):
     assert offload_history(engine=storage_engine, store=store)["state"] == "capacity"
     assert block(storage_engine)["payload"] == local["payload"] and store.puts == 0
     store.objects[r2_archive._key(local, data)] = data
+    with storage_engine.begin() as con:
+        con.execute(text("DELETE FROM meta WHERE k='r2_usage'"))
     assert offload_history(engine=storage_engine, store=store)["blocks"] == 1
     assert store.puts == 0
 
@@ -216,6 +220,31 @@ def test_db_failure_retains_copy_and_retry_reuses_orphan(storage_engine):
     assert block(storage_engine) == before and len(store.objects) == 1
     assert offload_history(engine=storage_engine, store=store)["blocks"] == 1
     assert store.puts == 1
+    assert store.inventories == 1
+
+
+def test_reservations_survive_failed_put_and_periodic_inventory_reconciles(
+    storage_engine,
+):
+    cold(storage_engine)
+    store = MemoryStore()
+    store.fail = "put"
+    state = offload_history(engine=storage_engine, store=store)
+    reserved = state["used_bytes"]
+    assert reserved > 0 and not store.objects
+    with storage_engine.begin() as con:
+        usage = json.loads(
+            con.execute(text("SELECT v FROM meta WHERE k='r2_usage'")).scalar()
+        )
+        assert usage["bytes"] == reserved
+        usage["inventoried_at"] = "2000-01-01T00:00:00+00:00"
+        con.execute(
+            text("UPDATE meta SET v=:v WHERE k='r2_usage'"), {"v": json.dumps(usage)}
+        )
+    store.fail = None
+    state = offload_history(engine=storage_engine, store=store)
+    assert state["blocks"] == 1 and state["used_bytes"] == reserved
+    assert store.inventories == 2
 
 
 def test_wrong_destination_and_missing_object_fail_explicitly(
