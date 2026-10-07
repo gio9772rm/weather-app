@@ -215,6 +215,45 @@ def _status(con, state):
     con.commit()
 
 
+def _save_usage(con, usage):
+    con.execute(
+        text(
+            "INSERT INTO meta(k,v) VALUES('r2_usage',:v) ON CONFLICT(k) DO UPDATE SET v=excluded.v"
+        ),
+        {"v": json.dumps(usage)},
+    )
+    con.commit()
+
+
+def _usage(con, store, deadline):
+    """Reconcile every six hours; persist reservations before remote writes.
+
+    A failed PUT may conservatively overcount until reconciliation. An upload
+    followed by a failed DB commit remains counted. This avoids repeatedly
+    listing years of objects, keeping operation usage within a modest budget.
+    The bucket must be dedicated to this application's single gated writer.
+    """
+    value = con.execute(text("SELECT v FROM meta WHERE k='r2_usage'")).scalar()
+    con.commit()
+    usage = json.loads(value) if value else None
+    now = datetime.now(timezone.utc)
+    if usage and usage.get("store") == store.cfg.identity:
+        age = (now - datetime.fromisoformat(usage["inventoried_at"])).total_seconds()
+        if (
+            0 <= age < 6 * 3600
+            and isinstance(usage["bytes"], int)
+            and usage["bytes"] >= 0
+        ):
+            return usage
+    usage = {
+        "store": store.cfg.identity,
+        "bytes": store.inventory(deadline),
+        "inventoried_at": now.isoformat(),
+    }
+    _save_usage(con, usage)
+    return usage
+
+
 def offload_history(*, engine=None, store=None, max_blocks=10, seconds=20):
     """Bounded, resumable move after PUT, GET and full codec validation."""
     if store is None and not archive_requested():
@@ -248,8 +287,14 @@ def offload_history(*, engine=None, store=None, max_blocks=10, seconds=20):
             if any(value != store.cfg.identity for value in identities):
                 raise ValueError("R2 destination differs from the archive")
             deadline = time.monotonic() + seconds
-            used = store.inventory(deadline)
-            state.update(state="online", used_bytes=used, max_bytes=store.cfg.max_bytes)
+            usage = _usage(con, store, deadline)
+            used = usage["bytes"]
+            state.update(
+                state="online",
+                used_bytes=used,
+                max_bytes=store.cfg.max_bytes,
+                inventoried_at=usage["inventoried_at"],
+            )
             for _ in range(max_blocks):
                 if time.monotonic() >= deadline:
                     break
@@ -282,8 +327,11 @@ def offload_history(*, engine=None, store=None, max_blocks=10, seconds=20):
                     state["state"] = "capacity"
                     break
                 if not exists:
-                    store.put_new(key, data)
                     used += len(data)
+                    usage["bytes"] = used
+                    _save_usage(con, usage)
+                    state["used_bytes"] = used
+                    store.put_new(key, data)
                 remote = {
                     **block,
                     "payload": "",
@@ -365,6 +413,8 @@ def storage_status(*, engine=None):
         if value
         else {"state": "waiting" if archive_requested() else "disabled"}
     )
+    if not archive_requested():
+        state["state"] = "paused" if counts[0] else "disabled"
     return {
         **state,
         "remote_blocks": counts[0],
