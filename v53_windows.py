@@ -193,15 +193,7 @@ def archive_paths(station_id, paths, cfg):
                 "payload": json.dumps(product, allow_nan=False),
             },
         )
-        con.execute(
-            text(
-                "DELETE FROM window_predictions WHERE station_id=:id AND acquired_at<:cutoff"
-            ),
-            {
-                "id": station_id,
-                "cutoff": (acquired - pd.Timedelta(days=90)).isoformat(),
-            },
-        )
+        # Keep the complete 90-day calibration window hot; archive older rows.
 
 
 def validation_key(station_id):
