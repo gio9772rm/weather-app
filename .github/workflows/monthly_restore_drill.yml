@@ -18,7 +18,7 @@ concurrency:
 jobs:
   restore:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -50,6 +50,10 @@ jobs:
       - name: Decrypt, verify and restore in an isolated SQLite database
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         shell: bash
         run: |
           if [ -z "$DATABASE_URL" ]; then
@@ -70,7 +74,8 @@ jobs:
           unset METEO_BACKUP_KEY
           python backup_database.py --verify "$RUNNER_TEMP/portable-backup.zip"
           python backup_database.py --restore "$RUNNER_TEMP/portable-backup.zip" \
-            --restore-sqlite "$RUNNER_TEMP/restored-weather.sqlite"
+            --restore-sqlite "$RUNNER_TEMP/restored-weather.sqlite" \
+            --materialize-external-history
           python - <<'PY'
           import sqlite3
           import os
