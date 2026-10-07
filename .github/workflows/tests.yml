@@ -33,7 +33,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - name: Lossless history, physical reclaim and concurrent backup snapshot
-        run: python -m pytest -q tests/test_compact_history.py
+        run: python -m pytest -q tests/test_compact_history.py tests/test_r2_archive.py
 
   test:
     runs-on: ubuntu-latest
