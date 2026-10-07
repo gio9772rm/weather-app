@@ -30,6 +30,10 @@ blinker==1.9.0
     # via
     #   -c constraints.txt
     #   streamlit
+boto3==1.43.108
+    # via -r requirements.txt
+botocore==1.43.108
+    # via boto3, s3transfer
 certifi==2026.7.22
     # via
     #   -c constraints.txt
@@ -134,6 +138,8 @@ numpy==2.3.5
     #   pandas
     #   pydeck
     #   streamlit
+jmespath==1.1.0
+    # via boto3, botocore
 openpyxl==3.1.5
     # via
     #   -c constraints.txt
@@ -255,6 +261,8 @@ six==1.17.0
     # via
     #   -c constraints.txt
     #   python-dateutil
+s3transfer==0.19.2
+    # via boto3
 sqlalchemy==2.0.52
     # via
     #   -c constraints.txt
