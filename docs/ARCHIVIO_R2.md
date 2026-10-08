@@ -132,7 +132,11 @@ Il file contiene dati privati: conservarlo su supporto protetto. La rotazione
 GitHub riguarda solo i backup giornalieri, non file manuali sul PC.
 
 Il workflow **Prova ripristino mensile**, eseguibile anche da **Actions → Run
-workflow**, verifica lo ZIP cifrato e ricostruisce in un SQLite nuovo **tutti
+workflow**, parte anche dopo modifiche al codice di backup e archivio integrate
+in `main`. Cerca in tutte le pagine degli artefatti il più recente backup
+giornaliero di `main` con creazione, verifica, cifratura e caricamento riusciti;
+non seleziona file di altri workflow o branch. Controlla anche il checksum
+GitHub del download prima di aprirlo. Verifica lo ZIP e ricostruisce in un SQLite nuovo **tutti
 gli oggetti R2**, uno per volta. Oggetti mancanti, checksum diversi o chiavi
 mancanti fanno fallire la prova e aprono l'avviso operativo. L'esercizio non
 modifica il database di produzione. Verifica e ripristino leggono i CSV in
