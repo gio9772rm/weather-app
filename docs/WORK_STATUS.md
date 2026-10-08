@@ -1,4 +1,36 @@
-# Stato verificabile del lavoro — 7 ottobre 2026
+# Stato verificabile del lavoro — 8 ottobre 2026
+
+## Ripresa e controlli dell'8 ottobre
+
+- PR #89 integrata in `main`, commit
+  `4ac7a7676bb5c4d67db2d80ee8347a70e58c1f20`. Sito e cron live su questo
+  commit; API delle due stazioni e health HTTP 200. Acquisizione riuscita
+  alle 16:22 UTC. Il rilascio successivo è verificabile dalla PR contenente
+  questo documento e dai relativi workflow e deploy.
+- PostgreSQL misura 395.024.063 byte, circa 395 MB (377 MiB), alle 16:19 UTC.
+  Sono presenti 695 blocchi compressi, circa 26,8 MB di payload locali;
+  nessun blocco R2. Sono dimensioni del database e dei payload, non una misura
+  dell'intero disco Render, che comprende altre strutture PostgreSQL.
+- Backup dell'8 ottobre, run `37706023868`, riuscito e verificato. Anche il
+  download cifrato è stato riletto: 54.373.558 byte, checksum GitHub identico.
+  La rotazione mantiene esattamente tre artefatti giornalieri (circa 155 MB
+  complessivi); il quarto precedente è stato eliminato dalla rotazione.
+- La prova di recupero seleziona il più recente backup giornaliero verificato
+  di `main`, con paginazione completa di artefatti e job e controllo del checksum
+  prima di aprire il download. Nessuna cancellazione durante la selezione.
+  Oltre alla prova mensile e manuale, le modifiche al codice di recupero e
+  archivio integrate in `main` avviano una ricostruzione isolata automatica.
+  Il risultato reale resta da controllare nel workflow del nuovo merge.
+- R2 non è configurato: nessun trasferimento effettivo. Servono bucket privato
+  e variabili protette in GitHub e su entrambi i servizi Render, come nella
+  guida `docs/ARCHIVIO_R2.md`. Non sono state create risorse o spese nuove.
+- Calibrazione aggiornata alle 16:22 UTC: entrambe le stazioni hanno 11 giorni
+  di riscontri. Roma: 86 finestre, 82 asciutte, 4 piovose su 2 giorni;
+  Comacchio: 115 finestre, 112 asciutte, 3 piovose su 2 giorni. Raccolta ancora
+  in corso, probabilità originali applicate. Mancano almeno 19 giorni al
+  requisito temporale, 26/27 finestre piovose e 3 giorni piovosi. Il 27 ottobre
+  è la prima data possibile, subordinata alle altre soglie e alla verifica
+  indipendente del miglioramento.
 
 ## Archivio R2 predisposto
 
@@ -18,14 +50,16 @@
 - Comacchio mantenuta: previsioni e calibrazione proprie, nessuna correzione
   automatica di Roma. Circa 9,1 MB di valori nei tre archivi principali,
   esclusi indici e strutture ausiliarie.
-- Validazione SQLite e SDK R2 simulato; PostgreSQL 18 e gate di rilascio in CI.
-  Verificare merge e deploy prima di dichiarare l'aggiornamento online.
+- Validazione SQLite, SDK R2 simulato, PostgreSQL 18 e gate di rilascio in CI
+  riusciti sulla PR #89. Sito e cron live dal 7 ottobre. Il trasferimento su
+  Cloudflare non è stato collaudato perché mancano le credenziali dell'account.
 
 ## V5.6: precedente rilascio
 
 - PR #86 integrata in `main`, commit
   `fe9aeb8101f4cd9eebbe2e960830d2233f0f1ba4`. Tutti i gate CI verdi, anche
-  PostgreSQL 18, browser, Android e CodeQL. Sito e cron live su questo commit.
+  PostgreSQL 18, browser, Android e CodeQL. Sito e cron hanno successivamente
+  ricevuto le correzioni del codec e l'archivio R2 descritti sopra.
 - Schema 14. Rimosso il solo indice duplicato su `station_observations`:
   circa 15,5 MiB recuperati inizialmente. Primo cron V5.6 riuscito il 6 ottobre
   alle 21:45 UTC: 50.000 righe archiviate in circa 1 MiB. Il recupero fisico
@@ -36,7 +70,7 @@
 - Quel primo ciclo ha rinviato `forecast_scores` perché i vecchi Brier
   contengono `NaN`. L'aggiornamento di questo documento accompagna il codec v2
   che conserva NaN/infinito con tipi espliciti e legge anche i blocchi v1.
-  Verificare la PR della correzione, CI PostgreSQL e deploy prima di concludere.
+  Correzione successivamente integrata e verificata, compresa CI PostgreSQL.
 - Calibrazione automatica predisposta **solo per due ore asciutte previste
   6–12 ore prima**, separata per stazione/modello. Si attiva con dati sufficienti
   e beneficio verificato su un periodo successivo indipendente; peggioramento,
