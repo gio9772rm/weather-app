@@ -2,6 +2,14 @@ name: Meteo V4.4 - Prova ripristino mensile
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/monthly_restore_drill.yml
+      - backup_database.py
+      - backup_retention.py
+      - compact_history.py
+      - r2_archive.py
   schedule:
     - cron: "23 4 1 * *"
       timezone: "Europe/Rome"
@@ -32,19 +40,17 @@ jobs:
       - name: Install restore dependencies
         run: pip install -r requirements-ingest.txt
 
-      - name: Download latest non-expired encrypted backup
+      - name: Download and check latest verified encrypted backup
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.expired == false and (.name | startswith("meteo-db-")))] | sort_by(.created_at) | last | .id // empty')"
-          if [ -z "$artifact_id" ]; then
-            echo "::error::Nessun backup cifrato non scaduto disponibile"
-            exit 2
-          fi
+          python backup_retention.py --latest-verified > "$RUNNER_TEMP/backup-selection.json"
+          artifact_id="$(jq -r '.artifact_id' "$RUNNER_TEMP/backup-selection.json")"
+          digest="$(jq -r '.digest' "$RUNNER_TEMP/backup-selection.json")"
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
             > "$RUNNER_TEMP/backup-artifact.zip"
+          printf '%s  %s\n' "${digest#sha256:}" "$RUNNER_TEMP/backup-artifact.zip" | sha256sum --check
           unzip -q "$RUNNER_TEMP/backup-artifact.zip" -d "$RUNNER_TEMP/encrypted-backup"
 
       - name: Decrypt, verify and restore in an isolated SQLite database
