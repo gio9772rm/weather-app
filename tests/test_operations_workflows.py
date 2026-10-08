@@ -42,7 +42,8 @@ def test_monthly_restore_drill_uses_latest_encrypted_artifact_and_disposable_db(
 
     assert 'cron: "23 4 1 * *"' in workflow
     assert "actions: read" in workflow
-    assert "expired == false" in workflow
+    assert "python backup_retention.py --latest-verified" in workflow
+    assert workflow.index("sha256sum --check") < workflow.index("unzip -q")
     assert "openssl enc -d -aes-256-cbc" in workflow
     assert "--restore-sqlite" in workflow
     assert "operations_alert.py --key restore-drill" in workflow
