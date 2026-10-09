@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_daily_backup_is_off_device_encrypted_and_rotates_three_verified_copies():
+def test_daily_backup_is_off_device_encrypted_and_rotates_two_verified_copies():
     workflow = (ROOT / ".github/workflows/daily_backup.yml").read_text(encoding="utf-8")
 
     assert 'cron: "7 22 * * *"' in workflow
