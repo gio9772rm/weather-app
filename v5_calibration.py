@@ -597,9 +597,8 @@ def apply_calibration(frame, product, now=None):
 
 
 def update_verification(station_id, now=None):
-    from v5_data import clean_json
-
     from data_access import load_station
+    from v5_data import clean_json
 
     now = utc(now if now is not None else pd.Timestamp.now(tz="UTC"))
     scores = verify(
