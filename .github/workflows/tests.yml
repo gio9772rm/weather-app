@@ -14,7 +14,8 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:18
+        # Official Docker image mirror: avoid Docker Hub authentication timeouts.
+        image: public.ecr.aws/docker/library/postgres:18
         env:
           POSTGRES_DB: meteo_test
           POSTGRES_USER: meteo_test
