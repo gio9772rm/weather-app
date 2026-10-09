@@ -112,14 +112,24 @@ delle emissioni senza perdere il servizio della seconda stazione.
 
 ## Backup e ripristino
 
-I tre backup giornalieri cifrati su GitHub conservano dati operativi, blocchi
+Il workflow **Meteo - Backup giornaliero** (in precedenza denominato V4.4)
+usa il codice del ramo selezionato; le esecuzioni programmate usano `main`.
+Esporta il database attuale indicato da `DATABASE_URL`, non il codice del sito
+o l'APK e non un database della vecchia V4.4. La rotazione conserva l'ultima
+copia verificata e la precedente verificata dello stesso workflow su `main`.
+La precedente è una fotografia dei dati dell'esecuzione precedente riuscita,
+non necessariamente della release precedente del sito. La pulizia avviene
+soltanto dopo creazione, verifica, cifratura e caricamento riusciti della nuova
+copia; in caso di errori o prove insufficienti viene rinviata.
+
+I due backup giornalieri cifrati su GitHub conservano dati operativi, blocchi
 ancora locali e indice completo degli oggetti R2. Il manifest v3 dichiara
 numero, dimensione e destinazioni dei blocchi esterni necessari. ZIP e indice
 si verificano anche durante un'interruzione R2; non si riscaricano tutti gli
-anni di storico ogni giorno e non si moltiplica per tre lo spazio R2.
+anni di storico ogni giorno e non si moltiplica per due lo spazio R2.
 
-I tre ZIP con riferimenti dipendono dal bucket per lo storico esterno e **non
-sono tre copie autonome di quei dati**. Per una seconda copia indipendente,
+I due ZIP con riferimenti dipendono dal bucket per lo storico esterno e **non
+sono due copie autonome di quei dati**. Per una seconda copia indipendente,
 creare periodicamente uno ZIP completo sul PC, con le quattro variabili R2
 configurate in modo sicuro anche sul PC, oltre a `DATABASE_URL`:
 
