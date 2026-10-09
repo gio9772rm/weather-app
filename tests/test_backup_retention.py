@@ -76,7 +76,7 @@ def deleted(api):
     ]
 
 
-def test_retains_current_and_two_verified_predecessors_without_touching_other_artifacts():
+def test_retains_current_and_one_verified_predecessor_without_touching_other_artifacts():
     values = [artifact(i) for i in (1, 4, 2, 5, 3)]
     values.extend(
         [
@@ -88,8 +88,8 @@ def test_retains_current_and_two_verified_predecessors_without_touching_other_ar
     )
     api = fake_api(values, foreign={9})
     result = rotate_backups("owner/repo", 5, 5, DIGEST, api=api)
-    assert result["kept"] == [5, 4, 3]
-    assert deleted(api) == [2, 1]
+    assert result["kept"] == [5, 4]
+    assert deleted(api) == [3, 2, 1]
 
 
 @pytest.mark.parametrize("change", ["missing", "digest", "newer", "wrong-run", "empty"])
@@ -114,14 +114,14 @@ def test_missing_unconfirmed_or_superseded_upload_cannot_delete_anything(change)
 def test_failed_validation_is_skipped_in_favour_of_an_older_verified_backup():
     api = fake_api([artifact(i) for i in range(1, 6)], unverified={4})
     result = rotate_backups("owner/repo", 5, 5, DIGEST, api=api)
-    assert result["kept"] == [5, 3, 2]
-    assert deleted(api) == [4, 1]
+    assert result["kept"] == [5, 3]
+    assert deleted(api) == [4, 2, 1]
 
 
 def test_not_enough_verified_predecessors_preserves_all_existing_copies():
-    api = fake_api([artifact(i) for i in range(1, 6)], unverified={1, 2, 3})
+    api = fake_api([artifact(i) for i in range(1, 6)], unverified={1, 2, 3, 4})
     result = rotate_backups("owner/repo", 5, 5, DIGEST, api=api)
-    assert result["kept"] == [5, 4]
+    assert result["kept"] == [5]
     assert result["obsolete"] == []
     assert deleted(api) == []
 
@@ -138,7 +138,7 @@ def test_reads_every_page_before_deleting_older_backups():
         i for i, (_, method) in enumerate(api.calls) if method == "DELETE"
     )
     assert second_page < first_delete
-    assert deleted(api) == [2, 1]
+    assert deleted(api) == [3, 2, 1]
 
 
 def test_api_failure_during_verification_prevents_any_deletion():
@@ -153,15 +153,15 @@ def test_dry_run_calculates_rotation_without_deleting_any_artifact():
     result = rotate_backups(
         "owner/repo", 5, 5, "sha256:" + DIGEST, api=api, dry_run=True
     )
-    assert result["obsolete"] == [2, 1]
+    assert result["obsolete"] == [3, 2, 1]
     assert deleted(api) == []
 
 
-def test_failed_deletion_cannot_affect_any_of_the_three_retained_backups():
-    api = fake_api([artifact(i) for i in range(1, 6)], fail_path="artifacts/2")
+def test_failed_deletion_cannot_affect_any_of_the_two_retained_backups():
+    api = fake_api([artifact(i) for i in range(1, 6)], fail_path="artifacts/3")
     with pytest.raises(BackupRetentionError):
         rotate_backups("owner/repo", 5, 5, DIGEST, api=api)
-    assert deleted(api) == [2]
+    assert deleted(api) == [3]
 
 
 def test_subprocess_failure_does_not_expose_authentication_details(monkeypatch):
@@ -240,14 +240,14 @@ def test_verification_checks_jobs_beyond_first_page(mode):
         assert result["artifact_id"] == 4
     else:
         result = rotate_backups("owner/repo", 5, 5, DIGEST, api=paginated)
-        assert result["kept"] == [5, 4, 3]
+        assert result["kept"] == [5, 4]
     assert any(
         path.endswith("runs/4/jobs?per_page=100&page=2") for path, _ in original.calls
     )
 
 
 def test_recovery_reports_missing_verified_backup_without_changing_artifacts():
-    api = fake_api([artifact(i) for i in range(1, 4)], unverified={1, 2, 3})
+    api = fake_api([artifact(i) for i in range(1, 4)], unverified={1, 2, 3, 4})
     with pytest.raises(BackupRetentionError, match="Nessun backup"):
         latest_verified_backup("owner/repo", api=api)
     assert deleted(api) == []
