@@ -1,4 +1,4 @@
-"""Select verified recovery backups and retain the latest three copies."""
+"""Select verified recovery backups and retain the latest two copies."""
 
 from __future__ import annotations
 
@@ -144,12 +144,12 @@ def rotate_backups(
     for artifact in backups[1:]:
         if _has_verified_backup(root, artifact["workflow_run"]["id"], api):
             retained.append(artifact["id"])
-        if len(retained) == 3:
+        if len(retained) == 2:
             break
     # Failed/missing predecessor evidence must not discard the only older copies.
     obsolete = (
         [artifact["id"] for artifact in backups if artifact["id"] not in retained]
-        if len(retained) == 3
+        if len(retained) == 2
         else []
     )
     if not dry_run:
