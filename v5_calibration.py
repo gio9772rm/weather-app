@@ -8,6 +8,7 @@ baseline. Original forecasts and station measurements are never overwritten.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -206,6 +207,124 @@ def load_runs(station_id, now, days=60):
             baseline["acquired_at"] = baseline["issued_at"]
             frames.append(baseline)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def load_verification_runs(station_id, now, days=60):
+    """Stream archives and retain the earliest causal emission per target/horizon.
+
+    Verification already discards all other emissions. Select them before
+    building a DataFrame, so full JSON runs and repeated targets never accumulate
+    in RAM. Keep the same source windows and limits as load_runs.
+    """
+    now = utc(now)
+    stop = now.to_pydatetime()
+    cutoff = (now - pd.Timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    params = {"id": station_id, "at": cutoff, "now": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    selected = {}
+
+    def stamp(value):
+        try:
+            result = (
+                value
+                if isinstance(value, datetime)
+                else datetime.fromisoformat(str(value))
+            )
+            return result.replace(tzinfo=UTC) if result.tzinfo is None else result
+        except (TypeError, ValueError):
+            return None
+
+    def keep(row, metadata=None):
+        row = {**row, **(metadata or {})}
+        target, issued = stamp(row.get("valid_time")), stamp(row.get("issued_at"))
+        acquired = stamp(row.get("acquired_at", issued))
+        basis = row.get("basis", "live")
+        if target is None or issued is None or target >= stop:
+            return
+        lead = (target - issued).total_seconds() / 3600
+        if not 0 < lead <= 72:
+            return
+        if basis != "previous_run" and (acquired is None or acquired > target):
+            return
+        horizon = 0 if lead <= 6 else 1 if lead <= 24 else 2
+        key = (
+            row.get("provider", "canonical"),
+            row.get("model", "baseline"),
+            basis,
+            target,
+            horizon,
+        )
+        old = selected.get(key)
+        if old is not None and old["issued_at"] <= issued:
+            return
+        selected[key] = {
+            "provider": key[0],
+            "model": key[1],
+            "basis": basis,
+            "valid_time": target,
+            "issued_at": issued,
+            "acquired_at": acquired,
+            "interval_hours": row.get("interval_hours", 1),
+            **{var: row[var] for var in VARIABLES if var in row},
+        }
+
+    with get_engine().connect().execution_options(yield_per=100) as con:
+        for row in con.execute(
+            text(
+                "SELECT provider,model,issued_at,acquired_at,basis,payload FROM location_model_runs "
+                "WHERE station_id=:id AND issued_at>=:at AND basis<>'published' "
+                "ORDER BY issued_at DESC LIMIT 8000"
+            ),
+            params,
+        ).mappings():
+            metadata = {
+                key: row[key] for key in ("provider", "model", "acquired_at", "basis")
+            }
+            for item in json.loads(row["payload"]):
+                keep(item, metadata)
+        if station_id == Settings.from_env().station_id:
+            for row in con.execute(
+                text(
+                    "SELECT provider,model,issued_at,valid_time,interval_hours,temp_c,humidity,wind_kmh,rain_mm,fetched_at "
+                    "FROM forecast_runs WHERE issued_at>=:at AND valid_time<:now ORDER BY issued_at DESC LIMIT 100000"
+                ),
+                params,
+            ).mappings():
+                keep(row, {"basis": "live", "acquired_at": row["fetched_at"]})
+            for row in con.execute(
+                text(
+                    "SELECT issued_at,valid_time,temp_c,humidity,wind_kmh,rain_mm "
+                    "FROM forecast_blend_history WHERE issued_at>=:at AND valid_time<:now ORDER BY issued_at DESC LIMIT 50000"
+                ),
+                params,
+            ).mappings():
+                keep(
+                    row,
+                    {
+                        "provider": "canonical",
+                        "model": "baseline",
+                        "basis": "live",
+                        "acquired_at": row["issued_at"],
+                    },
+                )
+        else:
+            for payload in con.execute(
+                text(
+                    "SELECT payload FROM location_forecasts WHERE station_id=:id AND issued_at>=:at "
+                    "ORDER BY issued_at DESC LIMIT 1500"
+                ),
+                params,
+            ).scalars():
+                for row in json.loads(payload):
+                    keep(
+                        row,
+                        {
+                            "provider": "canonical",
+                            "model": "baseline",
+                            "basis": "live",
+                            "acquired_at": row.get("issued_at"),
+                        },
+                    )
+    return pd.DataFrame(selected.values())
 
 
 def observed_hourly(observations):
@@ -478,11 +597,14 @@ def apply_calibration(frame, product, now=None):
 
 
 def update_verification(station_id, now=None):
-    from data_access import load_station
     from v5_data import clean_json
 
+    from data_access import load_station
+
     now = utc(now if now is not None else pd.Timestamp.now(tz="UTC"))
-    scores = verify(load_runs(station_id, now), load_station(24 * 63, station_id), now)
+    scores = verify(
+        load_verification_runs(station_id, now), load_station(24 * 63, station_id), now
+    )
     return clean_json(
         {
             "station_id": station_id,
