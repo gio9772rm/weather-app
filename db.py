@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 load_dotenv()
@@ -30,6 +31,24 @@ def get_db_url() -> str:
             url = url.replace("postgres://", "postgresql+psycopg://", 1)
         elif url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        internal_host = (os.getenv("DATABASE_INTERNAL_HOST") or "").strip()
+        if internal_host and url.startswith("postgresql"):
+            parsed = make_url(url)
+            if not re.fullmatch(r"dpg-[a-z0-9]+(?:-[a-z0-9]+)*", internal_host) or not (
+                parsed.host == internal_host
+                or (parsed.host or "").startswith(internal_host + ".")
+            ):
+                raise ValueError("DATABASE_INTERNAL_HOST does not match DATABASE_URL")
+            # Opt in only on same-region Render services. Keep the stored secret
+            # untouched: GitHub still needs its public URL and backup encryption
+            # derives its key from that original secret. libpq query overrides
+            # must not send this connection back through a public endpoint.
+            parsed = parsed.set(host=internal_host).difference_update_query(
+                ("host", "hostaddr")
+            )
+            url = parsed.update_query_dict({"sslmode": "require"}).render_as_string(
+                hide_password=False
+            )
         return url
 
     sqlite_path = Path((os.getenv("SQLITE_PATH") or "data/weather.db").strip())
@@ -51,6 +70,12 @@ def get_engine(echo: bool = False) -> Engine:
         # Fail quickly on a sleeping/restarting database. The ten-minute cron
         # and the idempotent backfill will retry safely on the next execution.
         connect_args["connect_timeout"] = 15
+        if (os.getenv("DATABASE_INTERNAL_HOST") or "").strip():
+            original_host = make_url(os.environ["DATABASE_URL"].strip()).host or ""
+            logging.getLogger(__name__).info(
+                "PostgreSQL: Render private network (configured endpoint: %s)",
+                "public" if "." in original_host else "private",
+            )
 
     engine = create_engine(
         db_url,

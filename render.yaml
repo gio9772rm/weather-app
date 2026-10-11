@@ -12,6 +12,8 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_INTERNAL_HOST
+        sync: false
       - key: LOCAL_TZ
         value: Europe/Rome
       - key: LOCATION_NAME
@@ -95,6 +97,8 @@ services:
     startCommand: python ingest_all.py --backfill-hours 2 --max-station-age-minutes 20
     envVars:
       - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_INTERNAL_HOST
         sync: false
       - key: ECOWITT_APPLICATION_KEY
         sync: false
