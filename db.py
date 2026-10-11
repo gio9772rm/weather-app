@@ -21,6 +21,7 @@ load_dotenv()
 
 _ENGINE_CACHE: dict[tuple[str, bool], Engine] = {}
 _SCHEMA_READY: set[str] = set()
+_ROUTE_LOGGED: set[tuple[str, bool]] = set()
 
 
 def get_db_url() -> str:
@@ -60,6 +61,21 @@ def get_engine(echo: bool = False) -> Engine:
     """Return a reusable SQLAlchemy engine for the active environment."""
     db_url = get_db_url()
     key = (db_url, bool(echo))
+    logger = logging.getLogger(__name__)
+    if (
+        db_url.startswith("postgresql")
+        and (os.getenv("DATABASE_INTERNAL_HOST") or "").strip()
+        and key not in _ROUTE_LOGGED
+        and logger.isEnabledFor(logging.INFO)
+    ):
+        # The ingest lock creates its engine before logging is configured.
+        # Emit the safe route diagnostic on the first subsequent visible call.
+        original_host = make_url(os.environ["DATABASE_URL"].strip()).host or ""
+        logger.info(
+            "PostgreSQL: Render private network (configured endpoint: %s)",
+            "public" if "." in original_host else "private",
+        )
+        _ROUTE_LOGGED.add(key)
     if key in _ENGINE_CACHE:
         return _ENGINE_CACHE[key]
 
@@ -70,12 +86,6 @@ def get_engine(echo: bool = False) -> Engine:
         # Fail quickly on a sleeping/restarting database. The ten-minute cron
         # and the idempotent backfill will retry safely on the next execution.
         connect_args["connect_timeout"] = 15
-        if (os.getenv("DATABASE_INTERNAL_HOST") or "").strip():
-            original_host = make_url(os.environ["DATABASE_URL"].strip()).host or ""
-            logging.getLogger(__name__).info(
-                "PostgreSQL: Render private network (configured endpoint: %s)",
-                "public" if "." in original_host else "private",
-            )
 
     engine = create_engine(
         db_url,
@@ -95,6 +105,7 @@ def reset_engine_cache() -> None:
         engine.dispose()
     _ENGINE_CACHE.clear()
     _SCHEMA_READY.clear()
+    _ROUTE_LOGGED.clear()
 
 
 def _schema_statements() -> list[str]:

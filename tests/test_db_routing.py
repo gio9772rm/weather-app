@@ -15,7 +15,7 @@ PUBLIC = INTERNAL + ".frankfurt-postgres.render.com"
 @pytest.mark.parametrize("scheme", ["postgres", "postgresql", "postgresql+psycopg"])
 def test_private_routing_preserves_credentials_and_original_secret(monkeypatch, scheme):
     original = (
-        f"{scheme}://meteo:p%40ss%3Aword%2F%25@{PUBLIC}:5432/weather"
+        f"{scheme}://example_user:p%40ss%3Aword%2F%25@{PUBLIC}:5432/weather"
         "?application_name=ingest&connect_timeout=7&host=public-pool.example"
         "&hostaddr=192.0.2.1&sslmode=prefer"
     )
@@ -25,7 +25,7 @@ def test_private_routing_preserves_credentials_and_original_secret(monkeypatch, 
     resolved = make_url(get_db_url())
 
     assert resolved.host == INTERNAL
-    assert resolved.username == "meteo"
+    assert resolved.username == "example_user"
     assert resolved.password == "p@ss:word/%"
     assert resolved.database == "weather"
     assert resolved.port == 5432
@@ -40,7 +40,9 @@ def test_private_routing_preserves_credentials_and_original_secret(monkeypatch, 
 
 
 def test_external_clients_keep_public_url_when_not_opted_in(monkeypatch):
-    original = f"postgresql://meteo:password@{PUBLIC}/weather?sslmode=verify-full"
+    original = (
+        f"postgresql://example_user:password@{PUBLIC}/weather?sslmode=verify-full"
+    )
     monkeypatch.setenv("DATABASE_URL", original)
     monkeypatch.delenv("DATABASE_INTERNAL_HOST", raising=False)
 
@@ -57,7 +59,9 @@ def test_external_clients_keep_public_url_when_not_opted_in(monkeypatch):
 def test_private_routing_rejects_wrong_database_without_exposing_credentials(
     monkeypatch, internal_host
 ):
-    monkeypatch.setenv("DATABASE_URL", f"postgresql://meteo:secret@{PUBLIC}/weather")
+    monkeypatch.setenv(
+        "DATABASE_URL", f"postgresql://example_user:secret@{PUBLIC}/weather"
+    )
     monkeypatch.setenv("DATABASE_INTERNAL_HOST", internal_host)
 
     with pytest.raises(ValueError) as error:
@@ -68,7 +72,7 @@ def test_private_routing_rejects_wrong_database_without_exposing_credentials(
 
 def test_already_private_postgres_keeps_its_database(monkeypatch):
     monkeypatch.setenv(
-        "DATABASE_URL", f"postgresql://meteo:password@{INTERNAL}/weather"
+        "DATABASE_URL", f"postgresql://example_user:password@{INTERNAL}/weather"
     )
     monkeypatch.setenv("DATABASE_INTERNAL_HOST", INTERNAL)
 
@@ -94,17 +98,21 @@ def test_route_diagnostic_does_not_log_connection_details(monkeypatch, caplog):
         def dispose(self):
             pass
 
-    monkeypatch.setenv("DATABASE_URL", f"postgresql://meteo:secret@{PUBLIC}/weather")
+    monkeypatch.setenv(
+        "DATABASE_URL", f"postgresql://example_user:secret@{PUBLIC}/weather"
+    )
     monkeypatch.setenv("DATABASE_INTERNAL_HOST", INTERNAL)
     monkeypatch.setattr(db, "create_engine", lambda *args, **kwargs: FakeEngine())
     reset_engine_cache()
     try:
+        with caplog.at_level(logging.WARNING, logger="db"):
+            get_engine()
         with caplog.at_level(logging.INFO, logger="db"):
             get_engine()
             get_engine()
         assert caplog.text.count("Render private network") == 1
         assert "configured endpoint: public" in caplog.text
-        for private_value in ("secret", "meteo", PUBLIC, INTERNAL):
+        for private_value in ("secret", "example_user", PUBLIC, INTERNAL):
             assert private_value not in caplog.text
     finally:
         reset_engine_cache()
