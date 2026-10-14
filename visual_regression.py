@@ -1045,8 +1045,9 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                 state="attached", timeout=45_000
                             )
                         elif tab in ("windows", "precision"):
-                            page.get_by_text(
-                                "Quanto può durare la finestra?"
+                            page.get_by_role(
+                                "heading",
+                                name="Quanto può durare la finestra?"
                                 if tab == "windows"
                                 else "Quanto ci prende?",
                                 exact=True,
