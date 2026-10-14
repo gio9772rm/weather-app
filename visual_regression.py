@@ -26,7 +26,7 @@ PLANNER_END = PLANNER_START.normalize() + pd.DateOffset(days=1, hours=1, minutes
 
 CASES = tuple(
     (f"{tab}-{theme}-{viewport}", tab, theme, width, height)
-    for tab in ("today", "system", "overview", "astronomy")
+    for tab in ("today", "system", "overview", "astronomy", "windows", "precision")
     for theme in ("light", "dark")
     for viewport, width, height in (
         ("desktop", 1440, 1000),
@@ -1044,6 +1044,14 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                             page.get_by_text("Piano della notte", exact=True).wait_for(
                                 state="attached", timeout=45_000
                             )
+                        elif tab in ("windows", "precision"):
+                            page.get_by_role(
+                                "heading",
+                                name="Quanto può durare la finestra?"
+                                if tab == "windows"
+                                else "Quanto ci prende?",
+                                exact=True,
+                            ).wait_for(state="attached", timeout=45_000)
                         page.wait_for_timeout(500)
                         body = page.locator("body").inner_text()
                         if any(marker in body for marker in ("�", "Ã", "Â")):

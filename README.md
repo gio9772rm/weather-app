@@ -12,6 +12,8 @@ La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`. Ogni rilascio
 
 ## Novità V5
 
+- La home salvata si apre mentre Render riattiva il servizio. Le risposte di attesa dell’hosting non sostituiscono interfaccia o dati; il primo accesso senza cache resta soggetto al risveglio del piano Free.
+- Vista Pro aggiornata: schede Finestre e Quanto ci prende? con scenari ensemble, requisiti di calibrazione, prova separata, confronti omogenei e verifica delle soglie. Le schede nascoste non eseguono grafici e calcoli; i nuovi pannelli leggono la stessa pubblicazione della vista normale.
 - Nuova home personalizzabile, navigazione mobile, tema chiaro/scuro, scelta globale Roma/Comacchio e preferenze conservate sul dispositivo.
 - Un solo ciclo automatico ogni 600 secondi. La navigazione usa la stessa fotografia; un aggiornamento manuale riavvia il conto. Il cron pubblica snapshot per stazione e continua a rispettare i cooldown esistenti.
 - Ultima fotografia offline con data e avviso esplicito. Nessuna credenziale amministratore viene conservata nel browser o nella cache offline.
