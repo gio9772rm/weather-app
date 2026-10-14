@@ -567,11 +567,13 @@ def publish_snapshots(cfg: Settings | None = None) -> int:
     return count
 
 
-def read_snapshot(station_id: str) -> dict:
+def read_snapshot(station_id: str, *, published_only: bool = False) -> dict:
     station_settings(station_id)  # Disabled/unconfigured stations are not exposed.
     with get_engine().connect() as con:
         payload = con.execute(
             text("SELECT payload FROM public_snapshots WHERE station_id=:id"),
             {"id": station_id},
         ).scalar()
-    return json.loads(payload) if payload else build_snapshot(station_id)
+    if payload:
+        return json.loads(payload)
+    return {} if published_only else build_snapshot(station_id)

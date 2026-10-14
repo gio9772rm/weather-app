@@ -29,7 +29,7 @@ MARKER = "<!-- meteo-v4-pwa-patch -->"
 HEAD_INJECTION = f"""{MARKER}
 <meta name="theme-color" content="#0b76b7" />
 <meta name="description" content="Stazione meteo in tempo reale: previsioni, radar, qualit\u00e0 dell'aria e astronomia." />
-<meta property="og:title" content="Meteo V4 \u00b7 Stazione meteo in tempo reale" />
+<meta property="og:title" content="Meteo Pro V5 \u00b7 Stazione meteo in tempo reale" />
 <meta property="og:description" content="Previsioni, radar, qualit\u00e0 dell'aria e astronomia aggiornati in tempo reale dalla stazione locale." />
 <meta property="og:type" content="website" />
 <meta property="og:image" content="app/static/og-image.png" />
@@ -149,12 +149,21 @@ def main() -> int:
 
         if MARKER not in html:
             html = html.replace("</head>", HEAD_INJECTION + "  </head>", 1)
-        html = html.replace("<title>Streamlit</title>", "<title>Meteo V4</title>", 1)
+        for old_title in ("Streamlit", "Meteo V4"):
+            html = html.replace(
+                f"<title>{old_title}</title>", "<title>Meteo Pro · V5</title>", 1
+            )
+        html = html.replace(
+            'content="Meteo V4 · Stazione meteo in tempo reale"',
+            'content="Meteo Pro V5 · Stazione meteo in tempo reale"',
+        )
 
         with open(index_path, "w", encoding="utf-8") as f:
             f.write(html)
 
-    print("[patch_streamlit_pwa] favicon, meta anteprima social e manifest PWA applicati.")
+    print(
+        "[patch_streamlit_pwa] favicon, meta anteprima social e manifest PWA applicati."
+    )
     return 0
 
 

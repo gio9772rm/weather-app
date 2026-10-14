@@ -166,7 +166,9 @@ def test_station_comparison_legend_matches_the_two_trace_colours(
 
     app = AppTest.from_file(
         Path(__file__).parents[1] / "app_pro.py", default_timeout=30
-    ).run()
+    )
+    app.query_params["tab"] = "station"
+    app.run()
 
     assert not app.exception
     specs = [json.loads(chart.proto.spec) for chart in app.get("plotly_chart")]
@@ -206,6 +208,8 @@ def test_app_opens_local_dashboard_and_city_search(
         "Oggi",
         "Panoramica",
         "7 giorni",
+        "Finestre",
+        "Quanto ci prende?",
         "Stazione",
         "Aria",
         "Astronomia",
@@ -219,7 +223,7 @@ def test_app_opens_local_dashboard_and_city_search(
     assert any("Luna e cielo" in item.value for item in app.markdown)
     assert not any("Bicicletta" in item.value for item in app.markdown)
     assert not any("Bucato" in item.value for item in app.markdown)
-    assert any(
+    assert not any(
         "Apri questa scheda per caricare la previsione ambientale" in item.value
         for item in app.caption
     )
