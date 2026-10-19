@@ -1,6 +1,6 @@
 -c constraints.txt
 -r requirements.txt
 pytest>=8.2,<9
-ruff>=0.16.9,<1
-playwright>=1.63.0,<2
+ruff>=0.17.1,<1
+playwright>=1.64.0,<2
 httpx>=0.28,<0.29
