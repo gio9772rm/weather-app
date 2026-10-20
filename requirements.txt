@@ -11,6 +11,6 @@ pydeck>=0.9,<1
 plotly>=5.22,<7
 astral>=3.2,<4
 openpyxl>=3.1,<4
-pillow>=10.4,<13
+pillow>=13.0.0,<14
 reportlab>=4.2,<5
 pywebpush>=2.5,<2.6

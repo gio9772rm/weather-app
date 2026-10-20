@@ -156,7 +156,7 @@ pandas==2.3.3
     #   -c constraints.txt
     #   -r requirements.txt
     #   streamlit
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   -c constraints.txt
     #   -r requirements.txt
