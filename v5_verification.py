@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -10,6 +12,8 @@ from sqlalchemy import text
 
 from data_access import load_station
 from db import get_engine
+
+log = logging.getLogger(__name__)
 
 
 def verification_scores(
@@ -136,24 +140,78 @@ def verification_scores(
     return result
 
 
+def load_secondary_verification_runs(
+    station_id: str, now: pd.Timestamp
+) -> pd.DataFrame:
+    """Select the same independent samples before materialising a DataFrame.
+
+    Preserve the latest 720 runs in the last 30 days, including leads beyond
+    72 hours. Only the earliest emission for each target and horizon is used
+    by verification_scores; retaining full, repeated runs wastes hundreds of
+    MiB on a 512 MiB cron worker. Stream one JSON payload at a time instead.
+    """
+    now = pd.to_datetime(now, utc=True)
+    stop = now.to_pydatetime()
+    selected = {}
+    count = 0
+
+    def stamp(value):
+        try:
+            result = (
+                value
+                if isinstance(value, datetime)
+                else datetime.fromisoformat(str(value))
+            )
+            return result.replace(tzinfo=UTC) if result.tzinfo is None else result
+        except (ValueError, TypeError):
+            return None
+
+    with get_engine().connect().execution_options(yield_per=1) as con:
+        payloads = con.execute(
+            text(
+                "SELECT payload FROM location_forecasts WHERE station_id=:id AND issued_at>=:cutoff ORDER BY issued_at DESC LIMIT 720"
+            ),
+            {"id": station_id, "cutoff": (now - pd.Timedelta(days=30)).isoformat()},
+        ).scalars()
+        for payload in payloads:
+            count += 1
+            for row in json.loads(payload):
+                target, issued = (
+                    stamp(row.get("valid_time")),
+                    stamp(row.get("issued_at")),
+                )
+                if target is None or issued is None or target >= stop:
+                    continue
+                lead = (target - issued).total_seconds() / 3600
+                if lead < 1:
+                    continue
+                horizon = (
+                    0 if lead <= 6 else 1 if lead <= 24 else 2 if lead <= 72 else 3
+                )
+                key = (target, horizon)
+                previous = selected.get(key)
+                if previous is not None and previous["issued_at"] <= issued:
+                    continue
+                selected[key] = {
+                    "valid_time": target,
+                    "issued_at": issued,
+                    **{
+                        field: row[field]
+                        for field in ("temp_c", "humidity", "pressure_hpa", "wind_kmh")
+                        if field in row
+                    },
+                }
+    log.info(
+        "Verifica secondaria: %s emissioni lette, %s campioni indipendenti",
+        count,
+        len(selected),
+    )
+    return pd.DataFrame(selected.values())
+
+
 def update_secondary_scores(station_id: str) -> None:
     now = pd.Timestamp.now(tz="UTC")
-    with get_engine().connect() as con:
-        payloads = (
-            con.execute(
-                text(
-                    "SELECT payload FROM location_forecasts WHERE station_id=:id AND issued_at>=:cutoff ORDER BY issued_at DESC LIMIT 720"
-                ),
-                {"id": station_id, "cutoff": (now - pd.Timedelta(days=30)).isoformat()},
-            )
-            .scalars()
-            .all()
-        )
-    forecast = (
-        pd.concat([pd.DataFrame(json.loads(p)) for p in payloads], ignore_index=True)
-        if payloads
-        else pd.DataFrame()
-    )
+    forecast = load_secondary_verification_runs(station_id, now)
     scores = verification_scores(forecast, load_station(24 * 31, station_id), now)
     with get_engine().begin() as con:
         con.execute(
