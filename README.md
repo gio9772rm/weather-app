@@ -12,6 +12,7 @@ La V3 stabile resta archiviata nel ramo `archive/meteo-v3-stable`. Ogni rilascio
 
 ## Novità V5
 
+- La verifica della seconda stazione legge lo storico una previsione alla volta, selezionando prima i campioni indipendenti: stessi riscontri statistici con un picco di RAM inferiore, senza eliminare dati o ridurre gli orizzonti valutati.
 - La home salvata si apre mentre Render riattiva il servizio. Le risposte di attesa dell’hosting non sostituiscono interfaccia o dati; il primo accesso senza cache resta soggetto al risveglio del piano Free.
 - Vista Pro aggiornata: schede Finestre e Quanto ci prende? con scenari ensemble, requisiti di calibrazione, prova separata, confronti omogenei e verifica delle soglie. Le schede nascoste non eseguono grafici e calcoli; i nuovi pannelli leggono la stessa pubblicazione della vista normale.
 - Nuova home personalizzabile, navigazione mobile, tema chiaro/scuro, scelta globale Roma/Comacchio e preferenze conservate sul dispositivo.

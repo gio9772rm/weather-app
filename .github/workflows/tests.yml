@@ -12,22 +12,55 @@ jobs:
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    services:
-      postgres:
-        # Official Docker image mirror: avoid Docker Hub authentication timeouts.
-        image: public.ecr.aws/docker/library/postgres:18
-        env:
-          POSTGRES_DB: meteo_test
-          POSTGRES_USER: meteo_test
-          POSTGRES_PASSWORD: isolated_ci_only
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U meteo_test -d meteo_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_POSTGRES_URL: postgresql+psycopg://meteo_test:isolated_ci_only@127.0.0.1:5432/meteo_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Start PostgreSQL 18 with registry fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Google's managed cache falls back to Docker Hub on a cache miss.
+          # The previous ECR-only service failed before any test could run
+          # when its public registry returned "Data limit exceeded".
+          sudo python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          mirrors = config.get('registry-mirrors', [])
+          if 'https://mirror.gcr.io' not in mirrors:
+              config['registry-mirrors'] = ['https://mirror.gcr.io', *mirrors]
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(config))
+          PY
+          sudo systemctl restart docker
+          database_image=""
+          for candidate in docker.io/library/postgres:18 public.ecr.aws/docker/library/postgres:18; do
+            if timeout 90s docker pull "$candidate"; then
+              database_image="$candidate"
+              break
+            fi
+            echo "::warning::PostgreSQL image temporarily unavailable from $candidate; trying the alternate registry"
+          done
+          if [ -z "$database_image" ]; then
+            echo "::error::Both PostgreSQL image sources are temporarily unavailable"
+            exit 1
+          fi
+          docker run -d --name meteo-test-postgres \
+            -e POSTGRES_DB=meteo_test -e POSTGRES_USER=meteo_test \
+            -e POSTGRES_PASSWORD=isolated_ci_only -p 127.0.0.1:5432:5432 \
+            --health-cmd "pg_isready -U meteo_test -d meteo_test" \
+            --health-interval 2s --health-timeout 5s --health-retries 20 \
+            "$database_image"
+          for attempt in {1..30}; do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' meteo-test-postgres)" = healthy ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs meteo-test-postgres
+          exit 1
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.11"
