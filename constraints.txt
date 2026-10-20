@@ -34,7 +34,7 @@ boto3==1.43.108
     # via -r requirements.txt
 botocore==1.43.108
     # via boto3, s3transfer
-certifi==2026.7.22
+certifi==2026.10.19
     # via
     #   -c constraints.txt
     #   httpcore
