@@ -2,7 +2,7 @@
 #    uv pip compile requirements-dev.txt --python-version 3.11 --universal --output-file constraints.txt
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.14.3
+aiohttp==3.14.4
     # via pywebpush
 aiosignal==1.4.0
     # via aiohttp
