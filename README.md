@@ -205,6 +205,7 @@ Backfill Ecowitt di 7 giorni:
 | `STATION_ID` | no | identificatore stabile e non geografico della stazione primaria, default `roma-primary` |
 | `STATION_REFRESH_MINUTES` | no | cadenza Ecowitt; minimo e default 10 minuti |
 | `FORECAST_REFRESH_MINUTES` | no | default 60 |
+| `INGEST_MAX_RUNTIME_SECONDS` | no | durata massima dell'intera acquisizione, default 900 secondi; un processo bloccato termina con codice 124 e libera il lock PostgreSQL per il ciclo successivo |
 | `STATION_BACKFILL_HOURS` | no | default 2 |
 | `STATION_AUTO_BACKFILL_MAX_HOURS` | no | recupero automatico dei buchi, massimo 168 ore (7 giorni) |
 | `STATION_HISTORY_RECOVERY_DAYS` | no | recupero profondo progressivo della primaria, verificato e marcato nel database; `0` lo disattiva, produzione impostata a 90 giorni |

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import MaxRetryError, ResponseError
 from urllib3.util.retry import Retry
 
 from config import Settings, settings
@@ -54,10 +55,30 @@ class ForecastProviderError(RuntimeError):
     """A provider failed without leaking query parameters or API keys."""
 
 
+class BoundedRetry(Retry):
+    """Defer long provider cooldowns to a later cron instead of sleeping for hours."""
+
+    max_retry_after_seconds = 30
+
+    def get_retry_after(self, response):
+        delay = super().get_retry_after(response)
+        if delay is not None and delay > self.max_retry_after_seconds:
+            # Do not retry earlier than the provider requested. End this call
+            # and let its existing fallback keep the other sources running.
+            # HTTPAdapter translates this into a normal requests.RetryError;
+            # no URL, query string or credential is included in the reason.
+            raise MaxRetryError(
+                None,
+                None,
+                ResponseError("provider cooldown exceeds the request budget"),
+            )
+        return delay
+
+
 def build_session(*, retries: int = 3) -> requests.Session:
     session = requests.Session()
     retries = max(0, min(int(retries), 5))
-    retry = Retry(
+    retry = BoundedRetry(
         total=retries,
         connect=retries,
         read=retries,
