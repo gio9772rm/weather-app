@@ -1152,4 +1152,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from ingest_runtime import run_with_watchdog
+
+    raise SystemExit(run_with_watchdog(main))
