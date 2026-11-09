@@ -886,12 +886,21 @@ def _opening_recovery_check(browser, base_url: str) -> None:
         expect(page.locator("#connection")).to_contain_text("Cerco aggiornamenti")
         expect(page.locator("#notice")).to_contain_text("Riprovo automaticamente")
         assert len(requests) == 2
-        ready = True
+        # Render can send fast HTML responses for the entire first minute.
+        # Exercise each retry without making the suite wait a real minute.
+        for count, advance in enumerate((5000, 10000, 17000, 27000), start=3):
+            with page.expect_response("**/api/v5/snapshot/*"):
+                page.clock.fast_forward(advance)
+            expect(page.locator("#refresh")).to_be_enabled()
+            assert len(requests) == count
         page.clock.fast_forward(5000)
+        expect(page.locator("#connection")).to_contain_text("Cerco aggiornamenti")
+        ready = True
+        page.clock.fast_forward(35000)
         expect(page.locator("#connection")).to_contain_text("Stazione live")
-        assert len(requests) == 3
+        assert len(requests) == 7
         page.clock.fast_forward(590000)
-        assert len(requests) == 3, "Recovery must stop when the first valid snapshot arrives"
+        assert len(requests) == 7, "Recovery must stop when the first valid snapshot arrives"
     finally:
         context.close()
 
