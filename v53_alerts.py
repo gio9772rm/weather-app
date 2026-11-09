@@ -105,7 +105,7 @@ def refresh_plan_alerts(now=None):
                 for i in issued
             ):
                 continue
-            current_plan = planner(station, config)
+            current_plan = planner(station, {**config, "budget": None})
             # Missing meteorology is not evidence that an observed or modelled
             # photographic window has deteriorated.
             if any(
