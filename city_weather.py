@@ -41,6 +41,7 @@ class CityLocation:
     longitude: float
     timezone: str
     elevation_m: float | None = None
+    geonames_id: int | None = None
 
     @property
     def label(self) -> str:
@@ -70,13 +71,14 @@ def _get_json(
     params: dict[str, Any],
     service: str,
     headers: dict[str, str] | None = None,
+    timeout: tuple[int, int] = (8, 30),
 ) -> dict[str, Any]:
     try:
         response = session.get(
             url,
             params=params,
             headers=headers,
-            timeout=(8, 30),
+            timeout=timeout,
         )
         if not response.ok:
             raise CityWeatherError(f"{service}: risposta HTTP {response.status_code}")
@@ -125,25 +127,43 @@ def search_cities(
         if own_session:
             session.close()
 
-    locations: list[CityLocation] = []
-    for item in payload.get("results") or []:
-        latitude = _as_float(item.get("latitude"))
-        longitude = _as_float(item.get("longitude"))
-        name = str(item.get("name") or "").strip()
-        if not name or latitude is None or longitude is None:
-            continue
-        locations.append(
-            CityLocation(
-                name=name,
-                country=str(item.get("country") or "").strip(),
-                admin1=str(item.get("admin1") or "").strip(),
-                latitude=latitude,
-                longitude=longitude,
-                timezone=str(item.get("timezone") or "UTC").strip() or "UTC",
-                elevation_m=_as_float(item.get("elevation")),
-            )
+    return [
+        loc for item in payload.get("results") or [] if (loc := _city_location(item))
+    ]
+
+
+def _city_location(item):
+    latitude = _as_float(item.get("latitude"))
+    longitude = _as_float(item.get("longitude"))
+    name = str(item.get("name") or "").strip()
+    if not name or latitude is None or longitude is None:
+        return None
+    identifier = item.get("id")
+    return CityLocation(
+        name=name,
+        country=str(item.get("country") or "").strip(),
+        admin1=str(item.get("admin1") or "").strip(),
+        latitude=latitude,
+        longitude=longitude,
+        timezone=str(item.get("timezone") or "UTC").strip() or "UTC",
+        elevation_m=_as_float(item.get("elevation")),
+        geonames_id=identifier if type(identifier) is int and identifier > 0 else None,
+    )
+
+
+def city_by_geonames_id(identifier: int) -> CityLocation:
+    with build_session(retries=0) as session:
+        data = _get_json(
+            session,
+            "https://geocoding-api.open-meteo.com/v1/get",
+            {"id": identifier, "language": "it"},
+            "Località",
+            timeout=(7, 8),
         )
-    return locations
+    location = _city_location(data)
+    if location is None or location.geonames_id != identifier:
+        raise CityWeatherError("Località non disponibile")
+    return location
 
 
 def _local_times(values: Any, timezone: str) -> pd.Series:
@@ -191,6 +211,78 @@ HOURLY_FIELDS = {
     "wind_direction_10m": "wind_dir",
     "wind_gusts_10m": "wind_gust_kmh",
 }
+
+OBSERVING_FIELDS = {
+    key: HOURLY_FIELDS[key]
+    for key in (
+        "temperature_2m",
+        "relative_humidity_2m",
+        "dew_point_2m",
+        "precipitation_probability",
+        "precipitation",
+        "cloud_cover",
+        "visibility",
+        "wind_speed_10m",
+        "wind_gusts_10m",
+    )
+}
+OBSERVING_FIELDS.update(
+    {
+        "cloud_cover_low": "cloud_low",
+        "cloud_cover_mid": "cloud_mid",
+        "cloud_cover_high": "cloud_high",
+    }
+)
+
+
+def fetch_observing_hourly(location: CityLocation):
+    """Hourly global forecast with real UTC instants through offset changes."""
+    with build_session(retries=0) as session:
+        try:
+            payload = _get_json(
+                session,
+                "https://api.open-meteo.com/v1/forecast",
+                {
+                    "latitude": round(location.latitude, 3),
+                    "longitude": round(location.longitude, 3),
+                    "timezone": "UTC",
+                    "timeformat": "unixtime",
+                    "forecast_days": 7,
+                    "wind_speed_unit": "kmh",
+                    "hourly": ",".join(OBSERVING_FIELDS),
+                },
+                "Open-Meteo",
+                timeout=(7, 9),
+            )
+            block = payload.get("hourly") or {}
+            times = pd.to_datetime(
+                block.get("time") or [], unit="s", utc=True, errors="coerce"
+            )
+            if len(times) == 0:
+                raise CityWeatherError("Previsione oraria non disponibile")
+            frame = pd.DataFrame({"valid_time": times})
+            for key, field in OBSERVING_FIELDS.items():
+                values = block.get(key)
+                frame[field] = (
+                    pd.to_numeric(values, errors="coerce")
+                    if isinstance(values, list) and len(values) == len(times)
+                    else np.nan
+                )
+            frame["rain_mm"] = frame["precipitation_mm"]
+            return (
+                frame.dropna(subset=["valid_time"]),
+                "Open-Meteo",
+                pd.Timestamp.now(tz="UTC"),
+            )
+        except CityWeatherError as primary_error:
+            LOGGER.info("Meteo globale Open-Meteo non disponibile: %s", primary_error)
+            fallback = _fetch_metno_city_forecast(location, session, timeout=(4, 8))
+            return (
+                fallback.hourly.rename(columns={"time": "valid_time"}),
+                fallback.source,
+                fallback.fetched_at,
+            )
+
 
 DAILY_FIELDS = {
     "weather_code": "weather_code",
@@ -503,6 +595,7 @@ def parse_metno_city_forecast(
 def _fetch_metno_city_forecast(
     location: CityLocation,
     session: requests.Session,
+    timeout: tuple[int, int] = (8, 30),
 ) -> CityForecast:
     params: dict[str, Any] = {
         "lat": round(location.latitude, 5),
@@ -516,6 +609,7 @@ def _fetch_metno_city_forecast(
         params,
         "MET Norway",
         headers={"User-Agent": "weather-app-v3/1.0 github.com/gio9772rm/weather-app"},
+        timeout=timeout,
     )
     return parse_metno_city_forecast(payload, location)
 

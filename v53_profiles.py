@@ -30,6 +30,7 @@ SYNC_KEYS = {
     "journal",
     "plans",
     "equipment",
+    "observing",
 }
 ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
@@ -237,23 +238,26 @@ def account_login(action, values, address):
 
 
 def plan_config(value):
-    from astronomy_planner import TARGET_BY_NAME, equipment_profile
+    from astronomy_planner import equipment_profile
+    from sky_catalog import plan_targets
     from v5_data import public_stations
+    from v5_imaging_budget import budget_options
+    from v5_observatories import site_spec, timezone_name
     from v5_sessions import session_limits
     from v53_schedule import schedule_options
 
     if not isinstance(value, dict):
         raise TypeError("Piano non valido")
-    targets = value.get("targets", [])
-    if (
-        not isinstance(targets, list)
-        or not 1 <= len(targets) <= 8
-        or any(t not in TARGET_BY_NAME for t in targets)
-    ):
-        raise ValueError("Scegli da uno a otto oggetti")
+    targets = [target.name for target in plan_targets(value.get("targets", []))]
     if value.get("station_id") not in {s["id"] for s in public_stations()}:
         raise ValueError("Località non valida")
-    result = {k: value[k] for k in ("station_id", "start", "end", "targets")}
+    result = {k: value[k] for k in ("station_id", "start", "end")}
+    result["targets"] = targets
+    if value.get("site") is not None:
+        result["site"] = site_spec(value["site"])
+        result["site_timezone"] = timezone_name(
+            value.get("site_timezone") or result["site"].get("timezone")
+        )
     for key in ("start", "end"):
         if (
             not isinstance(result[key], str)
@@ -287,8 +291,40 @@ def plan_config(value):
         from dataclasses import asdict
 
         result["equipment"] = asdict(equipment_profile(**value["equipment"]))
-    result.update(schedule_options(value))
+    result.update(schedule_options({**value, "targets": targets}))
+    if "budget" in value and result["profile"] == "deep_sky":
+        result["budget"] = budget_options(value["budget"])
     return result
+
+
+def validate_observing(value):
+    from sky_catalog import resolve_target
+    from v5_observatories import site_spec
+
+    if not isinstance(value, dict) or set(value) - {"site", "sites", "targets", "rig"}:
+        raise ValueError("Preferenze Cielo non valide")
+    sites, targets, rig = (
+        value.get("sites", []),
+        value.get("targets", []),
+        value.get("rig", ""),
+    )
+    if (
+        not isinstance(sites, list)
+        or len(sites) > 12
+        or not isinstance(targets, list)
+        or len(targets) > 30
+        or not isinstance(rig, str)
+        or len(rig) > 100
+    ):
+        raise ValueError("Troppi preferiti o strumento non valido")
+    return {
+        "site": site_spec(value["site"]) if value.get("site") else None,
+        "sites": [site_spec(site) for site in sites],
+        "targets": list(
+            dict.fromkeys(resolve_target(target).name for target in targets)
+        ),
+        "rig": rig,
+    }
 
 
 def validate_profile(value):
@@ -299,6 +335,8 @@ def validate_profile(value):
     if len(encoded.encode()) > 2400000:
         raise ValueError("Profilo troppo grande; esporta e riduci il diario")
     result = {}
+    if "observing" in value:
+        result["observing"] = validate_observing(value["observing"])
     prefs = value.get("preferences", {})
     if not isinstance(prefs, dict):
         raise TypeError("Preferenze non valide")
@@ -389,13 +427,15 @@ def validate_profile(value):
                 if not 15 <= minutes <= 180 or not 10 <= percent <= 100:
                     raise ValueError("Soglia avviso non valida")
                 quiet = validate_rules(alert)
+                config = plan_config(item.get("config"))
                 result[name].append(
                     {
                         "id": item["id"],
                         "name": str(item.get("name", "Sessione"))[:120],
-                        "config": plan_config(item.get("config")),
+                        "config": config,
                         "alerts": {
-                            "enabled": alert.get("enabled") is True,
+                            "enabled": alert.get("enabled") is True
+                            and not config.get("site"),
                             "minutes": minutes,
                             "percent": percent,
                             "quiet_start": quiet["quiet_start"],

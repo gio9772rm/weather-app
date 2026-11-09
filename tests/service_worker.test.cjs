@@ -109,6 +109,8 @@ test('verified installation activates the complete shell', async () => {
   assert.equal(w.skipped(), 1);
   assert.ok(await (await w.caches.open(shell)).match('/'));
   assert.ok(await (await w.caches.open(shell)).match('/assets/v5/cielo.js'));
+  assert.ok(await (await w.caches.open(shell)).match('/assets/v5/sky-tools.js'));
+  assert.ok(await (await w.caches.open(shell)).match('/assets/v5/sky-budget.js'));
 });
 
 test('turning off saved weather data disables the JSON fallback', async () => {

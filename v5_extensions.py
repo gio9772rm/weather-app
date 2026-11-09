@@ -38,6 +38,7 @@ def cached(key, loader, ttl=600):
 
 def search_city(query: str) -> list[dict]:
     from city_weather import search_cities
+    from v5_observatories import remember_city
 
     query = " ".join(query.split())
     if not 2 <= len(query) <= 80:
@@ -46,13 +47,19 @@ def search_city(query: str) -> list[dict]:
     def load():
         found = []
         for city in search_cities(query):
+            remember_city(city)
             identifier = hashlib.sha256(
                 json.dumps(asdict(city), sort_keys=True).encode()
             ).hexdigest()[:24]
             _CITY[identifier] = city
             _CITY.move_to_end(identifier)
             found.append(
-                {"id": identifier, "label": city.label, "timezone": city.timezone}
+                {
+                    "id": identifier,
+                    "label": city.label,
+                    "timezone": city.timezone,
+                    "geo_id": city.geonames_id,
+                }
             )
         while len(_CITY) > 1024:
             _CITY.popitem(last=False)
@@ -212,33 +219,41 @@ def plan_constraints(values):
 
 def planner(station_id: str, values: dict) -> dict:
     from astronomy_planner import (
-        TARGET_BY_NAME,
         field_of_view,
         framing_geometry,
         night_plan_tracks,
         summarize_night_plan,
     )
+    from sky_catalog import plan_targets
     from v5_astronomy import observing_forecast
+    from v5_imaging_budget import budget_options, imaging_budget, total_budget
     from v5_sessions import session_limits, target_sessions
+    from v53_schedule import optimize_schedule, schedule_options
 
     cfg = station_settings(station_id)
     now = pd.Timestamp.now(tz="UTC")
-    targets = values.get("targets", [])
-    if (
-        not isinstance(targets, list)
-        or not 1 <= len(targets) <= 8
-        or any(t not in TARGET_BY_NAME for t in targets)
-    ):
-        raise ValueError("Scegli da uno a otto oggetti del catalogo")
+    definitions = plan_targets(values.get("targets", []))
+    targets = [t.name for t in definitions]
+    minimum, moon, rotation, horizon, equipment = plan_constraints(values)
+    profile = values.get("profile", "deep_sky")
+    limits = session_limits(profile, values.get("limits"))
+    options = schedule_options({**values, "targets": targets})
+    recipe = budget_options(values.get("budget")) if profile == "deep_sky" else None
+    weather_source = None
+    forecast = None
+    if values.get("site") is not None:
+        from v5_observatories import remote_site_weather
+
+        cfg, forecast, weather_source, _ = remote_site_weather(values["site"])
     start, end = pd.Timestamp(values["start"]), pd.Timestamp(values["end"])
     if start.tzinfo is None:
         start = start.tz_localize(
-            cfg.local_timezone, ambiguous="raise", nonexistent="raise"
+            cfg.local_timezone, ambiguous="NaT", nonexistent="NaT"
         )
     if end.tzinfo is None:
-        end = end.tz_localize(
-            cfg.local_timezone, ambiguous="raise", nonexistent="raise"
-        )
+        end = end.tz_localize(cfg.local_timezone, ambiguous="NaT", nonexistent="NaT")
+    if pd.isna(start) or pd.isna(end):
+        raise ValueError("Orario inesistente o ambiguo: verifica il cambio d’ora")
     original_start = start.tz_convert("UTC")
     start = max(original_start, now)
     end = end.tz_convert("UTC")
@@ -248,13 +263,11 @@ def planner(station_id: str, values: dict) -> dict:
         raise ValueError(
             "Scegli una finestra futura da 15 minuti a 16 ore entro otto giorni"
         )
-    minimum, moon, rotation, horizon, equipment = plan_constraints(values)
-    forecast = scoped_forecast(station_id)
-    from v53_sky import add_cams, atmosphere
+    if forecast is None:
+        from v53_sky import add_cams, atmosphere
 
-    forecast = add_cams(forecast, atmosphere(station_id, forecast, now))
-    profile = values.get("profile", "deep_sky")
-    limits = session_limits(profile, values.get("limits"))
+        forecast = scoped_forecast(station_id)
+        forecast = add_cams(forecast, atmosphere(station_id, forecast, now))
     weather = observing_forecast(forecast, cfg, profile, now)
     tracks = night_plan_tracks(
         weather,
@@ -265,22 +278,31 @@ def planner(station_id: str, values: dict) -> dict:
         minimum_altitude=minimum,
         minimum_moon_separation=moon,
         horizon_mask=horizon,
+        custom_targets=definitions,
     )
-    summaries = summarize_night_plan(tracks, equipment=equipment, rotation_deg=rotation)
+    summaries = summarize_night_plan(
+        tracks, equipment=equipment, rotation_deg=rotation, custom_targets=definitions
+    )
     sessions, session_detail = target_sessions(tracks, weather, limits, moon)
-    from v53_schedule import optimize_schedule, schedule_options
-
-    options = schedule_options(values)
     schedule = optimize_schedule(sessions, tracks, start, end, options)
     nights = [{"start": start, "end": end, **schedule}]
     for offset in range(1, options["compare_nights"]):
-        a = (
-            original_start.tz_convert(cfg.local_timezone) + pd.DateOffset(days=offset)
-        ).tz_convert("UTC")
-        b = (
-            end.tz_convert(cfg.local_timezone) + pd.DateOffset(days=offset)
-        ).tz_convert("UTC")
-        if b > now + pd.Timedelta(days=8) or b - a > pd.Timedelta(hours=16):
+
+        def same_wall_time(instant, days=offset):
+            local = instant.tz_convert(cfg.local_timezone).tz_localize(None)
+            return (
+                (local + pd.DateOffset(days=days))
+                .tz_localize(cfg.local_timezone, ambiguous="NaT", nonexistent="NaT")
+                .tz_convert("UTC")
+            )
+
+        a, b = same_wall_time(original_start), same_wall_time(end)
+        if (
+            pd.isna(a)
+            or pd.isna(b)
+            or b > now + pd.Timedelta(days=8)
+            or not pd.Timedelta(minutes=15) <= b - a <= pd.Timedelta(hours=16)
+        ):
             continue
         next_tracks = night_plan_tracks(
             weather,
@@ -291,6 +313,7 @@ def planner(station_id: str, values: dict) -> dict:
             minimum_altitude=minimum,
             minimum_moon_separation=moon,
             horizon_mask=horizon,
+            custom_targets=definitions,
         )
         next_sessions, _ = target_sessions(next_tracks, weather, limits, moon)
         nights.append(
@@ -302,14 +325,18 @@ def planner(station_id: str, values: dict) -> dict:
         )
     geometry = (
         {
-            name: framing_geometry(
-                TARGET_BY_NAME[name], equipment, rotation_deg=rotation
-            )
-            for name in targets
+            target.name: framing_geometry(target, equipment, rotation_deg=rotation)
+            for target in definitions
         }
         if equipment
         else {}
     )
+    budget = None
+    if recipe is not None:
+        for night in nights:
+            night["budget"] = imaging_budget(night, cfg, definitions, recipe)
+        budget = {"options": recipe, **total_budget(nights, recipe)}
+        schedule["budget"] = nights[0]["budget"]
     return clean_json(
         {
             "station_id": station_id,
@@ -317,6 +344,13 @@ def planner(station_id: str, values: dict) -> dict:
             "end": end,
             "generated_at": now,
             "timezone": cfg.local_timezone,
+            "site": {
+                "id": cfg.station_id,
+                "name": cfg.location_name,
+                "timezone": cfg.local_timezone,
+            },
+            "weather_source": weather_source,
+            "target_catalog": [asdict(target) for target in definitions],
             "summary": records(summaries),
             "tracks": records(tracks),
             "field": asdict(field_of_view(equipment)) if equipment else None,
@@ -328,6 +362,7 @@ def planner(station_id: str, values: dict) -> dict:
             "schedule": schedule,
             "nights": nights,
             "schedule_options": options,
+            "budget": budget,
         }
     )
 

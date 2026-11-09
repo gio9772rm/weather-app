@@ -120,27 +120,50 @@
   }
 
   let equipmentChoice=null, loadedConfig=null, planValues=null;
+  const discovered = new Map();
+  function plannerConfig(){
+    const config=loadedConfig||local("planner",{});
+    return !config.site && config.station_id && config.station_id!==activeId
+      ? {...config,start:null,end:null,horizon:{},horizonText:""} : config;
+  }
+  const planClock = value => MeteoSky.clock(value, plan.timezone);
   function plannerView(){
-    const saved=loadedConfig||local("planner",{}), night=data.astronomy?.[prefs.profile]?.nights?.[0];
-    const config=saved.station_id&&saved.station_id!==activeId
-      ? {...saved,start:null,end:null,horizon:{},horizonText:""} : saved;
+    const config=plannerConfig(), night=data.astronomy?.[prefs.profile]?.nights?.[0];
     const date=night?.date||new Date().toISOString().slice(0,10), tomorrow=new Date(Date.parse(date+"T12:00Z")+86400000).toISOString().slice(0,10);
     const profile=config.profile||prefs.profile, limits={clouds:profile==="visual"?45:profile==="planetary"?30:35,wind_kmh:profile==="visual"?12:8,gust_kmh:profile==="visual"?24:16,dew_margin_c:profile==="visual"?1:2,rain_probability:profile==="visual"?30:20,...config.limits};
     const eq={name:"80/480 + camera 571",telescope:"Rifrattore 80/480",camera:"Camera 571",aperture_mm:80,focal_length_mm:480,sensor_width_mm:23.5,sensor_height_mm:15.7,pixel_size_um:3.76,...config.equipment,...equipmentChoice};
-    return window.MeteoV54.plannerView({config,date,tomorrow,eq,limits,catalog,result:plan?.station_id===activeId?planMarkup():""});
+    const objects = new Map(catalog.map(target => [target.name, target]));
+    for (const [id, target] of discovered) objects.set(id, target);
+    for (const id of config.targets || []) if (!objects.has(id)) objects.set(id, {name:id, common_name:"Dal catalogo esteso"});
+    return window.MeteoV54.plannerView({config,date,tomorrow,eq,limits,catalog:[...objects.values()],result:plan?.station_id===activeId?planMarkup():""});
   }
   function sessionMarkup(){
     if(!plan?.sessions)return "";
-    return `<div class="grid session-summary">${plan.sessions.map(s=>`<article class="card span-4"><span class="tag">SESSIONE UTILIZZABILE</span><h2>${esc(s.target)}</h2><div class="metric">${num(s.usable_hours)}<small>ore entro tutte le soglie</small></div><p><b>${s.best_start?clock(s.best_start)+"–"+clock(s.best_end):"Nessuna finestra continua"}</b> · ${num(s.continuous_hours)} h continue</p><p>Limite prevalente: ${esc(s.limiting_factor)}</p></article>`).join("")}</div><article class="card"><details><summary>Nuvole per quota, rugiada e motivi delle esclusioni</summary>${table(["Oggetto / intervallo","Nuvole basse / medie / alte","Margine rugiada","Vento / raffica","Distanza Luna","Esito"],(plan.session_detail||[]).map(r=>[esc(r.target)+" · "+clock(r.start)+"–"+clock(r.end),[r.cloud_low,r.cloud_mid,r.cloud_high].map(v=>num(v,0)+"%").join(" / "),num(r.dew_margin_c)+" °C",num(r.wind_kmh)+" / "+num(r.wind_gust_kmh)+" km/h",num(r.moon_separation,0)+"°",r.usable?"Entro le soglie":(r.reasons||[]).map(esc).join("; ")]))}</details></article>`;
+    return `<div class="grid session-summary">${plan.sessions.map(s=>`<article class="card span-4"><span class="tag">SESSIONE UTILIZZABILE</span><h2>${esc(s.target)}</h2><div class="metric">${num(s.usable_hours)}<small>ore entro tutte le soglie</small></div><p><b>${s.best_start?planClock(s.best_start)+"–"+planClock(s.best_end):"Nessuna finestra continua"}</b> · ${num(s.continuous_hours)} h continue</p><p>Limite prevalente: ${esc(s.limiting_factor)}</p></article>`).join("")}</div><article class="card"><details><summary>Nuvole per quota, rugiada e motivi delle esclusioni</summary>${table(["Oggetto / intervallo","Nuvole basse / medie / alte","Margine rugiada","Vento / raffica","Distanza Luna","Esito"],(plan.session_detail||[]).map(r=>[esc(r.target)+" · "+planClock(r.start)+"–"+planClock(r.end),[r.cloud_low,r.cloud_mid,r.cloud_high].map(v=>num(v,0)+"%").join(" / "),num(r.dew_margin_c)+" °C",num(r.wind_kmh)+" / "+num(r.wind_gust_kmh)+" km/h",num(r.moon_separation,0)+"°",r.usable?"Entro le soglie":(r.reasons||[]).map(esc).join("; ")]))}</details></article>`;
   }
   function planMarkup(){
     const rows=plan.summary||[];const targetNames=[...new Set(plan.tracks.map(r=>r.target))];const colors=["var(--teal)","var(--orange)","var(--blue)","#b17bd1","#d78c9c","#71974e","#837adb","#d59445"];
-    return `${window.MeteoV53?.scheduleMarkup(plan)||""}${window.MeteoNina?.markup(plan)||""}${sessionMarkup()}<article class="card"><h2>La finestra utile per ogni oggetto</h2>${table(["Oggetto","Magnitudine","Ora migliore","Altezza massima","Distanza Luna","Ore visibili","Copertura meteo","Campo"],rows.map(r=>[esc(r.target)+" · "+esc(r.name),num(r.magnitude),r.best_time?clock(r.best_time):esc(r.status),num(r.max_altitude,0)+"°",num(r.moon_separation,0)+"°",num(r.visible_hours)+" h",num(r.weather_coverage,0)+"%",esc(r.framing)]))}<p class="metric-caption">Ore visibili: sopra gli ostacoli e la soglia geometrica. Non equivalgono alle ore di bel tempo; consulta anche qualità meteo e copertura.</p>${chart(targetNames.map((name,i)=>({name,color:colors[i],points:plan.tracks.filter(r=>r.target===name).map(r=>({t:r.valid_time,v:r.altitude}))})),{unit:"°",gapMs:20*60000})}<button id="export-plan" class="quiet">Esporta piano CSV</button><button id="plan-to-journal" class="quiet">Apri il diario della sessione</button></article>${plan.field?`<article class="card"><h2>Il campo inquadrato</h2><p>${num(plan.field.width_deg,2)}° × ${num(plan.field.height_deg,2)}° · campionamento ${num(plan.field.image_scale_arcsec_px,2)}″/pixel</p><div class="grid">${Object.entries(plan.geometry).map(([name,g])=>`<div class="span-4"><h3>${esc(name)}</h3>${geometrySvg(g)}</div>`).join("")}</div><p class="metric-caption">Sagoma indicativa degli oggetti del catalogo. Non è una fotografia né include la distorsione dell’ottica.</p></article>`:""}`;
+    return `${window.MeteoBudget?.result(plan)||""}${window.MeteoV53?.scheduleMarkup(plan)||""}${window.MeteoNina?.markup(plan)||""}<details class="card detail-row"><summary>Finestre, grafico e fattori per ogni soggetto</summary>${sessionMarkup()}${table(["Oggetto","Magnitudine","Ora migliore","Altezza massima","Distanza Luna","Ore visibili","Copertura meteo","Campo"],rows.map(r=>[esc(r.target)+" · "+esc(r.name),num(r.magnitude),r.best_time?planClock(r.best_time):esc(r.status),num(r.max_altitude,0)+"°",num(r.moon_separation,0)+"°",num(r.visible_hours)+" h",num(r.weather_coverage,0)+"%",esc(r.framing)]))}<p class="metric-caption">Ore visibili: sopra gli ostacoli e la soglia geometrica. Non equivalgono alle ore di bel tempo; consulta anche qualità meteo e copertura.</p>${chart(targetNames.map((name,i)=>({name,color:colors[i],points:plan.tracks.filter(r=>r.target===name).map(r=>({t:r.valid_time,v:r.altitude}))})),{unit:"°",gapMs:20*60000,timezone:plan.timezone})}<button id="export-plan" class="quiet">Esporta piano CSV</button><button id="plan-to-journal" class="quiet">Apri il diario della sessione</button></details>${plan.field?`<details class="card detail-row"><summary>Il campo inquadrato</summary><p>${num(plan.field.width_deg,2)}° × ${num(plan.field.height_deg,2)}° · campionamento ${num(plan.field.image_scale_arcsec_px,2)}″/pixel</p><div class="grid">${Object.entries(plan.geometry).map(([name,g])=>`<div class="span-4"><h3>${esc(name)}</h3>${geometrySvg(g)}</div>`).join("")}</div><p class="metric-caption">Sagoma indicativa degli oggetti del catalogo. Non è una fotografia né include la distorsione dell’ottica.</p></details>`:""}`;
   }
   function geometrySvg(g){const all=[...g.sensor_x,...g.sensor_y,...g.target_x,...g.target_y],m=Math.max(1,...all.map(Math.abs))*1.15;const xy=(x,y)=>`${150+x/m*135},${150-y/m*135}`;return `<svg class="fov" viewBox="0 0 300 300" role="img" aria-label="Campo sensore blu e ingombro oggetto arancione"><polyline points="${g.sensor_x.map((x,i)=>xy(x,g.sensor_y[i])).join(" ")}" fill="none" stroke="var(--blue)" stroke-width="2"/><polyline points="${g.target_x.map((x,i)=>xy(x,g.target_y[i])).join(" ")}" fill="none" stroke="var(--orange)" stroke-width="2"/></svg><p class="metric-caption">Blu: sensore · arancione: oggetto</p>`;}
   async function bindPlanner(){
     if(!catalog.length){try{catalog=(await api("catalog")).targets;if(page==="planner")render();}catch(e){notice(e.message);}return;}
     window.MeteoV54.bindWizard();
+    const cfg=plannerConfig();
+    MeteoSky.bindLookup("planner-search", target => {
+      const group=$("#plan-targets");
+      let el=[...group.querySelectorAll('input[name="target"]')].find(input=>input.value===target.name);
+      if (!el?.checked && group.querySelectorAll("input:checked").length>=8) return false;
+      if (!el) {
+        discovered.set(target.name,target);
+        if (discovered.size>20) discovered.delete(discovered.keys().next().value);
+        group.insertAdjacentHTML("beforeend", `<label><input type="checkbox" name="target" value="${esc(target.name)}">${esc(target.name)} <small>${esc(target.common_name)}</small></label>`);
+        el=group.lastElementChild.querySelector("input");
+      }
+      el.checked=true;
+      el.dispatchEvent(new Event("change",{bubbles:true}));
+      return true;
+    });
     $("#remember-equipment").onclick=()=>{const invalid=[...$("#planner-step-1").querySelectorAll("input")].find(el=>!el.checkValidity());if(invalid){invalid.closest("details")?.setAttribute("open","");invalid.reportValidity();return;}window.MeteoV53?.rememberEquipment({name:$("#eq-name").value,telescope:$("#eq-telescope").value,camera:$("#eq-camera").value,aperture_mm:Number($("#eq-aperture").value),focal_length_mm:Number($("#eq-focal").value),sensor_width_mm:Number($("#eq-width").value),sensor_height_mm:Number($("#eq-height").value),pixel_size_um:Number($("#eq-pixel").value),focal_multiplier:Number($("#eq-multiplier").value)});};
     $("#plan-profile").onchange=()=>{const visual=$("#plan-profile").value==="visual",planet=$("#plan-profile").value==="planetary";for(const [id,value] of [["clouds",visual?45:planet?30:35],["wind",visual?12:8],["gust",visual?24:16],["dew",visual?1:2],["pop",visual?30:20]])$("#plan-"+id).value=value;};
     $("#planner-form").onsubmit=async e=>{e.preventDefault();const b=$("#calculate-plan");b.disabled=true;try{
@@ -148,10 +171,18 @@
       const values={station_id:activeId,profile:$("#plan-profile").value,limits:{clouds:Number($("#plan-clouds").value),wind_kmh:Number($("#plan-wind").value),gust_kmh:Number($("#plan-gust").value),dew_margin_c:Number($("#plan-dew").value),rain_probability:Number($("#plan-pop").value)},start:window.MeteoV54.plannerDateValue("plan-start"),end:window.MeteoV54.plannerDateValue("plan-end"),targets:[...document.querySelectorAll('[name="target"]:checked')].map(x=>x.value),altitude:Number($("#plan-alt").value),moon:Number($("#plan-moon").value),rotation:Number($("#eq-rotation").value),horizon,equipment:{name:$("#eq-name").value,telescope:$("#eq-telescope").value,camera:$("#eq-camera").value,aperture_mm:Number($("#eq-aperture").value),focal_length_mm:Number($("#eq-focal").value),sensor_width_mm:Number($("#eq-width").value),sensor_height_mm:Number($("#eq-height").value),pixel_size_um:Number($("#eq-pixel").value),focal_multiplier:Number($("#eq-multiplier").value)}};
       if(!values.targets.length||values.targets.length>8)throw Error("Seleziona da uno a otto oggetti.");
       Object.assign(values,window.MeteoV53?.readOptions()||{});
-      loadedConfig={...values,horizonText};save("planner",loadedConfig);$("#plan-status").textContent="Calcolo…";const result=await api("planner",values);plan=result;planValues=values;if(page==="planner"&&activeId===values.station_id){$("#plan-result").innerHTML=planMarkup();bindPlanResult();$("#plan-status").textContent="Piano aggiornato";}
+      if(cfg.site){values.site=cfg.site;values.site_timezone=cfg.site_timezone;}
+      values.budget=window.MeteoBudget.read(values.profile);
+      $("#plan-status").textContent="Calcolo…";
+      const result=await api("planner",values);
+      if (page==="planner" && activeId===values.station_id && b.isConnected) {
+        loadedConfig={...values,horizonText,...(values.site?{site_timezone:result.timezone}:{})};save("planner",loadedConfig);
+        plan=result;planValues=loadedConfig;
+        $("#plan-result").innerHTML=planMarkup();bindPlanResult();$("#plan-status").textContent="Piano aggiornato";
+      }
     }catch(error){notice(error.message);}finally{b.disabled=false;}};bindPlanResult();
   }
-  function bindPlanResult(){window.MeteoNina?.bind(plan,planValues||local("planner",{}),catalog);window.MeteoV53?.bindPlan(plan,planValues||local("planner",{}));if($("#export-plan"))$("#export-plan").onclick=()=>{const cols=["target","valid_time","altitude","azimuth","moon_separation","planner_score","weather_available"];download("meteo-piano-notte.csv",cols.join(",")+"\n"+plan.tracks.map(r=>cols.map(c=>JSON.stringify(r[c]??"")).join(",")).join("\n"),"text/csv");};if($("#plan-to-journal"))$("#plan-to-journal").onclick=()=>navigate("journal");}
+  function bindPlanResult(){window.MeteoBudget?.bind(plan);window.MeteoNina?.bind(plan,planValues||local("planner",{}),plan?.target_catalog||catalog);window.MeteoV53?.bindPlan(plan,planValues||local("planner",{}));if($("#export-plan"))$("#export-plan").onclick=()=>{const cols=["target","valid_time","altitude","azimuth","moon_separation","planner_score","weather_available"];download("meteo-piano-notte.csv",cols.join(",")+"\n"+plan.tracks.map(r=>cols.map(c=>JSON.stringify(r[c]??"")).join(",")).join("\n"),"text/csv");};if($("#plan-to-journal"))$("#plan-to-journal").onclick=()=>navigate("journal");}
 
   function journalView(){
     const list=local("journal",[]), entry=list.find(r=>r.id===editingEntry)||{};
@@ -203,7 +234,7 @@
   function bindActivities(){ $("#activity-type").onchange=e=>{activity=e.target.value;save("activity-choice",activity);render();};$("#activity-form").onsubmit=e=>{e.preventDefault();const rule={name:activityDefaults[activity].name,daylight:$("#act-daylight").checked};for(const field of ["min","max","wind","gust","pop","rain","hours"])rule[field]=Number($("#act-"+field).value);if(rule.min>rule.max){notice("La temperatura minima deve essere inferiore alla massima.");return;}save("activity-rules",{...local("activity-rules",{}),[activity]:rule});render();};}
 
   window.MeteoExtra={
-    resetPersonal:(preserve=false)=>{if(preserve){captureDrafts();}else{drafts.clear();plan=null;planValues=null;editingEntry=null;loadedConfig=null;equipmentChoice=null;}activity=local("activity-choice","walk");},
+    resetPersonal:(preserve=false)=>{if(preserve){captureDrafts();}else{drafts.clear();plan=null;planValues=null;editingEntry=null;loadedConfig=null;equipmentChoice=null;discovered.clear();}activity=local("activity-choice","walk");},
     useEquipment:equipment=>{equipmentChoice=equipment;drafts.delete("planner:"+activeId);},
     loadPlan:config=>{loadedConfig={...config,horizonText:Object.entries(config.horizon||{}).map(([a,h])=>`${a}:${h}`).join(", ")};equipmentChoice=null;plan=null;planValues=null;drafts.delete("planner:"+config.station_id);},
     view:p=>{switch(p){

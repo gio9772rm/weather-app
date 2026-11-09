@@ -1,6 +1,15 @@
 # Esportazione N.I.N.A.
 
-Dal risultato del pianificatore, scegliere **Esporta sequenza N.I.N.A.**. È disponibile per Fotografia cielo profondo quando esiste almeno un blocco utilizzabile. Impostare esposizione, gain, offset e binning; −1 per gain/offset mantiene il valore predefinito della camera in N.I.N.A.
+Dal risultato del pianificatore, scegliere **Esporta sequenza N.I.N.A.** e una
+delle notti con blocchi futuri. È disponibile per Fotografia cielo profondo.
+Impostare esposizione, gain, offset e binning; −1 per gain/offset mantiene il
+valore predefinito della camera in N.I.N.A. Se il budget usa un solo filtro
+o OSC, la durata della posa è precompilata dalla ricetta.
+
+Il CSV del budget riporta le pose e l'integrazione di tutti i filtri per
+blocco. La sequenza JSON resta una base a esposizione unica per notte.
+Associare filtri, autofocus e dither al profilo della propria attrezzatura
+nel sequenziatore; i loro tempi nel budget sono una stima.
 
 Aprire il JSON nel **sequenziatore avanzato N.I.N.A. 3.2**, nella notte indicata nel nome della sequenza. Il fuso del PC deve coincidere con quello del piano. Le istruzioni native «Wait for time» e «Loop until time» memorizzano l’ora locale, non una data assoluta. Il passaggio di mezzanotte usa il rollover notturno di N.I.N.A.; le notti con cambio di ora legale vengono rifiutate dall’esportatore.
 

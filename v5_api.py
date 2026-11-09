@@ -385,6 +385,13 @@ async def extra_tool(request):
             )
         if request.method == "GET" and action == "catalog":
             return JSONResponse({"targets": catalog()}, headers=headers)
+        if request.method == "GET" and action == "targets":
+            from sky_catalog import search_targets
+
+            value = await run_in_threadpool(
+                search_targets, request.query_params.get("q", "")
+            )
+            return JSONResponse({"targets": value}, headers=headers)
         if request.method == "GET" and action == "cities":
             value = await run_in_threadpool(
                 search_city, request.query_params.get("q", "")
@@ -423,9 +430,20 @@ async def extra_tool(request):
                 raise ValueError("Località non valida")
             station_id = values["station_id"]
             if action == "cielo":
-                from v5_cielo import observing_report
+                from v5_cielo import night_report, observing_report
 
                 def report():
+                    if values.get("site") is not None:
+                        from v5_data import station_settings
+                        from v5_observatories import remote_context
+
+                        station_settings(station_id)
+                        return night_report(
+                            remote_context(
+                                values["site"], values.get("profile", "deep_sky")
+                            ),
+                            values,
+                        )
                     return observing_report(
                         station_id, values, snapshot_for(station_id)
                     )

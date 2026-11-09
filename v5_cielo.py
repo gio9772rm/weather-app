@@ -11,13 +11,13 @@ import pandas as pd
 from astral import Observer
 
 from astronomy_planner import (
-    TARGETS,
     field_of_view,
     framing_assessment,
     lunar_track,
     target_geometry,
 )
 from config import Settings
+from sky_catalog import recommended_targets, resolve_target, target_filters
 from v5_astronomy import PROFILES, night_darkness
 from v5_data import clean_json, station_settings
 from v5_extensions import plan_constraints
@@ -30,7 +30,6 @@ from v5_sessions import (
 
 STEP = pd.Timedelta(minutes=15)
 HOUR = pd.Timedelta(hours=1)
-EMISSION_NEBULAE = {"M42", "M27", "M8", "NGC 2237", "NGC 6960", "NGC 7000"}
 WEATHER_FIELDS = (
     "clouds",
     "cloud_low",
@@ -86,6 +85,7 @@ class ObservingContext:
     site: ObservingSite
     snapshot: dict
     now: pd.Timestamp
+    weather_source: str | None = None
 
 
 def _forecast_intervals(rows):
@@ -169,14 +169,19 @@ def _timeline_weather(intervals, left, right, now):
     ]
 
 
-def _target_options(site, times, lunar, weather, dark, now, constraints, limits):
+def _target_options(
+    site, times, lunar, weather, dark, now, constraints, limits, requested
+):
     altitude, separation, rotation, horizon, equipment = constraints
     targets, tracks = [], []
     dark_samples = (times >= max(dark[0], now)) & (times <= dark[1])
     # Keep the endpoints adjacent to the exact twilight/forecast boundaries
     # for the same conservative segment intersection as the planner.
     relevant = (times >= max(dark[0], now) - STEP) & (times <= dark[1] + STEP)
-    for target in TARGETS:
+    pool = recommended_targets()
+    if requested and requested.name not in {target.name for target in pool}:
+        pool.append(requested)
+    for target in pool:
         geometry = target_geometry(target, times, site, lunar, altitude, horizon)
         tracks.append(
             pd.DataFrame(
@@ -203,9 +208,7 @@ def _target_options(site, times, lunar, weather, dark, now, constraints, limits)
                 "id": target.name,
                 "name": target.common_name,
                 "category": target.category,
-                "filters": ["broadband", "narrowband"]
-                if target.name in EMISSION_NEBULAE
-                else ["broadband"],
+                "filters": target_filters(target),
                 "framing": asdict(framing) if framing else None,
                 "peak_altitude": round(peak, 1) if peak is not None else None,
                 "altitude": geometry["altitude"].round(1).tolist(),
@@ -264,6 +267,9 @@ def night_report(context: ObservingContext, values: dict) -> dict:
     profile = values.get("profile", "deep_sky")
     limits = session_limits(profile, values.get("limits"))
     constraints = plan_constraints(values)
+    requested_target = (
+        resolve_target(values["target"]) if values.get("target") else None
+    )
     altitude, separation, rotation, horizon, equipment = constraints
     requested = (
         date.fromisoformat(values["date"]).isoformat() if values.get("date") else None
@@ -324,7 +330,15 @@ def night_report(context: ObservingContext, values: dict) -> dict:
         }
         if profile != "planetary" and dark and dark[1] > now:
             targets = _target_options(
-                site, times, lunar, weather, dark, now, constraints, limits
+                site,
+                times,
+                lunar,
+                weather,
+                dark,
+                now,
+                constraints,
+                limits,
+                requested_target,
             )
     return clean_json(
         {
@@ -334,6 +348,7 @@ def night_report(context: ObservingContext, values: dict) -> dict:
                 "name": site.location_name,
                 "timezone": site.local_timezone,
             },
+            "weather_source": context.weather_source,
             "snapshot_at": snapshot.get("generated_at"),
             "as_of": now,
             "profile": profile,

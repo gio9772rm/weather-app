@@ -453,8 +453,10 @@ def _cielo_checks(page, width: int, height: int) -> None:
     expect(page.locator("[data-cielo-night]")).to_have_count(3, timeout=20000)
     tomorrow = PLANNER_START.date().isoformat()
     with page.expect_response(
-        lambda r: r.url.endswith("/api/v5/tools/cielo")
-        and r.request.post_data_json.get("date") == tomorrow
+        lambda r: (
+            r.url.endswith("/api/v5/tools/cielo")
+            and r.request.post_data_json.get("date") == tomorrow
+        )
     ) as response:
         page.locator(f'[data-cielo-night="{tomorrow}"]').click()
     report = response.value.json()
@@ -472,12 +474,30 @@ def _cielo_checks(page, width: int, height: int) -> None:
         "(lines) => lines.map(line => line.getAttribute('x1'))"
     )
     assert len(cursors) == 6 and len(set(cursors)) == 1
+    expect(page.locator(".cielo-pick").first).to_be_visible()
+    expect(page.locator("#cielo-search")).to_be_hidden()
+    page.locator("#cielo-catalog > summary").click()
     page.select_option("#cielo-filter", "narrowband")
     assert page.locator("[data-cielo-target]").count() > 0
     assert "Galassia" not in page.locator(".cielo-target-list").inner_text()
     page.select_option("#cielo-filter", "")
     target = report["targets"][0]
     assert target["best_window"]
+    if width == 390:
+        page.locator("#cielo-search input").fill("Horsehead")
+        page.locator("#cielo-search [data-lookup]").click()
+        with page.expect_response(
+            lambda r: (
+                r.url.endswith("/api/v5/tools/cielo")
+                and r.request.post_data_json.get("target") == "B033"
+            )
+        ):
+            page.locator("#cielo-search").get_by_role(
+                "button", name="B033", exact=False
+            ).click()
+        expect(page.locator("#cielo-go-plot")).to_contain_text("B033")
+        page.locator("#cielo-save-target").click()
+        expect(page.locator("#cielo-favorite")).to_have_value("B033")
     page.locator(f'[data-cielo-target="{target["id"]}"]').click()
     expect(page.locator("#cielo-go-plot")).to_contain_text(target["id"])
     if width == 390:
@@ -716,11 +736,26 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             page.locator("#plan-next").click()
             expect(page.locator("#planner-review")).to_contain_text("Europe/Rome")
             page.locator('[name="target"][value="M81"]').check()
-            page.locator("#planner-step-2 summary").click()
+            page.get_by_text(
+                "Durata dei blocchi, preparazione e priorità", exact=True
+            ).click()
             page.locator("#schedule-minimum_minutes").fill("15")
             page.locator("#schedule-compare_nights").fill("1")
+            page.locator("#budget-controls > summary").click()
+            page.locator("#budget-recipe").fill("L; 120; 2\nR; 150; 1")
             page.get_by_role("button", name="Calcola il piano", exact=True).click()
+            expect(page.locator(".budget-result")).to_contain_text(
+                "pose complete stimate", timeout=15000
+            )
+            with page.expect_download() as budget_download:
+                page.locator("#budget-download").click()
+            csv = Path(budget_download.value.path()).read_text()
+            assert '"Integrazione secondi"' in csv and '"L"' in csv and '"R"' in csv
+            page.get_by_text("Il campo inquadrato", exact=True).click()
             expect(page.locator("#plan-result .fov").first).to_be_visible(timeout=15000)
+            page.get_by_text(
+                "Finestre, grafico e fattori per ogni soggetto", exact=True
+            ).click()
             expect(page.locator(".session-summary")).to_contain_text(
                 "SESSIONE UTILIZZABILE"
             )
@@ -877,7 +912,9 @@ def _opening_recovery_check(browser, base_url: str) -> None:
                 route.continue_()
             else:
                 route.fulfill(
-                    status=200, content_type="text/html", body="<h1>Service waking up</h1>"
+                    status=200,
+                    content_type="text/html",
+                    body="<h1>Service waking up</h1>",
                 )
 
         page.route("**/api/v5/snapshot/*", wake)
@@ -900,7 +937,9 @@ def _opening_recovery_check(browser, base_url: str) -> None:
         expect(page.locator("#connection")).to_contain_text("Stazione live")
         assert len(requests) == 7
         page.clock.fast_forward(590000)
-        assert len(requests) == 7, "Recovery must stop when the first valid snapshot arrives"
+        assert len(requests) == 7, (
+            "Recovery must stop when the first valid snapshot arrives"
+        )
     finally:
         context.close()
 
@@ -925,10 +964,16 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     a.locator("#hide-recovery").click()
     a.locator("#add-571").click()
     expect(a.locator("#sync-status")).to_contain_text("Sincronizzato")
+    a.evaluate("""() => MeteoSky.update({
+      targets: ["B033"], sites: [{kind:"city", label:"San Pedro de Atacama", geo_id:3871781}]
+    })""")
+    a.wait_for_function("!JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
     b.locator("#account-name").fill("visual-sync-user")
     b.locator("#account-password").fill("visual-private-password-53")
     b.locator("#account-form button").click()
     expect(b.locator('[data-use-equipment="0"]')).to_be_visible()
+    assert b.evaluate("MeteoSky.settings().targets") == ["B033"]
+    assert b.evaluate("MeteoSky.settings().sites[0].geo_id") == 3871781
     # Device A edits without polling B; B must expose a conflict, not overwrite.
     a.goto(f"{base_url}/?page=journal")
     a.wait_for_function("window.MeteoV53?.isSignedIn()")

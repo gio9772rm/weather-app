@@ -10,22 +10,23 @@
   const states = new Map(), reports = new Map();
   let request = null;
   const getState = () => {
-    const key = activeId + ":" + prefs.profile;
-    if (!states.has(key)) states.set(key, { night: "", filter: "", category: "", framing: "", showAll: false, target: "", cursor: NaN });
+    const key = activeId + ":" + prefs.profile + ":" + MeteoSky.placeKey(MeteoSky.settings().site);
+    if (!states.has(key)) states.set(key, { night: "", filter: "", category: "", framing: "", showAll: false, target: "", requested: "", catalogOpen: false, cursor: NaN });
+    if (states.size > 32) states.delete(states.keys().next().value);
     return states.get(key);
   };
   const dateLabel = day => new Intl.DateTimeFormat("it-IT", {
     weekday: "long", day: "numeric", month: "short", timeZone: "UTC",
   }).format(new Date(day + "T12:00:00Z"));
-  const stamp = at => new Intl.DateTimeFormat("it-IT", {
-    weekday: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset", timeZone: tz(),
-  }).format(at);
+  const stamp = (at, zone) => MeteoSky.format(at, zone, {
+    weekday: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset", hourCycle: "h23",
+  });
   const duration = hours => {
     const minutes = Math.round(hours * 60);
     const h = Math.floor(minutes / 60), m = minutes % 60;
     return h ? h + " h" + (m ? " " + m + " min" : "") : m + " min";
   };
-  const interval = window => window ? clock(window.start) + "–" + clock(window.end) : "—";
+  const interval = (window, zone = tz()) => window ? MeteoSky.clock(window.start, zone) + "–" + MeteoSky.clock(window.end, zone) : "—";
   const option = (id, label, selected) => `<option value="${esc(id)}"${id === selected ? " selected" : ""}>${esc(label)}</option>`;
   const quantity = (value, unit, digits = 0) => finite(value) ? num(value, digits) + unit : "—";
   const rowAt = (rows, at) => rows.find(row => Date.parse(row.start) <= at && at < Date.parse(row.end));
@@ -36,11 +37,12 @@
     const profiles = storage.get("meteo.v5.equipment", []);
     const rigs = Array.isArray(profiles) ? profiles.filter(r => r?.name).map(r => ["saved:" + r.name, r]) : [];
     if (saved.equipment) rigs.unshift(["plan", saved.equipment]);
-    const choice = storage.get("meteo.v5.cielo.rig", rigs[0]?.[0] || "");
+    const observing = MeteoSky.settings(), site = observing.site;
+    const choice = observing.rig ?? (window.MeteoV53?.isSignedIn() ? rigs[0]?.[0] || "" : storage.get("meteo.v5.cielo.rig", rigs[0]?.[0] || ""));
     const rig = rigs.find(([id]) => id === choice);
-    const sameSite = saved.station_id === activeId;
+    const sameSite = site ? MeteoSky.placeKey(site) === MeteoSky.placeKey(saved.site) : !saved.site && saved.station_id === activeId;
     return {
-      saved, rigs, choice: rig?.[0] || "", equipment: rig?.[1] || null,
+      saved, site, rigs, choice: rig?.[0] || "", equipment: rig?.[1] || null,
       constraints: {
         altitude: saved.altitude ?? 25, moon: saved.moon ?? 30, rotation: saved.rotation ?? 0,
         horizon: sameSite ? (saved.horizon || {}) : {},
@@ -50,26 +52,26 @@
   }
 
   function view() {
-    const { rigs, choice } = setup();
+    const { rigs, choice, site } = setup();
     return `<section class="cielo" aria-labelledby="cielo-title">
       <header class="cielo-heading"><div><span class="eyebrow">OSSERVAZIONE E ASTROFOTOGRAFIA</span>
         <h1 id="cielo-title">Cielo · scegli la tua notte</h1><p>Confronta le prossime tre notti e trova quando il meteo e il soggetto sono dalla tua parte.</p></div>
-        <button type="button" class="quiet" data-go="planner">Apri il pianificatore →</button></header>
+        <button type="button" class="quiet" id="cielo-open-planner">Apri il pianificatore →</button></header>
       <section class="card cielo-context" aria-label="Contesto di osservazione">
-        <div><span class="eyebrow">POSTAZIONE</span><strong>${esc(data.station.name)}</strong><small>${esc(tz())}</small></div>
+        <div><span class="eyebrow">POSTAZIONE</span><strong id="cielo-location-name">${esc(site?.label || data.station.name)}</strong><small id="cielo-location-zone">${esc(site?.timezone || (site ? "Meteo globale" : tz()))}</small></div>
         <label for="astro-profile"><span class="eyebrow">ATTIVITÀ</span><select id="astro-profile">${profiles.map(([id, name]) => option(id, name, prefs.profile)).join("")}</select></label>
         <div><label for="cielo-equipment" class="eyebrow">STRUMENTO</label><select id="cielo-equipment">
           ${option("", "Non impostato", choice)}${rigs.map(([id, rig]) => option(id, rig.name + (id === "plan" ? " · ultimo piano" : ""), choice)).join("")}
         </select><button type="button" class="cielo-link" data-go="personal">Gestisci strumenti →</button></div>
       </section>
+      ${MeteoSky.placesMarkup()}
       <div id="cielo-panel"></div>
-      <details class="card cielo-more" id="cielo-atmosphere"><summary>Atmosfera e trasparenza stimate · CAMS</summary>
-        <div id="cielo-atmosphere-content"></div></details>
+      ${site ? "" : '<details class="card detail-row" id="cielo-atmosphere"><summary>Atmosfera e trasparenza stimate · CAMS</summary><div id="cielo-atmosphere-content"></div></details>'}
     </section>`;
   }
 
   function fallback(state, message, retry) {
-    const a = data.astronomy?.[prefs.profile];
+    const a = !MeteoSky.settings().site && data.astronomy?.[prefs.profile];
     const rows = (a?.hours || []).filter(r => Date.parse(r.end) > Date.now());
     const nights = (a?.nights || []).filter(n => rows.some(r => r.date === n.date)).slice(0, 3);
     if (offline && !nights.some(n => n.date === state.night)) state.night = nights[0]?.date || "";
@@ -80,11 +82,11 @@
       ${hourly(rows.filter(r => r.date === state.night), true)}` : ""}</div>`;
   }
 
-  function hourly(rows, open = false) {
+  function hourly(rows, open = false, zone = tz()) {
     if (!rows.length) return "";
-    return `<details class="card cielo-more"${open ? " open" : ""}><summary>Previsione oraria e fattori del punteggio</summary>
+    return `<details class="card detail-row cielo-more"${open ? " open" : ""}><summary>Previsione oraria e fattori del punteggio</summary>
       <div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Meteo cielo</th><th>Nuvole</th><th>Vento</th><th>Fattori</th></tr></thead><tbody>${rows.map(h => `
-        <tr><td>${interval(h)}</td><td>${h.complete ? quantity(h.astro_score, "/100") : "Incompleta"}</td><td>${quantity(h.clouds, "%")}</td><td>${quantity(h.wind_kmh, " km/h", 1)}</td>
+        <tr><td>${interval(h, zone)}</td><td>${h.complete ? quantity(h.astro_score, "/100") : "Incompleta"}</td><td>${quantity(h.clouds, "%")}</td><td>${quantity(h.wind_kmh, " km/h", 1)}</td>
           <td><details><summary>${esc(h.limiting_factor)}</summary><p>${Object.entries(h.penalties || {}).map(([key, value]) => esc(key) + ": " + quantity(value, " punti", 1)).join("<br>")}
           ${h.probability_source ? "<br>Probabilità pioggia: " + esc(h.probability_source) : ""}
           ${h.missing_fields?.length ? "<br>Mancano: " + esc(h.missing_fields.join(", ")) : ""}</p></details></td></tr>`).join("")}</tbody></table></div></details>`;
@@ -97,7 +99,7 @@
       return `<button type="button" class="cielo-night" data-cielo-night="${esc(n.date)}" aria-pressed="${n.date === report.selected}">
         <span class="cielo-night-date">${esc(dateLabel(n.date))}${n.ongoing ? ' <span class="cielo-live">In corso</span>' : ""}</span>
         <strong>${esc(status)}</strong>
-        <small>${good ? interval(good) + (best === n ? " · più favorevole" : "") : esc(n.limiting_factor || "Per il profilo scelto")}</small>
+        <small>${good ? interval(good, report.site.timezone) + (best === n ? " · più favorevole" : "") : esc(n.limiting_factor || "Per il profilo scelto")}</small>
       </button>`;
     }).join("")}</nav>`;
   }
@@ -112,8 +114,9 @@
 
   function spotlight(report, night, target) {
     const window = target?.best_window;
-    const forecastOld = report.timeline?.weather.some(row => !row.issued_at || Date.parse(report.as_of) - Date.parse(row.issued_at) > 12 * 3600000);
-    const windowText = window ? interval(window) : !target && night.best_window ? interval(night.best_window) : "Nessuna finestra";
+    const zone = report.site.timezone;
+    const forecastOld = !report.weather_source && report.timeline?.weather.some(row => !row.issued_at || Date.parse(report.as_of) - Date.parse(row.issued_at) > 12 * 3600000);
+    const windowText = window ? interval(window, zone) : !target && night.best_window ? interval(night.best_window, zone) : "Nessuna finestra";
     return `<article class="card cielo-spotlight">
       <div><span class="eyebrow">${window ? "FINESTRA CONTINUA · " + esc(target.id) : target ? "SOGGETTO · " + esc(target.id) : "MIGLIORE FINESTRA METEO"}</span>
         <h2>${windowText}</h2>
@@ -125,12 +128,13 @@
         ${window ? '<button type="button" id="cielo-plan" data-cielo-plan class="primary">Usa questa finestra →</button>' : ""}
         <span class="cielo-plan-status metric-caption" role="status"></span>
       </div><dl class="cielo-facts">
-        <div><dt>Buio · Sole sotto −${report.depression}°</dt><dd>${night.darkness ? interval({start: night.darkness[0], end: night.darkness[1]}) : "—"}</dd></div>
-        <div><dt>Finestra meteo migliore</dt><dd>${interval(night.best_window)}</dd></div>
+        <div><dt>Buio · Sole sotto −${report.depression}°</dt><dd>${night.darkness ? interval({start: night.darkness[0], end: night.darkness[1]}, zone) : "—"}</dd></div>
         <div><dt>Limite meteo prevalente</dt><dd>${esc(night.limiting_factor || (night.assessed_hours ? "Nessuno nelle ore valutate" : "—"))}</dd></div>
-        <div><dt>Copertura meteo utile</dt><dd>${duration(night.assessed_hours)} valutate${night.unknown_hours ? " · " + duration(night.unknown_hours) + " senza dati completi" : ""}</dd></div>
       </dl>
-      <p class="metric-caption cielo-source">Fotografia meteo ${esc(dateTime(report.snapshot_at))} · ${esc(report.site.timezone)}.${forecastOld ? " Alcune emissioni sono assenti o più vecchie di 12 ore." : ""}</p>
+      <details class="detail-row cielo-source"><summary>${report.weather_source ? "Meteo globale · " + esc(report.weather_source) : "Copertura e origine della previsione"}</summary>
+        <p class="metric-caption">Finestra meteo migliore: ${interval(night.best_window, zone)} · ${duration(night.assessed_hours)} valutate${night.unknown_hours ? " · " + duration(night.unknown_hours) + " senza dati completi" : ""}.</p>
+        <p class="metric-caption">Aggiornato ${esc(MeteoSky.dateTime(report.snapshot_at, zone))} · ${esc(zone)}.${forecastOld ? " Alcune emissioni sono assenti o più vecchie di 12 ore." : ""}</p>
+      </details>
     </article>`;
   }
 
@@ -138,10 +142,22 @@
     if (report.profile === "planetary") return '<article class="card"><h2>Luna e pianeti</h2><p>Il grafico mostra altezza e illuminazione della Luna. Scegli un profilo di cielo profondo o visuale per consultare i soggetti del catalogo.</p></article>';
     if (!report.targets.length) return "";
     const categories = [...new Set(report.targets.map(t => t.category))].sort();
-    const field = report.field;
+    const field = report.field, zone = report.site.timezone, favorites = MeteoSky.settings().targets;
+    const picks = candidates.filter(t => t.best_window && t.id !== state.requested).slice(0, 3);
     return `<article class="card cielo-targets" aria-labelledby="cielo-target-title">
-      <header class="cielo-heading"><div><span class="eyebrow">CATALOGO CIELO PROFONDO</span><h2 id="cielo-target-title">Soggetti per questa notte</h2>
+      <header class="cielo-heading"><div><span class="eyebrow">CATALOGO CIELO PROFONDO</span><h2 id="cielo-target-title">Consigliati per questa notte</h2>
         <p>${field ? `Campo ${quantity(field.width_deg, "°", 2)} × ${quantity(field.height_deg, "°", 2)} · ${quantity(field.image_scale_arcsec_px, "″/px", 2)}` : "Scegli uno strumento per verificare l’inquadratura."}</p></div></header>
+      ${picks.length ? `<div class="cielo-picks">${picks.map(target => `<button type="button" class="cielo-pick" data-cielo-pick="${esc(target.id)}" aria-pressed="${target.id === selected?.id}">
+        <b>${esc(target.id)} · ${esc(target.name)}</b><small>${esc(target.framing?.status || target.category)}</small>
+        <strong>${interval(target.best_window, zone)} · ${duration(target.best_window.hours)}</strong></button>`).join("")}</div>` : '<p class="metric-caption">Nessun altro soggetto con una finestra utile per queste soglie e questi filtri.</p>'}
+      ${selected ? `<div class="controls cielo-selected"><b>${esc(selected.id)} · ${esc(selected.name)}</b>
+        <button type="button" class="quiet" id="cielo-go-plot">Vedi grafico · ${esc(selected.id)} ↓</button>
+        <button type="button" class="quiet" id="cielo-save-target" aria-pressed="${favorites.includes(selected.id)}">${favorites.includes(selected.id) ? "★ Rimuovi dai preferiti" : "☆ Salva nei preferiti"}</button>
+        ${selected.best_window ? '<button type="button" data-cielo-plan class="primary">Usa questa finestra →</button>' : ""}
+        <span class="cielo-plan-status metric-caption" role="status"></span></div>` : ""}
+      <details id="cielo-catalog" class="detail-row"${state.catalogOpen ? " open" : ""}><summary>Cerca un soggetto o filtra il catalogo</summary>
+      ${MeteoSky.lookupMarkup("cielo-search")}
+      ${favorites.length ? `<label>Preferiti <select id="cielo-favorite"><option value="">Scegli…</option>${favorites.map(id => option(id, id, selected?.id)).join("")}</select></label>` : ""}
       <div class="cielo-filters">
         <label>Tipo<select id="cielo-category">${option("", "Tutti i tipi", state.category)}${categories.map(c => option(c, c, state.category)).join("")}</select></label>
         <label>Filtro<select id="cielo-filter">${[["", "Qualsiasi filtro"], ["broadband", "Banda larga / RGB"], ["narrowband", "Banda stretta / dual band"]].map(([id, name]) => option(id, name, state.filter)).join("")}</select></label>
@@ -153,20 +169,18 @@
         return `<li><button type="button" class="cielo-target" data-cielo-target="${esc(target.id)}" aria-pressed="${target.id === selected?.id}">
           <span class="cielo-rank">${i + 1}</span><span><strong>${esc(target.id)} <span>· ${esc(target.name)}</span></strong>
           <small>${esc(target.category)} · picco ${quantity(target.peak_altitude, "°")}${target.framing ? " · " + esc(target.framing.status) : ""}</small></span>
-          <span class="cielo-target-time">${w ? '<b>' + interval(w) + '</b><small>' + duration(w.hours) + ' continui</small>' : '<b>Non pianificabile</b><small>' + esc(target.limiting_factor) + '</small>'}</span>
+          <span class="cielo-target-time">${w ? '<b>' + interval(w, zone) + '</b><small>' + duration(w.hours) + ' continui</small>' : '<b>Non pianificabile</b><small>' + esc(target.limiting_factor) + '</small>'}</span>
         </button></li>`;
       }).join("")}</ol>` : '<p class="empty">Nessun soggetto con questi filtri.</p>'}
       ${candidates.length > 5 ? `<button type="button" class="quiet" id="cielo-all">${state.showAll ? "Mostra i primi cinque" : "Mostra tutti i " + candidates.length + " soggetti"}</button>` : ""}
-      ${selected ? `<div class="controls"><button type="button" class="quiet" id="cielo-go-plot">Vedi grafico · ${esc(selected.id)} ↑</button>
-        ${selected.best_window ? '<button type="button" data-cielo-plan class="primary">Usa questa finestra →</button>' : ""}
-        <span class="cielo-plan-status metric-caption" role="status"></span></div>` : ""}
-      <details class="cielo-rules"><summary>Soglie usate e qualità dei dati</summary><p>Altezza minima ${num(report.constraints.altitude, 0)}° · separazione lunare ${num(report.constraints.moon, 0)}° con Luna sopra l’orizzonte · rotazione ${num(report.constraints.rotation, 0)}° · ${report.constraints.horizon_configured ? "ostacoli del piano salvato" : "orizzonte senza ostacoli configurati"}.</p>
+      <p class="metric-caption">Catalogo esteso: <a href="https://github.com/mattiaverga/OpenNGC" rel="noopener">OpenNGC</a> · <a href="https://creativecommons.org/licenses/by-sa/4.0/" rel="noopener">CC BY-SA 4.0</a>.</p></details>
+      <details class="detail-row cielo-rules"><summary>Soglie usate e qualità dei dati</summary><p>Altezza minima ${num(report.constraints.altitude, 0)}° · separazione lunare ${num(report.constraints.moon, 0)}° con Luna sopra l’orizzonte · rotazione ${num(report.constraints.rotation, 0)}° · ${report.constraints.horizon_configured ? "ostacoli del piano salvato" : "orizzonte senza ostacoli configurati"}.</p>
         <p>Nuvole ≤${num(report.constraints.limits.clouds, 0)}%, vento ≤${num(report.constraints.limits.wind_kmh, 0)} km/h, raffiche ≤${num(report.constraints.limits.gust_kmh, 0)} km/h, margine rugiada ≥${num(report.constraints.limits.dew_margin_c, 1)} °C, probabilità pioggia ≤${num(report.constraints.limits.rain_probability, 0)}%, pioggia prevista assente e indice meteo cielo ≥65/100. Gli intervalli mancanti interrompono la finestra.</p>
         <p>Puoi cambiare queste soglie nel pianificatore. I valori meteo sono previsioni; seeing, trasparenza e inquadratura sono stime.</p></details>
     </article>`;
   }
 
-  function graph(timeline, night, target, limits) {
+  function graph(timeline, night, target, limits, zone) {
     const t0 = Date.parse(timeline.start), t1 = Date.parse(timeline.end);
     const times = timeline.times.map(Date.parse);
     const x = at => 1000 * (Math.max(t0, Math.min(t1, at)) - t0) / (t1 - t0);
@@ -174,7 +188,7 @@
       const start = x(Date.parse(row.start)), end = x(Date.parse(row.end));
       return `<rect x="${start}" width="${end - start}" y="${y}" height="${height}" rx="2" class="cielo-${style}"/>`;
     };
-    const axes = [0, 0.25, 0.5, 0.75, 1].map(p => clock(t0 + (t1 - t0) * p));
+    const axes = [0, 0.25, 0.5, 0.75, 1].map(p => MeteoSky.clock(t0 + (t1 - t0) * p, zone));
     const curve = (values, low, high, style) => {
       const y = v => 42 - 36 * (v - low) / (high - low);
       const d = values.map((value, i) => (i ? "L" : "M") + x(times[i]).toFixed(1) + " " + y(value).toFixed(1)).join(" ");
@@ -234,7 +248,7 @@
     const update = offset => {
       state.cursor = Math.min(t1, Math.max(t0, t0 + offset * minute));
       slider.value = String(offset);
-      const date = stamp(state.cursor), x = 1000 * (state.cursor - t0) / (t1 - t0);
+      const date = stamp(state.cursor, report.site.timezone), x = 1000 * (state.cursor - t0) / (t1 - t0);
       slider.setAttribute("aria-valuetext", date);
       $("#cielo-cursor-time").textContent = date;
       document.querySelectorAll(".cielo-cursor").forEach(line => {
@@ -266,35 +280,62 @@
   }
 
   function show(report, state, focusId = "") {
+    if ($("#cielo-catalog")?.open) state.catalogOpen = true;
     if (report.selected !== state.night) state.cursor = NaN;
     state.night = report.selected;
     if (!report.field) state.framing = "";
     const current = report.nights.find(n => n.date === state.night);
     const candidates = visibleTargets(report, state);
-    const target = candidates.find(t => t.id === state.target) || candidates[0];
+    const target = report.targets.find(t => t.id === state.requested) ||
+      candidates.find(t => t.id === state.target) || candidates[0];
     state.target = target?.id || "";
     // Preserve a selected object when shortening the list after filtering.
-    if (candidates.indexOf(target) >= 5) state.showAll = true;
+    if (!state.requested && candidates.indexOf(target) >= 5) state.showAll = true;
+    const zone = report.site.timezone;
+    $("#cielo-location-name").textContent = report.site.name;
+    $("#cielo-location-zone").textContent = zone + (report.weather_source ? " · Meteo globale" : "");
     $("#cielo-panel").innerHTML = nightCards(report) + spotlight(report, current, target) +
-      (report.timeline ? graph(report.timeline, current, target, report.constraints.limits) : "") +
       targetsMarkup(report, state, candidates, target) +
-      hourly(report.timeline?.hourly || []);
+      (report.timeline ? graph(report.timeline, current, target, report.constraints.limits, zone) : "") +
+      hourly(report.timeline?.hourly || [], false, zone);
     $("#cielo-panel").setAttribute("aria-busy", "false");
     bindGraph(report, target, state);
     $("#cielo-panel").querySelectorAll("[data-cielo-night]").forEach(b => b.onclick = () => {
       if (b.dataset.cieloNight === state.night) return;
-      state.night = b.dataset.cieloNight; state.target = ""; state.cursor = NaN; state.showAll = false;
+      state.night = b.dataset.cieloNight; state.target = state.requested; state.cursor = NaN; state.showAll = false;
       load(state, false, state.night);
     });
     for (const key of ["filter", "category", "framing"]) {
       const el = $("#cielo-" + key);
-      if (el) el.onchange = () => { state[key] = el.value; state.showAll = false; show(report, state, el.id); };
+      if (el) el.onchange = () => {
+        state[key] = el.value; state.showAll = false; state.catalogOpen = true;
+        show(report, state, el.id);
+      };
     }
-    document.querySelectorAll("[data-cielo-target]").forEach(b => b.onclick = () => {
-      state.target = b.dataset.cieloTarget;
+    document.querySelectorAll("[data-cielo-target],[data-cielo-pick]").forEach(b => b.onclick = () => {
+      state.requested = "";
+      state.target = b.dataset.cieloTarget || b.dataset.cieloPick;
       show(report, state);
-      document.querySelector('[data-cielo-target][aria-pressed="true"]')?.focus({ preventScroll: true });
+      document.querySelector(b.dataset.cieloPick ? '[data-cielo-pick][aria-pressed="true"]' : '[data-cielo-target][aria-pressed="true"]')?.focus({ preventScroll: true });
     });
+    const catalog = $("#cielo-catalog");
+    if (catalog) catalog.ontoggle = () => { state.catalogOpen = catalog.open; };
+    const selectTarget = id => {
+      if (!id) return;
+      state.requested = id; state.target = id; state.catalogOpen = true;
+      if (report.targets.some(t => t.id === id)) show(report, state, "cielo-go-plot");
+      else load(state);
+    };
+    MeteoSky.bindLookup("cielo-search", result => selectTarget(result.name));
+    const favorite = $("#cielo-favorite");
+    if (favorite) favorite.onchange = event => selectTarget(event.target.value);
+    const save = $("#cielo-save-target");
+    if (save) save.onclick = () => {
+      const { targets } = MeteoSky.settings(), exists = targets.includes(target.id);
+      if (!exists && targets.length >= 30) { notice("Puoi salvare al massimo trenta soggetti."); return; }
+      MeteoSky.update({ targets: exists ? targets.filter(id => id !== target.id) : [...targets, target.id] });
+      show(report, state, save.id);
+    };
     const more = $("#cielo-all");
     if (more) more.onclick = () => {
       state.showAll = !state.showAll;
@@ -303,8 +344,21 @@
     };
     const goPlot = $("#cielo-go-plot");
     if (goPlot) goPlot.onclick = () => $("#cielo-timeline-title")?.focus();
+    const openPlanner = (start, end) => {
+      const { saved, equipment, constraints, site } = setup();
+      window.MeteoExtra.loadPlan({
+        ...saved, ...constraints, station_id: activeId, profile: prefs.profile, equipment,
+        site, site_timezone: zone, priorities: saved.priorities?.[target?.id] ? { [target.id]: saved.priorities[target.id] } : {},
+        start, end, targets: target ? [target.id] : saved.targets,
+      });
+      navigate("planner");
+    };
+    $("#cielo-open-planner").disabled = false;
+    $("#cielo-open-planner").onclick = () => {
+      const tomorrow = new Date(Date.parse(current.date + "T12:00Z") + 86400000).toISOString().slice(0, 10);
+      openPlanner(current.date + "T21:00", tomorrow + "T06:00");
+    };
     document.querySelectorAll("[data-cielo-plan]").forEach(plan => plan.onclick = () => {
-      const { saved, equipment, constraints } = setup();
       const start = Math.max(Date.parse(target.best_window.start), Math.ceil(Date.now() / minute) * minute);
       const end = Date.parse(target.best_window.end);
       if (end - start < 15 * minute) {
@@ -312,11 +366,7 @@
         plan.disabled = true;
         return;
       }
-      window.MeteoExtra.loadPlan({
-        ...saved, ...constraints, station_id: activeId, profile: prefs.profile, equipment,
-        start: new Date(start).toISOString(), end: new Date(end).toISOString(), targets: [target.id],
-      });
-      navigate("planner");
+      openPlanner(new Date(start).toISOString(), new Date(end).toISOString());
     });
     if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
   }
@@ -324,12 +374,15 @@
   function load(state, force = false, focusNight = "") {
     const panel = $("#cielo-panel");
     if (!panel) return;
-    const { equipment, constraints } = setup();
+    const { equipment, constraints, site } = setup();
+    const planner = $("#cielo-open-planner");
+    planner.disabled = !!site;
+    planner.onclick = () => navigate("planner");
     // Only optical dimensions are needed by the server. Keep personal names local.
     const optical = equipment ? { name: "Strumento", camera: "Camera", telescope: "Ottica",
       ...Object.fromEntries(["aperture_mm", "focal_length_mm", "sensor_width_mm", "sensor_height_mm", "pixel_size_um", "focal_multiplier"].map(key => [key, equipment[key]])),
     } : null;
-    const body = { ...constraints, station_id: activeId, profile: prefs.profile, date: state.night, equipment: optical };
+    const body = { ...constraints, station_id: activeId, profile: prefs.profile, date: state.night, equipment: optical, site, target: state.requested || null };
     const cacheKey = JSON.stringify([data.generated_at, body]);
     const finish = report => {
       show(report, state);
@@ -361,13 +414,14 @@
     if (request?.key !== cacheKey || force) {
       request?.controller.abort();
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
+      const timer = setTimeout(() => controller.abort(), site ? 32000 : 12000);
       const promise = fetch("/api/v5/tools/cielo", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal,
       }).then(async response => {
         if (!response.ok) throw Error("Previsione non disponibile");
         const report = await response.json();
-        if (report.schema !== 1 || report.site?.id !== body.station_id || report.profile !== body.profile) throw Error("Contesto non valido");
+        const expected = site?.kind === "city" ? "city-" + site.geo_id : site ? null : body.station_id;
+        if (report.schema !== 1 || !report.site || (expected && report.site.id !== expected) || report.profile !== body.profile) throw Error("Contesto non valido");
         return report;
       }).finally(() => clearTimeout(timer));
       request = { controller, promise, key: cacheKey };
@@ -379,7 +433,7 @@
       panel.querySelectorAll(":scope > :not(.cielo-nights)").forEach(el => el.remove());
       panel.querySelector(".cielo-nights").insertAdjacentHTML("afterend", '<p class="card cielo-loading" role="status">Carico la notte selezionata…</p>');
     } else {
-      panel.innerHTML = '<p class="card" role="status">Calcolo le tre prossime notti…</p>';
+      panel.innerHTML = `<p class="card" role="status">${site ? "Carico il meteo globale e calcolo le tre notti…" : "Calcolo le tre prossime notti…"}</p>`;
     }
     panel.setAttribute("aria-busy", "true");
     pending.promise.then(report => {
@@ -403,18 +457,25 @@
       return;
     }
     $("#cielo-equipment").onchange = event => {
-      storage.set("meteo.v5.cielo.rig", event.target.value);
+      MeteoSky.update({ rig: event.target.value });
       const state = getState();
       state.framing = "";
       load(state);
     };
     const atmosphere = $("#cielo-atmosphere");
-    atmosphere.ontoggle = () => {
+    if (atmosphere) atmosphere.ontoggle = () => {
       const content = $("#cielo-atmosphere-content");
       if (atmosphere.open && !content.innerHTML) content.innerHTML = window.MeteoV53?.skyCard() || "";
     };
+    MeteoSky.bindPlaces(render);
     load(getState());
   }
 
-  window.MeteoCielo = { view, bind };
+  function resetPersonal() {
+    request?.controller.abort();
+    request = null;
+    reports.clear();
+    states.clear();
+  }
+  window.MeteoCielo = { view, bind, resetPersonal };
 })();
