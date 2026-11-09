@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 import re
@@ -12,7 +13,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from db import get_engine
-from v53_profiles import ConflictError, authenticate, digest, issue_session, rate_limit
+from v53_profiles import (
+    HASH_LOCK,
+    ConflictError,
+    authenticate,
+    digest,
+    issue_session,
+    rate_limit,
+)
 
 CHALLENGE_COOKIE = "__Host-MeteoGoogle"
 MAX_AGE = 600
@@ -86,6 +94,15 @@ def _verify(credential, audience):
         transport.session.close()
 
 
+def _subject_key(subject):
+    # Keep the provider identifier private. A stable, app-specific salt
+    # allows matching the same Google identity without storing its raw ID.
+    with HASH_LOCK:
+        return hashlib.pbkdf2_hmac(
+            "sha256", subject.encode(), b"meteo-pro:google-subject:v1", 600000
+        ).hex()
+
+
 def finish_google(credential, challenge, session_token, address):
     configured = client_id()
     if not configured:
@@ -130,7 +147,7 @@ def finish_google(credential, challenge, session_token, address):
         or not 1 <= len(subject) <= 255
     ):
         raise PermissionError("Identità Google non associata a questa richiesta")
-    subject_hash = digest("google:" + subject)
+    subject_hash = _subject_key(subject)
     email = (
         str(claims.get("email", ""))[:254]
         if claims.get("email_verified") is True

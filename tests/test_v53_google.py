@@ -79,9 +79,10 @@ def test_google_links_existing_profile_without_merging_by_email(
     assert body["account"]["auth_method"] == "google"
     assert body["profile"]["identity"]["name"] == "Osservatore"
     with sqlite_engine.connect() as con:
-        assert con.execute(
+        stored_subject = con.execute(
             text("SELECT subject_hash FROM personal_google_links")
-        ).scalar() == (v53_google.digest("google:" + claims["sub"]))
+        ).scalar()
+        assert len(stored_subject) == 64 and claims["sub"] not in stored_subject
 
 
 def test_new_google_account_can_be_recovered_and_deleted(sqlite_engine, monkeypatch):
