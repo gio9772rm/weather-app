@@ -73,24 +73,34 @@
     }
     return root;
   }
+  function eligibleNights(plan, now = Date.now()) {
+    const choices = plan?.nights?.length ? plan.nights : [{ start: plan?.start, end: plan?.end, ...plan?.schedule }];
+    return choices.filter(night => night.blocks?.length && night.blocks.every(b => Date.parse(b.prepare_start) >= now));
+  }
   function markup(plan) {
-    return `<article class="card nina-export"><h2>Porta il piano in N.I.N.A.</h2><p>Sequenza avanzata con coordinate J2000, centratura e pose LIGHT negli intervalli del piano. Imposta esposizione e parametri camera prima di scaricarla.</p><button type="button" id="export-nina" class="quiet" ${!plan?.schedule?.blocks?.length || plan.profile !== "deep_sky" ? "disabled" : ""}>Esporta sequenza N.I.N.A.</button>${!plan?.schedule?.blocks?.length ? '<p class="metric-caption">Disponibile quando il piano contiene almeno un blocco utilizzabile.</p>' : plan.profile !== "deep_sky" ? '<p class="metric-caption">Scegli Fotografia cielo profondo per creare una sequenza di ripresa.</p>' : ""}</article>`;
+    const available = eligibleNights(plan).length;
+    return `<article class="card nina-export"><h2>Porta il piano in N.I.N.A.</h2><p>Scegli una notte per esportare la sequenza con centratura e pose LIGHT. Il budget per tutti i filtri è scaricabile separatamente.</p><button type="button" id="export-nina" class="quiet" ${!available || plan.profile !== "deep_sky" ? "disabled" : ""}>Esporta sequenza N.I.N.A.</button>${!available ? '<p class="metric-caption">Disponibile quando il piano contiene almeno un blocco utilizzabile.</p>' : plan.profile !== "deep_sky" ? '<p class="metric-caption">Scegli Fotografia cielo profondo per creare una sequenza di ripresa.</p>' : ""}</article>`;
   }
   function bind(plan, config, catalog) {
     const button = document.querySelector("#export-nina"); if (!button) return;
     button.onclick = () => {
+      const nights = eligibleNights(plan);
+      if (!nights.length) { notice("Ricalcola un piano con blocchi futuri per esportare."); return; }
+      const recipe = plan.budget?.options?.filters || [];
       document.querySelector("#nina-dialog")?.remove();
       const dialog = document.createElement("dialog"); dialog.id = "nina-dialog";
-      dialog.innerHTML = `<form id="nina-form"><div class="dialog-title"><h2>Esporta per N.I.N.A. 3.2</h2><button type="button" id="nina-close" class="quiet" aria-label="Chiudi esportazione">×</button></div><p>${esc(config.equipment?.name || "Strumento del piano")} · ${dateTime(plan.start)} – ${dateTime(plan.end)} · ${esc(plan.timezone)}.</p><div class="form-grid"><label>Esposizione · secondi<input id="nina-exposure" type="number" min="0.1" max="3600" step="0.1" value="180" required></label><label>Gain · −1 predefinito camera<input id="nina-gain" type="number" min="-1" max="10000" value="-1" required></label><label>Offset · −1 predefinito camera<input id="nina-offset" type="number" min="-1" max="10000" value="-1" required></label><label>Binning<select id="nina-binning">${[1, 2, 3, 4].map(n => `<option value="${n}">${n}×${n}</option>`).join("")}</select></label></div><label class="nina-confirm"><input id="nina-flip" type="checkbox" checked> Includi il flip al meridiano con le impostazioni del profilo N.I.N.A.</label><p>Apri il JSON nel sequenziatore avanzato per la notte indicata, con il PC impostato su ${esc(plan.timezone)}. Gli orari di N.I.N.A. sono locali e non memorizzano la data.</p><p>Prepara connessione, raffreddamento, filtro, fuoco e guida nel tuo profilo; completa le sezioni Start ed End. La rotazione ${num(config.rotation, 0)}° è annotata nel target e va impostata sull’attrezzatura. Il controllo meteo resta quello configurato in N.I.N.A.</p><label class="nina-confirm"><input id="nina-reviewed" type="checkbox" required> Ho verificato notte, fuso del PC e parametri di ripresa. Rivedrò la sequenza in N.I.N.A. prima dell’avvio.</label><button class="primary">Scarica JSON N.I.N.A.</button><p id="nina-status" role="status"></p></form>`;
+      dialog.innerHTML = `<form id="nina-form"><div class="dialog-title"><h2>Esporta per N.I.N.A. 3.2</h2><button type="button" id="nina-close" class="quiet" aria-label="Chiudi esportazione">×</button></div><p>${esc(config.equipment?.name || "Strumento del piano")} · ${esc(plan.site?.name || "")} · ${esc(plan.timezone)}.</p><div class="form-grid"><label>Notte da esportare<select id="nina-night">${nights.map((night,i) => `<option value="${i}">${esc(MeteoSky.dateTime(night.start,plan.timezone))} · ${night.blocks.length} blocchi</option>`).join("")}</select></label><label>Esposizione · secondi<input id="nina-exposure" type="number" min="0.1" max="3600" step="0.1" value="${recipe.length === 1 ? Number(recipe[0].seconds) : 180}" required></label><label>Gain · −1 predefinito camera<input id="nina-gain" type="number" min="-1" max="10000" value="-1" required></label><label>Offset · −1 predefinito camera<input id="nina-offset" type="number" min="-1" max="10000" value="-1" required></label><label>Binning<select id="nina-binning">${[1, 2, 3, 4].map(n => `<option value="${n}">${n}×${n}</option>`).join("")}</select></label></div><label class="nina-confirm"><input id="nina-flip" type="checkbox" checked> Includi il flip al meridiano con le impostazioni del profilo N.I.N.A.</label><p>Apri il JSON nel sequenziatore avanzato per la notte indicata, con il PC impostato su ${esc(plan.timezone)}. Gli orari di N.I.N.A. sono locali e non memorizzano la data.</p>${recipe.length > 1 ? '<p>Sequenza base a esposizione unica. Il CSV del budget contiene la ricetta per tutti i filtri.</p>' : ""}<p>Prepara connessione, raffreddamento, filtro, fuoco e guida nel tuo profilo; completa le sezioni Start ed End. La rotazione ${num(config.rotation, 0)}° è annotata nel target e va impostata sull’attrezzatura. Il controllo meteo resta quello configurato in N.I.N.A.</p><label class="nina-confirm"><input id="nina-reviewed" type="checkbox" required> Ho verificato notte, fuso del PC e parametri di ripresa. Rivedrò la sequenza in N.I.N.A. prima dell’avvio.</label><button class="primary">Scarica JSON N.I.N.A.</button><p id="nina-status" role="status"></p></form>`;
       document.body.append(dialog); dialog.showModal(); document.querySelector("#nina-close").onclick = () => dialog.close();
       dialog.querySelector("form").onsubmit = e => {
         e.preventDefault();
         try {
           const settings = Object.fromEntries(["exposure", "gain", "offset", "binning"].map(k => [k, document.querySelector("#nina-" + k).value]));
           settings.meridianFlip = document.querySelector("#nina-flip").checked;
-          const result = sequence(plan, config, catalog, settings);
+          const night = nights[Number(dialog.querySelector("#nina-night").value)];
+          const chosen = { ...plan, start: night.start, end: night.end, schedule: night };
+          const result = sequence(chosen, config, catalog, settings);
           const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: "application/json" }));
-          const a = document.createElement("a"); a.href = url; a.download = `MeteoPro_NINA_${wallTime(plan.start, plan.timezone).date}.json`; a.click(); URL.revokeObjectURL(url);
+          const a = document.createElement("a"); a.href = url; a.download = `MeteoPro_NINA_${wallTime(chosen.start, plan.timezone).date}.json`; a.click(); URL.revokeObjectURL(url);
           document.querySelector("#nina-status").textContent = "Sequenza scaricata. Aprila nel sequenziatore avanzato e verifica il profilo dell’attrezzatura.";
         } catch (error) { document.querySelector("#nina-status").textContent = error.message; }
       };

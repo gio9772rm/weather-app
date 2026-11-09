@@ -112,6 +112,7 @@ if (
 )
   page = "today";
 let forecastStep = 3,
+  forecastDetailOpen = false,
   historyDays = 90,
   historyMetric = "temp_mean_c",
   importDigest = null;
@@ -409,7 +410,7 @@ $("#theme").addEventListener("click", () => {
 });
 function chart(
   series,
-  { unit = "°C", height = 235, reference = true, gapMs = 90 * 60000 } = {},
+  { unit = "°C", height = 235, reference = true, gapMs = 90 * 60000, timezone = null } = {},
 ) {
   const clean = series.map((s) => ({
     ...s,
@@ -442,7 +443,7 @@ function chart(
   }
   for (let i = 0; i < 5; i++) {
     const t = t0 + ((t1 - t0) * i) / 4;
-    svg += `<text x="${x(t)}" y="${h - 9}" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}">${esc(t1 - t0 > 3 * 86400000 ? dayLabel(new Date(t).toISOString()) : clock(new Date(t).toISOString()))}</text>`;
+    svg += `<text x="${x(t)}" y="${h - 9}" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}">${esc(t1 - t0 > 3 * 86400000 ? dayLabel(new Date(t).toISOString()) : timezone ? MeteoSky.clock(t, timezone) : clock(new Date(t).toISOString()))}</text>`;
   }
   for (const s of clean) {
     let path = "",
@@ -599,7 +600,7 @@ function forecastView() {
       precip_probability: maximum("precip_probability"),
     });
   }
-  return `<h1>Le prossime giornate</h1>${window.MeteoV54?.reliabilityMarkup()||""}<p>${esc(data.calibration)} · emissione ${dateTime(rows[0]?.issued_at)}</p><div class="grid">${(
+  return `<h1>Le prossime giornate</h1><p>${esc(data.calibration)} · emissione ${dateTime(rows[0]?.issued_at)}</p><div class="grid">${(
     data.daily || []
   )
     .slice(0, 7)
@@ -609,7 +610,7 @@ function forecastView() {
     )
     .join(
       "",
-    )}${weatherChart()}</div><div class="controls"><button class="quiet" data-go="timeline">Grafici coordinati · cursore e zoom →</button></div>${title("Dettaglio orario", proAnchor("forecast", "Confronto modelli Pro"))}<div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Dati del blocco</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${f.complete ? "Completi" : "Parziali"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${window.MeteoV53?.probabilities() || ""}${title("Verifica delle previsioni", '<button class="quiet" data-go="models">Quanto ci prende? →</button>')}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div>`;
+    )}${weatherChart()}</div><div class="controls"><button class="quiet" data-go="timeline">Grafici coordinati · cursore e zoom →</button></div><details id="forecast-detail" class="card detail-row"${forecastDetailOpen ? " open" : ""}><summary>Dettaglio orario e confronto Pro</summary><p>${proAnchor("forecast", "Confronto modelli Pro")}</p><div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Dati del blocco</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${f.complete ? "Completi" : "Parziali"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${window.MeteoV53?.probabilities() || ""}${title("Verifica delle previsioni", '<button class="quiet" data-go="models">Quanto ci prende? →</button>')}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div></details>${window.MeteoV54?.reliabilityMarkup(true)||""}`;
 }
 function qualityTable() {
   const scores = (data.scores || []).filter((s) =>
@@ -812,6 +813,7 @@ function bindView() {
   $("#view")
     .querySelectorAll("[data-settings]")
     .forEach((el) => el.addEventListener("click", openPreferences));
+  $("#forecast-detail")?.addEventListener("toggle", event => { forecastDetailOpen = event.target.open; });
   $("#forecast-step")?.addEventListener("change", (ev) => {
     forecastStep = Number(ev.target.value);
     render();

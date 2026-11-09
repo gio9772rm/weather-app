@@ -208,3 +208,83 @@
   .cielo-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .cielo-filters label:last-child { grid-column: 1 / -1; }
 }
+.detail-row.card { padding: 13px 18px; }
+.detail-row > summary { cursor: pointer; font-weight: 650; padding: 3px 0; }
+.detail-row:not(.card) { margin-block: 13px; border-top: 1px solid var(--line); padding-top: 9px; }
+.detail-row[open] > summary { margin-bottom: 12px; }
+.cielo-link.inline { display: inline-block; }
+#cielo-panel > .card { margin-top: 0; }
+.cielo-night {
+  display: grid;
+  grid-template-rows: minmax(1.35em, auto) 1fr auto;
+  align-items: start;
+  justify-content: stretch;
+}
+.cielo-picks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 13px;
+}
+.cielo-pick {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 6px;
+  text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cielo-pick[aria-pressed="true"] {
+  border-color: var(--cielo-night);
+  background: color-mix(in srgb, var(--cielo-night) 9%, var(--surface));
+}
+.cielo-pick small { color: var(--muted); }
+.cielo-pick strong { color: var(--good); font-size: 0.84rem; }
+.cielo-selected {
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 10px 13px;
+}
+.cielo-selected > b { flex: 1 1 14rem; }
+.sky-lookup, .sky-place-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin-block: 12px;
+}
+.sky-lookup > label { flex: 1 1 200px; min-width: 0; }
+.sky-lookup input, #budget-recipe {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+}
+.sky-search-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 7px;
+  width: 100%;
+}
+.sky-search-results:empty { display: none; }
+.sky-match { display: flex; flex-direction: column; gap: 3px; text-align: left; }
+.sky-match span { font-size: 0.82rem; color: var(--muted); }
+.sky-place-actions select { display: block; width: 100%; }
+.budget-toggle { display: block; margin-bottom: 11px; }
+.budget-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.budget-filters span { background: var(--soft); border-radius: 9px; padding: 7px 10px; }
+#budget-download { margin-top: 6px; }
+@media (max-width: 650px) {
+  .cielo-picks { grid-template-columns: minmax(0, 1fr); }
+  .cielo-pick { grid-template-rows: auto; }
+  .cielo-night { grid-template-rows: minmax(2.7em, auto) 1fr auto; }
+}
+@media (max-width: 440px) {
+  .cielo-context { grid-template-columns: minmax(0, 1fr); }
+  .cielo-context select { max-width: 100%; }
+}

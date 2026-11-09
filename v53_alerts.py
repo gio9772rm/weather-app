@@ -72,6 +72,8 @@ def refresh_plan_alerts(now=None):
     for _, account, saved, previous in sorted(candidates, key=lambda v: v[0])[:24]:
         try:
             config = saved["config"]
+            if config.get("site"):
+                continue
             station = config["station_id"]
             cfg = station_settings(station)
             start = pd.Timestamp(config["start"])

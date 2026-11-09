@@ -1,8 +1,9 @@
 """Bounded interval scheduling on validated geometry/weather windows."""
 
 import math
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 
+import numpy as np
 import pandas as pd
 
 
@@ -47,25 +48,33 @@ def optimize_schedule(sessions, tracks, start, end, options):
     for session in sessions:
         target = session["target"]
         points = (
-            tracks[tracks.target.eq(target)].set_index("valid_time")
+            tracks[tracks.target.eq(target)].sort_values("valid_time")
             if not tracks.empty
             else pd.DataFrame()
         )
+        times = [pd.Timestamp(t).value for t in points.get("valid_time", [])]
+        scores = np.asarray(points.get("planner_score", []), dtype=float)
+        valid = np.isfinite(scores)
+        sums = np.r_[0, np.cumsum(np.where(valid, scores, 0))]
+        counts = np.r_[0, np.cumsum(valid)]
         for window in session["windows"]:
             left, right = (
                 max(pd.Timestamp(window["start"]), start).ceil("15min"),
                 min(pd.Timestamp(window["end"]), end).floor("15min"),
             )
             for a in pd.date_range(left, right, freq="15min"):
+                i = bisect_left(times, a.value)
                 for b in pd.date_range(
                     a + pd.Timedelta(minutes=math.ceil(minimum / 15) * 15),
                     right,
                     freq="15min",
                 ):
-                    sample = points[(points.index >= a) & (points.index <= b)]
-                    quality = float(sample.planner_score.mean()) if len(sample) else 0
-                    if not math.isfinite(quality):
-                        continue
+                    j = bisect_right(times, b.value)
+                    quality = (
+                        float((sums[j] - sums[i]) / (counts[j] - counts[i]))
+                        if counts[j] > counts[i]
+                        else 0
+                    )
                     minutes = (b - a).total_seconds() / 60
                     candidates.append(
                         {
