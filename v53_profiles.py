@@ -65,14 +65,6 @@ def check_password(password, stored):
     return bool(stored) and hmac.compare_digest(candidate, stored)
 
 
-def check_recovery(code, stored):
-    return (
-        isinstance(code, str)
-        and re.fullmatch(r"[A-Za-z0-9_-]{43}", code) is not None
-        and hmac.compare_digest(digest(code), stored)
-    )
-
-
 def rate_limit(bucket, maximum, minutes=15):
     now = pd.Timestamp.now(tz="UTC")
     params = {
@@ -207,8 +199,12 @@ def account_login(action, values, address):
                 .first()
             )
         if action == "recover":
-            if not row or not check_recovery(
-                values.get("recovery"), row["recovery_hash"]
+            code = values.get("recovery", "")
+            if (
+                not isinstance(code, str)
+                or len(code) > 128
+                or not row
+                or not hmac.compare_digest(digest(code), row["recovery_hash"])
             ):
                 raise PermissionError("Credenziali non valide")
             hashed = password_hash(password)
@@ -610,25 +606,12 @@ def account_action(action, values, account, token):
             )
         elif action == "delete":
             rate_limit("delete:" + identifier, 5)
-            secrets_row = con.execute(
-                text(
-                    "SELECT password_hash,recovery_hash FROM personal_accounts WHERE id=:id"
-                ),
+            hashed = con.execute(
+                text("SELECT password_hash FROM personal_accounts WHERE id=:id"),
                 {"id": identifier},
-            ).one()
-            if "recovery" in values:
-                confirmed = check_recovery(
-                    values["recovery"], secrets_row.recovery_hash
-                )
-            else:
-                password = values.get("password", "")
-                confirmed = (
-                    isinstance(password, str)
-                    and 12 <= len(password) <= 128
-                    and check_password(password, secrets_row.password_hash)
-                )
-            if not confirmed:
-                raise PermissionError("Password o codice di recupero non valido")
+            ).scalar()
+            if not check_password(values.get("password"), hashed):
+                raise PermissionError("Password non valida")
             for table in (
                 "personal_sessions",
                 "personal_profiles",

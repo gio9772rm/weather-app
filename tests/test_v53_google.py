@@ -95,7 +95,20 @@ def test_new_google_account_can_be_recovered_and_deleted(sqlite_engine, monkeypa
     assert body["account"]["auth_method"] == "google"
     assert body["recovery"] and body["profile"] == {}
     assert post(c, "delete", {"password": body["recovery"]}).status_code == 401
-    assert post(c, "delete", {"recovery": body["recovery"]}).status_code == 200
+    password = "backup-password-for-google-test"
+    recovered = post(
+        c,
+        "recover",
+        {
+            "username": body["account"]["username"],
+            "recovery": body["recovery"],
+            "password": password,
+        },
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["recovery"] != body["recovery"]
+    assert recovered.json()["account"]["id"] == body["account"]["id"]
+    assert post(c, "delete", {"password": password}).status_code == 200
     assert c.get("/api/v5/personal/profile").status_code == 401
     with sqlite_engine.connect() as con:
         assert (

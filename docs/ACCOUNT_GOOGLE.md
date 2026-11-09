@@ -24,7 +24,8 @@ L'accesso è facoltativo e gli account Meteo Pro esistenti restano disponibili.
 Il server verifica il token Google, il destinatario e il nonce monouso.
 Il collegamento usa l'identità Google verificata, senza unire account che
 hanno la stessa email. Meteo Pro non richiede accesso a Gmail, Drive o
-Calendar. Il codice di recupero consente di impostare una password di
-riserva anche per i profili creati con Google.
+Calendar. Con la sessione Google aperta, in Account puoi usare il codice
+di recupero per impostare una password di riserva. La password è richiesta
+per confermare l'eliminazione del profilo.
 
 [Istruzioni ufficiali Google per il client web](https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid).
