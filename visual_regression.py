@@ -1188,6 +1188,7 @@ def _wait_for_app(url: str, process: subprocess.Popen[str]) -> None:
 
 def run_visual_checks(output: str | Path) -> dict[str, str]:
     try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError("Installare Playwright per il controllo visuale") from exc
@@ -1438,20 +1439,9 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                 )
                             save_profile.click()
                             # The old plots remain mounted during the form rerun.
-                            # Wait for its result, then for Streamlit's stale fade
-                            # to finish before auditing actual settled contrast.
                             page.get_by_text(
                                 re.compile(r"^Profilo .+ attivo\.$")
                             ).wait_for(state="visible", timeout=30_000)
-                            page.wait_for_function(
-                                """() => [...document.querySelectorAll('[data-testid="stCaptionContainer"] p')].every(el => {
-                                  for (let node=el; node && !node.matches('.stApp'); node=node.parentElement) {
-                                    if (Number(getComputedStyle(node).opacity) < 0.99) return false;
-                                  }
-                                  return true;
-                                })""",
-                                timeout=15_000,
-                            )
                             page.wait_for_function(
                                 "document.querySelectorAll('.js-plotly-plot').length >= 3",
                                 timeout=30_000,
@@ -1465,8 +1455,28 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                     f"{name}: grafico astronomico eccede di "
                                     f"{chart_overflow}px"
                                 )
-                            audit = page.evaluate(ASTRONOMY_CONTRAST_AUDIT)
-                            if not audit["samples"] or not audit["numberContainers"]:
+                            # Several fading ancestors can each exceed .99
+                            # while their product is still below it. Capture
+                            # the settled sample in the same browser frame.
+                            try:
+                                audit = page.wait_for_function(
+                                    f"""() => {{
+                                      const audit = ({ASTRONOMY_CONTRAST_AUDIT})();
+                                      const captions = audit.samples.filter(
+                                        s => s.selector.includes('stCaptionContainer'));
+                                      return captions.length && audit.numberContainers.length
+                                        && captions.every(s => s.opacity >= 0.99) && audit;
+                                    }}""",
+                                    timeout=15_000,
+                                ).json_value()
+                            except PlaywrightTimeoutError:
+                                audit = page.evaluate(ASTRONOMY_CONTRAST_AUDIT)
+                            captions = [
+                                sample
+                                for sample in audit["samples"]
+                                if "stCaptionContainer" in sample["selector"]
+                            ]
+                            if not captions or not audit["numberContainers"]:
                                 raise AssertionError(
                                     f"{name}: controlli astronomici non verificabili"
                                 )
@@ -1482,9 +1492,8 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                 )
                             faded = [
                                 sample
-                                for sample in audit["samples"]
-                                if "stCaptionContainer" in sample["selector"]
-                                and sample["opacity"] < 0.99
+                                for sample in captions
+                                if sample["opacity"] < 0.99
                             ]
                             if faded:
                                 raise AssertionError(
