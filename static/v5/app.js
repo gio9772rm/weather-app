@@ -1,7 +1,8 @@
 /* Meteo Pro V5: dependency-free UI, one automatic weather cycle per 600 s. */
 "use strict";
 const REFRESH_MS = 600000;
-const OPENING_RETRIES_MS = [3000, 8000, 15000, 25000];
+// A cold service can return its loading page immediately for about a minute.
+const OPENING_RETRIES_MS = [3000, 8000, 15000, 25000, 35000];
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
   String(value ?? "").replace(
