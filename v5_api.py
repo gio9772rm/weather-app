@@ -395,7 +395,7 @@ async def extra_tool(request):
                 city_forecast, request.query_params.get("id", "")
             )
             return JSONResponse(value, headers=headers)
-        if request.method == "POST" and action == "planner":
+        if request.method == "POST" and action in {"planner", "cielo"}:
             if not origin_matches(request):
                 return JSONResponse(
                     {"error": "Origine non consentita"},
@@ -417,7 +417,22 @@ async def extra_tool(request):
                         headers=headers,
                     )
             values = json.loads(body)
-            value = await run_in_threadpool(planner, values["station_id"], values)
+            if not isinstance(values, dict) or not isinstance(
+                values.get("station_id"), str
+            ):
+                raise ValueError("Località non valida")
+            station_id = values["station_id"]
+            if action == "cielo":
+                from v5_cielo import observing_report
+
+                def report():
+                    return observing_report(
+                        station_id, values, snapshot_for(station_id)
+                    )
+
+                value = await run_in_threadpool(report)
+            else:
+                value = await run_in_threadpool(planner, station_id, values)
             return JSONResponse(value, headers=headers)
         return JSONResponse(
             {"error": "Strumento non disponibile"}, status_code=404, headers=headers

@@ -1,6 +1,7 @@
 /* Meteo Pro V5: dependency-free UI, one automatic weather cycle per 600 s. */
 "use strict";
 const REFRESH_MS = 600000;
+const OPENING_RETRIES_MS = [3000, 8000, 15000, 25000];
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
   String(value ?? "").replace(
@@ -77,6 +78,10 @@ let stations = [],
   data = null,
   offline = false,
   timer = null,
+  retryTimer = null,
+  retryIndex = 0,
+  recovering = true,
+  stationsOnline = false,
   refreshing = false,
   installPrompt = null;
 let page = new URL(location.href).searchParams.get("page") || "today";
@@ -108,7 +113,6 @@ if (
 let forecastStep = 3,
   historyDays = 90,
   historyMetric = "temp_mean_c",
-  selectedNight = "",
   importDigest = null;
 const tz = () => data?.station?.timezone || "Europe/Rome";
 const clock = (value) =>
@@ -177,16 +181,18 @@ function notice(message) {
 function updateMeta() {
   if (!data) return;
   const fresh = finite(currentAge()) && currentAge() <= 20;
+  const waking = offline && navigator.onLine && recovering && retryIndex < OPENING_RETRIES_MS.length;
+  const savedLabel = !navigator.onLine ? "Offline · dati salvati"
+    : waking ? "Cerco aggiornamenti · dati salvati" : "Dati salvati · in attesa di aggiornamento";
   $("#connection").innerHTML =
-    `<i class="live-dot ${!fresh || offline ? "old" : ""}"></i>${offline ? "Offline · dati salvati" : fresh ? "Stazione live" : "Misure " + ageText(currentAge())}`;
+    `<i class="live-dot ${!fresh || offline ? "old" : ""}"></i>${offline ? savedLabel : fresh ? "Stazione live" : "Misure " + ageText(currentAge())}`;
   $("#snapshot-time").textContent =
     "Fotografia " + dateTime(data.generated_at) + " · ciclo automatico 10 min";
   const snapshotAge = (Date.now() - Date.parse(data.generated_at)) / 60000;
   notice(
     offline
-      ? "Sei offline. Stai consultando i dati salvati del " +
-          dateTime(data.generated_at) +
-          ". Non sono un aggiornamento live."
+      ? (!navigator.onLine ? "Sei offline. " : waking ? "In attesa del servizio meteo. Riprovo automaticamente. " : "Il servizio meteo non ha ancora risposto. ") +
+          "Stai consultando i dati salvati del " + dateTime(data.generated_at) + ". Non sono un aggiornamento live."
       : snapshotAge > 30
         ? "Fotografia non aggiornata da " +
           ageText(snapshotAge) +
@@ -194,19 +200,40 @@ function updateMeta() {
         : "",
   );
 }
+const validStations = value => Array.isArray(value) && value.length > 0 &&
+  value.every(s => typeof s?.name === "string" && typeof s.id === "string" && /^[a-z0-9-]{1,80}$/.test(s.id));
+
+async function weatherJSON(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 14000);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok || !response.headers.get("Content-Type")?.includes("application/json")) throw Error();
+    return { payload: await response.json(), offline: response.headers.get("X-Meteo-Offline") === "1" || !navigator.onLine };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function loadStations() {
   try {
-    const r = await fetch("/api/v5/stations", { cache: "no-store" });
-    if (!r.ok) throw Error();
-    stations = (await r.json()).stations;
-    storage.set("meteo.v5.stations", stations);
+    const result = await weatherJSON("/api/v5/stations");
+    if (!validStations(result.payload?.stations)) throw Error();
+    setStations(result.payload.stations);
+    stationsOnline = !result.offline;
+    if (stationsOnline) storage.set("meteo.v5.stations", stations);
   } catch {
-    stations = storage.get("meteo.v5.stations", []);
+    stationsOnline = false;
+    const saved = storage.get("meteo.v5.stations", []);
+    if (validStations(saved)) setStations(saved);
   }
   if (!stations.length)
     throw Error(
       "Non riesco a caricare le località. Riprova quando la connessione è disponibile.",
     );
+}
+function setStations(values) {
+  stations = values;
   const requested =
     new URL(location.href).searchParams.get("station") || prefs.station;
   if (!stations.some((s) => s.id === activeId))
@@ -222,13 +249,8 @@ async function loadSnapshot(id) {
   try {
     // Only a network response can be called live. Offline copies are restored
     // explicitly below or identified by the service worker's provenance header.
-    const r = await fetch("/api/v5/snapshot/" + encodeURIComponent(id), {
-      cache: "no-store",
-    });
-    if (!r.ok) throw Error();
-    const payload = await r.json();
-    if (payload?.station?.id !== id) throw Error();
-    const fromCache = r.headers.get("X-Meteo-Offline") === "1" || !navigator.onLine;
+    const { payload, offline: fromCache } = await weatherJSON("/api/v5/snapshot/" + encodeURIComponent(id));
+    if (payload?.station?.id !== id || !Number.isFinite(Date.parse(payload.generated_at))) throw Error();
     window.MeteoInsights?.observe(payload, fromCache);
     snapshots.set(id, payload);
     cachedOffline.set(id, fromCache);
@@ -247,36 +269,81 @@ async function loadSnapshot(id) {
     );
   }
 }
+function restoreOpeningCopy() {
+  if (!prefs.offline) return;
+  const saved = storage.get("meteo.v5.stations", []);
+  if (!validStations(saved)) return;
+  setStations(saved);
+  for (const { id } of stations) {
+    const payload = storage.get("meteo.v5.snapshot." + id);
+    if (payload?.station?.id !== id || !Number.isFinite(Date.parse(payload.generated_at))) continue;
+    snapshots.set(id, payload);
+    cachedOffline.set(id, true);
+  }
+  if (snapshots.has(activeId)) {
+    data = snapshots.get(activeId);
+    offline = true;
+    render();
+  }
+}
 function scheduleRefresh() {
   clearTimeout(timer);
   timer = setTimeout(() => refreshCycle(), REFRESH_MS);
 }
-async function refreshCycle() {
+function cancelRecoveryTimer() {
+  clearTimeout(retryTimer);
+  retryTimer = null;
+}
+function needsRecovery() {
+  return recovering && (offline || !data) && navigator.onLine && retryIndex < OPENING_RETRIES_MS.length;
+}
+function scheduleRecovery() {
+  if (!needsRecovery() || refreshing || retryTimer !== null || document.hidden) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!needsRecovery() || document.hidden) return;
+    retryIndex += 1;
+    refreshCycle({ activeOnly: true });
+  }, OPENING_RETRIES_MS[retryIndex]);
+}
+async function refreshCycle({ activeOnly = false } = {}) {
   if (refreshing) return;
   refreshing = true;
+  clearTimeout(timer);
+  cancelRecoveryTimer();
   $("#refresh").disabled = true;
   try {
-    await loadStations();
+    if (!activeOnly || !stationsOnline) await loadStations();
+    const ids = activeOnly ? [activeId] : stations.map(s => s.id);
     const results = await Promise.allSettled(
-      stations.map((s) => loadSnapshot(s.id)),
+      ids.map(loadSnapshot),
     );
-    const own = results[stations.findIndex((s) => s.id === activeId)];
+    if (!ids.includes(activeId)) return; // The user changed station during a recovery attempt.
+    const own = results[ids.indexOf(activeId)];
     if (own?.status !== "fulfilled")
       throw Error(own?.reason?.message || "Dati non disponibili");
     data = own.value.payload;
     offline = own.value.offline;
+    if (!offline) recovering = false;
     render();
   } catch (error) {
-    notice(error.message);
-    if (!data)
+    if (data) {
+      offline = true;
+      render();
+    } else {
+      notice(needsRecovery() ? "In attesa del servizio meteo. Riprovo automaticamente." : error.message);
       $("#view").innerHTML =
         `<div class="empty"><h1>Dati temporaneamente non disponibili</h1><p>${esc(error.message)}</p><a href="/pro/">Apri gli strumenti Pro</a></div>`;
+    }
   } finally {
     refreshing = false;
     $("#refresh").disabled = false;
     scheduleRefresh();
-    window.MeteoExtra?.refreshCity();
-    window.MeteoV53?.refresh();
+    scheduleRecovery();
+    if (!activeOnly || !offline) {
+      window.MeteoExtra?.refreshCity();
+      window.MeteoV53?.refresh();
+    }
   }
 }
 function navigate(next) {
@@ -304,20 +371,27 @@ $("#navigation").addEventListener("click", (event) => {
   if (button) navigate(button.dataset.page);
 });
 $("#station").addEventListener("change", async (event) => {
-  activeId = event.target.value;
-  selectedNight = "";
-  if (snapshots.has(activeId)) {
-    data = snapshots.get(activeId);
-    offline = !navigator.onLine || cachedOffline.get(activeId) === true;
+  const id = event.target.value;
+  if (snapshots.has(id) && (!navigator.onLine || !cachedOffline.get(id))) {
+    data = snapshots.get(id);
+    offline = !navigator.onLine || cachedOffline.get(id) === true;
   } else {
     try {
-      const found = await loadSnapshot(activeId);
+      const found = await loadSnapshot(id);
+      if ($("#station").value !== id) return;
       data = found.payload;
       offline = found.offline;
     } catch (error) {
+      if ($("#station").value !== id) return;
+      $("#station").value = activeId;
       notice(error.message);
       return;
     }
+  }
+  activeId = id;
+  if (!offline) {
+    recovering = false;
+    cancelRecoveryTimer();
   }
   const url = new URL(location.href);
   url.searchParams.set("station", activeId);
@@ -602,34 +676,7 @@ function stationsView() {
     )}</div><div class="coverage-grid">${calendar.map((d) => `<button class="day-cell ${d.status}" data-day="${d.date}" aria-label="${esc(dayLabel(d.date) + " · " + labels[d.status])}" title="${esc(dayLabel(d.date) + " · " + labels[d.status])}"></button>`).join("")}</div><p id="day-detail" class="metric-caption">Tocca un giorno per conoscere origine e numero dei campioni. Il giorno corrente rimane parziale.</p>${chart(series, { unit, reference: false, gapMs: 1.1 * 86400000 })}<p class="metric-caption">Le linee si interrompono nei giorni mancanti. Confronto descrittivo tra microclimi diversi: nessuna correzione automatica Roma–Comacchio.</p></article><div class="controls"><button class="quiet" data-go="import">Importa uno storico · amministratore</button><button class="quiet" data-go="archive">Rapporti mensili e record →</button>${proAnchor("station", "Archivio completo Pro")}</div>`;
 }
 function astronomyView() {
-  const a = data.astronomy?.[prefs.profile] || {},
-    nights = a.nights || [];
-  if (!nights.some((n) => n.date === selectedNight))
-    selectedNight = nights[0]?.date || "";
-  const rows = (a.hours || []).filter((h) => h.date === selectedNight);
-  return `<h1>Trova la tua prossima notte</h1><p>Buio effettivo, finestre continue e ragioni del punteggio. Il seeing e la trasparenza restano proxy previsionali.</p><div class="controls"><label for="astro-profile">Tipo di osservazione</label><select id="astro-profile">${[
-    ["deep_sky", "Fotografia cielo profondo"],
-    ["visual", "Osservazione visuale"],
-    ["planetary", "Luna e pianeti"],
-  ]
-    .map(
-      ([v, l]) =>
-        `<option value="${v}" ${v === prefs.profile ? "selected" : ""}>${l}</option>`,
-    )
-    .join(
-      "",
-    )}</select><button class="quiet" data-go="planner">Target, strumenti e piano notturno →</button></div><div class="grid">${astroCard()}<article class="card span-6"><h2>Come leggere la qualità</h2><p>Ore favorevoli: punteggio ≥65, dati essenziali completi e intervallo ancora futuro. I buchi non uniscono due finestre.</p><ul class="fact-list"><li><span>Profilo</span><b>${esc(a.label || "—")}</b></li><li><span>Sole sotto l’orizzonte</span><b>${prefs.profile === "deep_sky" ? "18°" : prefs.profile === "visual" ? "12°" : "6°"}</b></li><li><span>Nuvole</span><b>Limite conservativo</b></li></ul><details><summary>Limiti delle stime</summary><p>Il punteggio meteo non certifica la sicurezza della strumentazione. SQM/Bortle sono stime di atlante, non misure. Per il target usa anche altezza, Luna e ostacoli nel pianificatore della notte.</p></details></article></div>${window.MeteoV53?.skyCard() || ""}${title("Confronto tra le notti")}<article class="card"><div class="table-wrap"><table><thead><tr><th>Notte</th><th>Qualità media residua</th><th>Nuvole medie</th><th>Ore favorevoli residue</th><th>Finestra continua</th><th>Ore incomplete</th></tr></thead><tbody>${nights.map((n) => `<tr><td><button class="quiet" data-night="${n.date}">${dayLabel(n.date)}</button></td><td>${num(n.score, 0)}/100</td><td>${num(n.clouds_mean, 0)}%</td><td><b>${num(n.remaining_good_hours)} h</b></td><td>${n.best_start ? clock(n.best_start) + "–" + clock(n.best_end) + " · " + num(n.continuous_hours) + " h" : "—"}</td><td>${num(n.incomplete_hours)} h</td></tr>`).join("")}</tbody></table></div>${!nights.length ? '<p class="empty">Nessuna finestra calcolabile con i dati disponibili.</p>' : ""}</article>${title("Perché questo punteggio · " + dayLabel(selectedNight))}<article class="card"><div class="table-wrap"><table><thead><tr><th>Intervallo futuro</th><th>Qualità</th><th>Nuvole</th><th>Vento</th><th>Limite principale</th><th>Dettaglio</th></tr></thead><tbody>${rows
-    .map(
-      (h) =>
-        `<tr><td>${clock(h.start)}–${clock(h.end)}</td><td>${h.complete ? num(h.astro_score, 0) + "/100" : "Incompleta"}</td><td>${num(h.clouds, 0)}%</td><td>${num(h.wind_kmh)} km/h</td><td>${esc(h.limiting_factor)}</td><td><details><summary>Fattori</summary><p>${Object.entries(
-          h.penalties || {},
-        )
-          .map(([k, v]) => esc(k) + ": " + num(v) + " punti")
-          .join(
-            "<br>",
-          )}${h.probability_source ? "<br>Probabilità pioggia: " + esc(h.probability_source) : ""}${h.missing_fields?.length ? "<br>Mancano: " + esc(h.missing_fields.join(", ")) : ""}</p></details></td></tr>`,
-    )
-    .join("")}</tbody></table></div></article>`;
+  return window.MeteoCielo?.view() ?? astroCard();
 }
 function airView() {
   const air = data.air;
@@ -749,6 +796,7 @@ function render() {
   window.MeteoInsights?.bind(page);
   window.MeteoV53?.bind(page);
   window.MeteoTimeline?.bind();
+  window.MeteoCielo?.bind(page);
   if (page === "notifications") checkPush();
 }
 function bindView() {
@@ -779,15 +827,8 @@ function bindView() {
     prefs.profile = ev.target.value;
     storage.set("meteo.v5.preferences", prefs);
     render();
+    $("#astro-profile")?.focus({ preventScroll: true });
   });
-  $("#view")
-    .querySelectorAll("[data-night]")
-    .forEach((el) =>
-      el.addEventListener("click", () => {
-        selectedNight = el.dataset.night;
-        render();
-      }),
-    );
   $("#view")
     .querySelectorAll("[data-day]")
     .forEach((el) =>
@@ -1113,12 +1154,18 @@ $("#install").addEventListener("click", async () => {
 });
 window.addEventListener("offline", () => {
   offline = true;
-  updateMeta();
+  cancelRecoveryTimer();
+  if (page === "astronomy") render();
+  else updateMeta();
 });
 window.addEventListener("online", () => {
-  notice(
-    "Connessione ristabilita. I dati si aggiorneranno al prossimo ciclo; puoi usare Aggiorna ora.",
-  );
+  recovering = true;
+  retryIndex = 0;
+  if (!document.hidden) refreshCycle({ activeOnly: true });
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) cancelRecoveryTimer();
+  else scheduleRecovery();
 });
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker
@@ -1139,4 +1186,7 @@ navigator.serviceWorker?.addEventListener("controllerchange", () =>
 );
 // The deferred extensions must be ready even when snapshots arrive from cache
 // before a script finishes downloading. This still starts only one timer.
-document.addEventListener("DOMContentLoaded", refreshCycle, { once: true });
+document.addEventListener("DOMContentLoaded", () => {
+  restoreOpeningCopy();
+  refreshCycle();
+}, { once: true });

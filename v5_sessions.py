@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from itertools import pairwise
 
 import pandas as pd
+
+from v5_astronomy import FAVORABLE_SCORE
 
 LIMITS = {
     "deep_sky": {
@@ -54,6 +57,55 @@ def session_limits(profile, custom=None):
     return result
 
 
+def weather_blockers(row, limits):
+    """Evaluate one published forecast interval against the planner rules."""
+    fields = (
+        "clouds",
+        "wind_kmh",
+        "wind_gust_kmh",
+        "temp_c",
+        "dewpoint_c",
+        "precip_probability",
+        "rain_mm",
+    )
+    missing = [field for field in fields if pd.isna(row.get(field))]
+    margin = (
+        float(row["temp_c"] - row["dewpoint_c"])
+        if not {"temp_c", "dewpoint_c"}.intersection(missing)
+        else None
+    )
+    if missing or pd.isna(row.get("astro_score")):
+        return ["Dati meteo incompleti"], margin
+    blocked = []
+    if row["clouds"] > limits["clouds"]:
+        blocked.append("Nuvole")
+    if (
+        row["wind_kmh"] > limits["wind_kmh"]
+        or row["wind_gust_kmh"] > limits["gust_kmh"]
+    ):
+        blocked.append("Vento o raffiche oltre la soglia dello strumento")
+    if margin < limits["dew_margin_c"]:
+        blocked.append("Margine dal punto di rugiada ridotto")
+    if row["precip_probability"] > limits["rain_probability"] or row["rain_mm"] > 0:
+        blocked.append("Rischio pioggia")
+    if row["astro_score"] < FAVORABLE_SCORE:
+        blocked.append(str(row.get("limiting_factor") or "Qualità meteo insufficiente"))
+    return list(dict.fromkeys(blocked)), margin
+
+
+def continuous_windows(intervals):
+    """Merge touching usable intervals only; a missing minute breaks a window."""
+    windows = []
+    for start, end in intervals:
+        if windows and start <= windows[-1]["end"]:
+            windows[-1]["end"] = max(end, windows[-1]["end"])
+        else:
+            windows.append({"start": start, "end": end})
+    for item in windows:
+        item["hours"] = (item["end"] - item["start"]).total_seconds() / 3600
+    return windows
+
+
 def target_sessions(tracks, weather, limits, moon_separation):
     """Intersect geometry and each exact remaining-darkness forecast interval.
 
@@ -63,82 +115,53 @@ def target_sessions(tracks, weather, limits, moon_separation):
     summaries, detail = [], []
     if tracks.empty:
         return summaries, detail
+    evaluated = (
+        [
+            (row, *weather_blockers(row, limits))
+            for row in weather.sort_values("start").to_dict("records")
+        ]
+        if not weather.empty
+        else []
+    )
+    intersections = {}
     for target, group in tracks.groupby("target", sort=False):
         ordered = group.sort_values("valid_time").to_dict("records")
-        segments, reasons = [], []
+        usable, reasons = [], Counter()
         for left, right in pairwise(ordered):
             t0, t1 = pd.Timestamp(left["valid_time"]), pd.Timestamp(right["valid_time"])
             if t1 - t0 > pd.Timedelta(minutes=15):
                 continue
-            relevant = (
-                weather[(weather.start < t1) & (weather.end > t0)]
-                if not weather.empty
-                else weather
-            )
-            if relevant.empty:
-                reasons.append("Buio o dati meteo non disponibili")
+            key = (t0, t1)
+            if key not in intersections:
+                intersections[key] = [
+                    (max(t0, row["start"]), min(t1, row["end"]), row, blocked, margin)
+                    for row, blocked, margin in evaluated
+                    if row["start"] < t1 and row["end"] > t0
+                ]
+            relevant = intersections[key]
+            if not relevant:
+                reason = "Buio o dati meteo non disponibili"
+                reasons[reason] += (t1 - t0).total_seconds()
                 detail.append(
                     {
                         "target": target,
                         "start": t0,
                         "end": t1,
                         "usable": False,
-                        "reasons": [reasons[-1]],
+                        "reasons": [reason],
                     }
                 )
                 continue
-            for _, row in relevant.iterrows():
-                start, end = max(t0, row.start), min(t1, row.end)
-                blocked = []
-                if not left["visible"] or not right["visible"]:
-                    blocked.append("Altezza o ostacoli")
-                if (
-                    min(left["moon_separation"], right["moon_separation"])
-                    < moon_separation
-                ):
-                    blocked.append("Distanza dalla Luna")
-                fields = (
-                    "clouds",
-                    "wind_kmh",
-                    "wind_gust_kmh",
-                    "temp_c",
-                    "dewpoint_c",
-                    "precip_probability",
-                    "rain_mm",
-                )
-                missing = [f for f in fields if pd.isna(row.get(f))]
-                margin = (
-                    float(row.temp_c - row.dewpoint_c)
-                    if not any(f in missing for f in ("temp_c", "dewpoint_c"))
-                    else None
-                )
-                if missing:
-                    blocked.append("Dati meteo incompleti")
-                else:
-                    if row.clouds > limits["clouds"]:
-                        blocked.append("Nuvole")
-                    if (
-                        row.wind_kmh > limits["wind_kmh"]
-                        or row.wind_gust_kmh > limits["gust_kmh"]
-                    ):
-                        blocked.append(
-                            "Vento o raffiche oltre la soglia dello strumento"
-                        )
-                    if margin < limits["dew_margin_c"]:
-                        blocked.append("Margine dal punto di rugiada ridotto")
-                    if (
-                        row.precip_probability > limits["rain_probability"]
-                        or row.rain_mm > 0
-                    ):
-                        blocked.append("Rischio pioggia")
-                    if pd.isna(row.get("astro_score")) or row.astro_score < 65:
-                        blocked.append(
-                            str(
-                                row.get("limiting_factor")
-                                or "Qualità meteo insufficiente"
-                            )
-                        )
-                blocked = list(dict.fromkeys(blocked))
+            separation = min(left["moon_separation"], right["moon_separation"])
+            geometry = []
+            if not left["visible"] or not right["visible"]:
+                geometry.append("Altezza o ostacoli")
+            if separation < moon_separation and (
+                left.get("moon_visible", True) or right.get("moon_visible", True)
+            ):
+                geometry.append("Distanza dalla Luna")
+            for start, end, row, weather_reasons, margin in relevant:
+                blocked = geometry + weather_reasons
                 item = {
                     "target": target,
                     "start": start,
@@ -151,20 +174,15 @@ def target_sessions(tracks, weather, limits, moon_separation):
                     "cloud_high": row.get("cloud_high"),
                     "wind_kmh": row.get("wind_kmh"),
                     "wind_gust_kmh": row.get("wind_gust_kmh"),
-                    "moon_separation": min(
-                        left["moon_separation"], right["moon_separation"]
-                    ),
+                    "moon_separation": separation,
                 }
                 detail.append(item)
                 if blocked:
-                    reasons.extend(blocked)
+                    for reason in blocked:
+                        reasons[reason] += (end - start).total_seconds()
                 else:
-                    if segments and start == segments[-1]["end"]:
-                        segments[-1]["end"] = end
-                    else:
-                        segments.append({"start": start, "end": end})
-        for item in segments:
-            item["hours"] = (item["end"] - item["start"]).total_seconds() / 3600
+                    usable.append((start, end))
+        segments = continuous_windows(usable)
         best = max(segments, key=lambda r: r["hours"], default={})
         summaries.append(
             {
@@ -174,7 +192,7 @@ def target_sessions(tracks, weather, limits, moon_separation):
                 "best_start": best.get("start"),
                 "best_end": best.get("end"),
                 "windows": segments,
-                "limiting_factor": pd.Series(reasons).mode().iloc[0]
+                "limiting_factor": reasons.most_common(1)[0][0]
                 if reasons
                 else "Nessun limite nelle ore disponibili",
             }

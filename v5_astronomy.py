@@ -25,6 +25,27 @@ PROFILES = {
         "wind_limit": 8,
     },
 }
+FAVORABLE_SCORE = 65
+
+
+def night_darkness(observer, day, timezone, depression):
+    """UTC bounds of one local evening, if both twilights exist."""
+    try:
+        return (
+            pd.Timestamp(
+                dusk(observer, day, depression=depression, tzinfo=timezone)
+            ).tz_convert("UTC"),
+            pd.Timestamp(
+                dawn(
+                    observer,
+                    day + timedelta(days=1),
+                    depression=depression,
+                    tzinfo=timezone,
+                )
+            ).tz_convert("UTC"),
+        )
+    except ValueError:
+        return None
 
 
 def observing_forecast(
@@ -54,29 +75,11 @@ def observing_forecast(
     last = data["valid_time"].max().tz_convert(cfg.local_timezone).date()
     nights = []
     for day in pd.date_range(first, last):
-        try:
-            left = pd.Timestamp(
-                dusk(
-                    observer,
-                    day.date(),
-                    depression=rules["depression"],
-                    tzinfo=cfg.local_timezone,
-                )
-            )
-            right = pd.Timestamp(
-                dawn(
-                    observer,
-                    day.date() + timedelta(days=1),
-                    depression=rules["depression"],
-                    tzinfo=cfg.local_timezone,
-                )
-            )
-            nights.append(
-                (str(day.date()), left.tz_convert("UTC"), right.tz_convert("UTC"))
-            )
-        except ValueError:
-            # No matching twilight (polar day/night): do not invent a window.
-            continue
+        bounds = night_darkness(
+            observer, day.date(), cfg.local_timezone, rules["depression"]
+        )
+        if bounds:
+            nights.append((str(day.date()), *bounds))
     output = []
     for _, row in data.reset_index(drop=True).iterrows():
         start = row["valid_time"]
@@ -174,7 +177,7 @@ def observing_forecast(
 
 
 def summarize_observing_nights(
-    frame: pd.DataFrame, threshold: float = 65
+    frame: pd.DataFrame, threshold: float = FAVORABLE_SCORE
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()

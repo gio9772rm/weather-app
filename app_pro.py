@@ -8,6 +8,7 @@ import sys
 import time
 from dataclasses import replace
 from typing import Any
+from urllib.parse import urlencode
 
 import numpy as np
 import pandas as pd
@@ -5683,6 +5684,16 @@ if tab_station.open:
 
 if tab_astro.open:
     with tab_astro:
+        cielo_query = urlencode({
+            "page": "astronomy",
+            "station": CFG.station_id,
+            "theme": "dark" if dark_mode else "light",
+        })
+        st.link_button(
+            "Apri Cielo · confronto delle prossime tre notti",
+            "/?" + cielo_query,
+            help="Grafico con cursore condiviso, soggetti consigliati e passaggio al piano.",
+        )
         st.markdown(
             '<div class="section-kicker">Finestre osservative</div>', unsafe_allow_html=True
         )
