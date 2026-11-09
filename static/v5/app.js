@@ -368,6 +368,7 @@ window.addEventListener("popstate", () => {
   }
   render();
 });
+$("#account-shortcut").addEventListener("click", () => navigate("personal"));
 $("#navigation").addEventListener("click", (event) => {
   const button = event.target.closest("[data-page]");
   if (button) navigate(button.dataset.page);

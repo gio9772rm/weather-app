@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS personal_accounts (
 CREATE TABLE IF NOT EXISTS personal_sessions (
   token_hash TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
+  auth_method TEXT NOT NULL DEFAULT 'password',
   expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_personal_sessions_account ON personal_sessions(account_id);
@@ -62,6 +63,18 @@ CREATE TABLE IF NOT EXISTS personal_devices (
 CREATE TABLE IF NOT EXISTS personal_auth_limits (
   bucket TEXT PRIMARY KEY,
   attempts INTEGER NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS personal_google_links (
+  subject_hash TEXT PRIMARY KEY,
+  account_id TEXT UNIQUE NOT NULL,
+  email TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS personal_google_challenges (
+  token_hash TEXT PRIMARY KEY,
+  nonce TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  session_hash TEXT NOT NULL,
   expires_at TEXT NOT NULL
 );
 

@@ -155,7 +155,7 @@ def test_public_tools_require_bounded_origin_and_widget_is_allowlisted(
         assert (
             client.post(
                 "/api/v5/tools/planner",
-                content=b"x" * 17000,
+                content=b"x" * 33000,
                 headers={
                     "Origin": "http://testserver",
                     "Content-Type": "application/json",

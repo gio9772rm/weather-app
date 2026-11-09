@@ -356,7 +356,7 @@ def horizon_altitudes(
         altitude = float(raw_altitude)
         if not np.isfinite(direction) or not np.isfinite(altitude):
             raise ValueError("La maschera dell'orizzonte contiene valori non validi")
-        points.append((direction, float(np.clip(altitude, 0, 90))))
+        points.append((direction, float(np.clip(altitude, -90, 90))))
     deduplicated = dict(points)
     ordered = sorted(deduplicated.items())
     if not ordered:

@@ -28,6 +28,7 @@ BACKUP_TABLES = (
     "compact_archives",
     "window_predictions",
     "personal_accounts",
+    "personal_google_links",
     "personal_profiles",
     "personal_alerts",
     "personal_devices",

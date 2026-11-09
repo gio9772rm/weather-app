@@ -1,7 +1,7 @@
 /* V5.3: shared data products and opt-in private cross-device profiles. */
 "use strict";
 (() => {
-  const keys = ["preferences", "cities", "planner", "activity-rules", "activity-choice", "journal", "plans", "equipment", "observing"];
+  const keys = ["preferences", "cities", "planner", "activity-rules", "activity-choice", "journal", "plans", "equipment", "observing", "identity"];
   const prefix = "meteo.v5.";
   const table = (headers, rows) => `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   const dt = v => v && Number.isFinite(Date.parse(v)) ? `${dayLabel(v)} ${clock(v)}` : "—";
@@ -53,10 +53,12 @@
     for(const k of keys){if(k==="preferences")continue;if(k in profile)localStorage.setItem(prefix+k,JSON.stringify(profile[k]));else localStorage.removeItem(prefix+k);}
     const offlineChoice=prefs.offline;Object.assign(prefs,defaults,profile.preferences||{});prefs.offline=offlineChoice;
     localStorage.setItem(prefix+"preferences",JSON.stringify(prefs));setTheme(prefs.theme);
-    window.MeteoExtra?.resetPersonal(preserveDrafts);if(!preserveDrafts)window.MeteoCielo?.resetPersonal();applying=false;
+    window.MeteoExtra?.resetPersonal(preserveDrafts);if(!preserveDrafts){window.MeteoCielo?.resetPersonal();window.MeteoAccount?.reset();}applying=false;
   }
   function checkpoint(){if(state)storage.set("meteo.v53.sync",{account:state.account,revision:state.revision,dirty,profile:snapshotLocal()});}
-  function announce(text){status=text;if($("#sync-status"))$("#sync-status").textContent=text;}
+  const verified=()=>Boolean(state&&hydrated&&!needsLogin);
+  const accountBadge=()=>window.MeteoAccount?.badge(state?.account,verified());
+  function announce(text){status=text;accountBadge();if($("#sync-status"))$("#sync-status").textContent=text;}
   async function api(action, value){
     const r=await fetch("/api/v5/personal/"+action,{cache:"no-store",credentials:"same-origin",...(value===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)})});
     const out=await r.json();if(!r.ok){const e=Error(out.error||"Profilo non disponibile");e.status=r.status;throw e;}return out;
@@ -76,17 +78,17 @@
   function changed(key){if(applying||!state||!keys.includes(key.replace(prefix,"")))return;dirty=true;checkpoint();flush();}
   async function refresh(){
     if(busy||saving)return;
-    if(dirty&&state&&!needsLogin){await flush();return;}
+    if(dirty&&state&&hydrated&&!needsLogin){await flush();return;}
     try{
       const result=await api("profile"), cached=storage.get("meteo.v53.sync",null);
       const profileChanged=!hydrated||!state||state.revision!==result.revision||state.account.id!==result.account.id;
       if(!hydrated){
-        hydrated=true;
+        hydrated=true;needsLogin=false;
         if(!getGuest())storage.set("meteo.v53.guest",snapshotLocal());
         if(cached?.dirty&&cached.account.id===result.account.id){state=result;dirty=true;applyProfile(cached.profile);state.revision=cached.revision;if(result.revision!==cached.revision){conflict=result;announce("Modifiche locali e remote da confrontare.");}else await flush();}
         else adopt(result);
       }else if(!state||state.revision!==result.revision||state.account.id!==result.account.id)adopt(result);
-      else {state.alerts=result.alerts;announce("Sincronizzato · "+dt(result.updated_at));}
+      else {state.account=result.account;state.alerts=result.alerts;announce("Sincronizzato · "+dt(result.updated_at));}
       if(profileChanged||page==="personal")render();
     }catch(e){if(e.status===401){if(!state)announce("Accedi per sincronizzare tra PC e telefono.");else {needsLogin=true;hydrated=false;announce("Sessione scaduta: le modifiche restano sul dispositivo. Accedi di nuovo.");if(page==="personal")render();}}else if(state)announce("Sincronizzazione sospesa · "+e.message);}
   }
@@ -97,7 +99,7 @@
   }
   function personalView(){
     const plans=get("plans",[]), histories=(state?.alerts||[]).flatMap(a=>(a.history||[]).map(h=>({...h,name:a.name}))).sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
-    return `<h1>Il tuo profilo personale</h1><p>Ritrova strumenti, postazioni e soggetti preferiti, piani, tema e riquadri sui dispositivi in cui accedi con lo stesso account.</p><p id="sync-status" class="notice" role="status">${esc(status)}</p>${recovery?`<article class="card"><h2>Conserva il codice di recupero</h2><p>Viene mostrato una sola volta. Permette di impostare una nuova password senza email.</p><code class="recovery-code">${esc(recovery)}</code><button id="download-recovery" class="quiet">Scarica codice</button><button id="hide-recovery" class="quiet">L’ho conservato</button></article>`:""}${state&&!needsLogin?`<article class="card"><h2>${esc(state.account.username)}</h2><p>Profilo privato · revisione ${state.revision}. Le password non sono salvate in chiaro. I dati personali restano esclusi dalle risposte meteo pubbliche.</p><div class="controls"><button id="sync-now" class="primary">Sincronizza ora</button><button id="import-device" class="quiet">Importa i dati precedenti del dispositivo</button><button id="export-profile" class="quiet">Esporta profilo</button><button id="logout" class="quiet">Esci</button><button id="logout-all" class="quiet">Esci da tutti i dispositivi</button></div><details><summary>Elimina l’account e i dati sincronizzati</summary><form id="delete-account"><label>Password<input id="delete-password" type="password" autocomplete="current-password" required></label><button class="quiet">Elimina account</button></form></details></article>`:`<article class="card"><div class="controls">${[["login","Accedi"],["register","Crea profilo"],["recover","Recupera accesso"]].map(([m,l])=>`<button class="${m===mode?"primary":"quiet"}" data-auth-mode="${m}">${l}</button>`).join("")}</div><form id="account-form"><div class="form-grid"><label>Nome utente<input id="account-name" autocomplete="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9_.-]+" required></label><label>${mode==="recover"?"Nuova password":"Password"}<input id="account-password" type="password" autocomplete="${mode==="login"?"current-password":"new-password"}" minlength="12" maxlength="128" required></label>${mode==="recover"?'<label>Codice di recupero<input id="account-recovery" autocomplete="off" required maxlength="128"></label>':""}</div><button class="primary" ${busy?"disabled":""}>${mode==="login"?"Accedi e sincronizza":mode==="register"?"Crea il mio profilo":"Reimposta e accedi"}</button></form><p class="metric-caption">Senza accesso puoi continuare a usare strumenti, piani e diario sul dispositivo. Nessuna sincronizzazione automatica dei dati precedenti: puoi importarli dopo l’accesso.</p></article>`}${conflict?`<article class="card conflict"><h2>Due versioni da confrontare</h2><p>Dispositivo: ${get("journal",[]).length} note, ${plans.length} piani. Server: ${conflict.profile?.journal?.length||0} note, ${conflict.profile?.plans?.length||0} piani. Esporta entrambe prima di scegliere; nessuna viene sovrascritta automaticamente.</p><div class="controls"><button id="export-conflict" class="quiet">Scarica entrambe le versioni</button><button id="use-remote" class="primary">Usa versione server</button><button id="use-local" class="quiet">Conserva versione dispositivo</button></div></article>`:""}${equipmentMarkup()}<details class="card detail-row"><summary>Cielo · postazioni e soggetti preferiti</summary>
+    return `<h1>Account</h1>${window.MeteoAccount?.markup(state?.account,verified()) || ""}<p id="sync-status" class="notice" role="status">${esc(status)}</p>${recovery?`<article class="card"><h2>Conserva il codice di recupero</h2><p>Viene mostrato una sola volta. Permette di impostare una nuova password senza email.</p><code class="recovery-code">${esc(recovery)}</code><button id="download-recovery" class="quiet">Scarica codice</button><button id="hide-recovery" class="quiet">L’ho conservato</button></article>`:""}${state&&!needsLogin?`<article class="card"><h2>Accesso e sincronizzazione</h2><p>Ritrova strumenti, progetti e preferenze sugli altri dispositivi accedendo allo stesso account.</p><div class="controls"><button id="sync-now" class="primary">Sincronizza ora</button><button id="import-device" class="quiet">Importa i dati precedenti del dispositivo</button><button id="export-profile" class="quiet">Esporta profilo</button><button id="logout" class="quiet">Esci</button><button id="logout-all" class="quiet">Esci da tutti i dispositivi</button></div><details><summary>Elimina l’account e i dati sincronizzati</summary><form id="delete-account"><label>Password o codice di recupero<input id="delete-password" type="password" autocomplete="current-password" required></label><button class="quiet">Elimina account</button></form></details></article>`:`<article class="card"><div class="controls">${[["login","Accedi"],["register","Crea profilo"],["recover","Recupera accesso"]].map(([m,l])=>`<button class="${m===mode?"primary":"quiet"}" data-auth-mode="${m}">${l}</button>`).join("")}</div><form id="account-form"><div class="form-grid"><label>Nome utente<input id="account-name" autocomplete="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9_.-]+" required></label><label>${mode==="recover"?"Nuova password":"Password"}<input id="account-password" type="password" autocomplete="${mode==="login"?"current-password":"new-password"}" minlength="12" maxlength="128" required></label>${mode==="recover"?'<label>Codice di recupero<input id="account-recovery" autocomplete="off" required maxlength="128"></label>':""}</div><button class="primary" ${busy?"disabled":""}>${mode==="login"?"Accedi e sincronizza":mode==="register"?"Crea il mio profilo":"Reimposta e accedi"}</button></form><p class="metric-caption">Senza accesso puoi continuare a usare strumenti, piani e diario sul dispositivo. Nessuna sincronizzazione automatica dei dati precedenti: puoi importarli dopo l’accesso.</p></article>`}${conflict?`<article class="card conflict"><h2>Due versioni da confrontare</h2><p>Dispositivo: ${get("journal",[]).length} note, ${plans.length} piani. Server: ${conflict.profile?.journal?.length||0} note, ${conflict.profile?.plans?.length||0} piani. Esporta entrambe prima di scegliere; nessuna viene sovrascritta automaticamente.</p><div class="controls"><button id="export-conflict" class="quiet">Scarica entrambe le versioni</button><button id="use-remote" class="primary">Usa versione server</button><button id="use-local" class="quiet">Conserva versione dispositivo</button></div></article>`:""}${equipmentMarkup()}<details class="card detail-row"><summary>Cielo · postazioni e soggetti preferiti</summary>
       <p>${window.MeteoSky?.settings().sites.length || 0} postazioni · ${window.MeteoSky?.settings().targets.length || 0} soggetti</p>
       <button class="quiet" data-go="astronomy">Apri Cielo per sceglierli →</button></details><article class="card"><h2>Sessioni salvate</h2><button class="quiet" data-go="planner">Prepara una nuova sessione →</button>${plans.length?plans.map(p=>`<section class="saved-plan"><h3>${esc(p.name)}</h3><p>${esc(p.config.site?.label || p.config.station_id)} · ${esc(p.config.start)} · ${p.config.targets.map(esc).join(", ")}</p><p>Avvisi ${p.alerts.enabled?"attivi":"spenti"} · calo minimo ${num(p.alerts.minutes,0)} minuti e ${num(p.alerts.percent,0)}% · silenzio ${esc(p.alerts.quiet_start)}–${esc(p.alerts.quiet_end)} nel fuso della stazione.</p><div class="controls"><button class="quiet" data-load-plan="${esc(p.id)}">Apri e ricalcola</button><button class="quiet" data-edit-alert="${esc(p.id)}">Configura avvisi</button><button class="quiet" data-delete-plan="${esc(p.id)}">Elimina piano</button></div></section>`).join(""):'<p class="empty">Calcola un piano e scegli «Salva sessione e avvisi».</p>'}<p class="metric-caption">Gli avvisi delle sessioni richiedono un account e il collegamento di questo browser. Sono rivalutati nel ciclo meteo, prima dell’inizio della sessione, con dati recenti. Massimo tre piani attivi.</p>${state?'<button id="link-device" class="quiet">Collega questo browser agli avvisi delle sessioni</button><button class="quiet" data-go="notifications">Attiva notifiche push →</button>':""}</article><details class="card detail-row"><summary>Cambiamenti delle tue sessioni</summary>${histories.length?table(["Sessione","Rilevato","Variazione"],histories.slice(0,30).map(h=>[esc(h.name),dt(h.at),esc(h.body)])):'<p class="empty">Nessuna variazione significativa registrata.</p>'}<p class="metric-caption">Ultime verifiche: ${(state?.alerts||[]).map(a=>`${esc(a.name)} ${dt(a.evaluated_at)}`).join(" · ")||"in attesa"}.</p></details>`;
   }
@@ -117,12 +119,37 @@
     if(dirty&&!confirm("Ci sono modifiche non sincronizzate. Esportale prima di uscire. Uscire comunque?"))return;
     await api(action,{device:get("push",{})});await caches.delete("meteo-v5-notifications").catch(()=>{});const guest=getGuest();state=null;dirty=false;conflict=null;recovery="";hydrated=false;localStorage.removeItem("meteo.v53.sync");localStorage.removeItem("meteo.v53.guest");applyProfile(guest||{});announce("Disconnesso · dati locali precedenti ripristinati");render();
   }
+  async function acceptAccess(result, method){
+    if(method==="link"){
+      if(state?.account.id!==result.account.id)throw Error("Il profilo è cambiato; riapri la scheda Account.");
+      state.account=result.account;checkpoint();announce("Account Google collegato");render();return;
+    }
+    if(!getGuest())storage.set("meteo.v53.guest",snapshotLocal());
+    const cached=storage.get("meteo.v53.sync",null);
+    recovery=result.recovery||"";hydrated=true;needsLogin=false;
+    if(cached?.dirty&&cached.account.id===result.account.id){
+      state={...result,revision:cached.revision};applyProfile(cached.profile);dirty=true;
+      if(result.revision!==cached.revision){conflict=result;announce("Modifiche locali da confrontare con il server.");}
+      else await flush();
+    }else adopt(result);
+    render();
+  }
   function bind(pageName){
+    accountBadge();
     for(const [id,set] of [["paired-days",v=>comparisonDays=Number(v)],["paired-lead",v=>comparisonLead=Number(v)],["paired-variable",v=>comparisonVar=v],["paired-basis",v=>comparisonBasis=v]])if($("#"+id))$("#"+id).onchange=e=>{set(e.target.value);render();};
     if(pageName!=="personal")return;
     const safe=fn=>async e=>{try{await fn(e);}catch(error){announce(error.message);notice(error.message);}};
     document.querySelectorAll("[data-auth-mode]").forEach(b=>b.onclick=()=>{mode=b.dataset.authMode;render();});
-    if($("#account-form"))$("#account-form").onsubmit=safe(async e=>{e.preventDefault();busy=true;try{const local=snapshotLocal(),r=await api(mode,{username:$("#account-name").value,password:$("#account-password").value,...(mode==="recover"?{recovery:$("#account-recovery").value}:{})});if(!getGuest())storage.set("meteo.v53.guest",local);const cached=storage.get("meteo.v53.sync",null);recovery=r.recovery||"";hydrated=true;needsLogin=false;if(cached?.dirty&&cached.account.id===r.account.id){state={...r,revision:cached.revision};applyProfile(cached.profile);dirty=true;if(r.revision!==cached.revision){conflict=r;announce("Modifiche locali da confrontare con il server.");}else await flush();}else adopt(r);render();}finally{busy=false;}});
+    if($("#account-form"))$("#account-form").onsubmit=safe(async e=>{
+      e.preventDefault();busy=true;
+      try{
+        const result=await api(mode,{username:$("#account-name").value,password:$("#account-password").value,
+          ...(mode==="recover"?{recovery:$("#account-recovery").value}:{})});
+        await acceptAccess(result);
+      }finally{busy=false;}
+    });
+    if($("#account-edit"))$("#account-edit").onclick=()=>window.MeteoAccount.edit(state?.account);
+    window.MeteoAccount?.bindGoogle(state?.account,verified(),api,acceptAccess);
     if($("#download-recovery"))$("#download-recovery").onclick=()=>download("meteo-codice-recupero.json",{username:state.account.username,recovery});
     if($("#hide-recovery"))$("#hide-recovery").onclick=()=>{recovery="";render();};
     if($("#sync-now"))$("#sync-now").onclick=safe(async()=>{await refresh();render();});

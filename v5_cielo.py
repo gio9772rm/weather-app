@@ -21,6 +21,7 @@ from sky_catalog import recommended_targets, resolve_target, target_filters
 from v5_astronomy import PROFILES, night_darkness
 from v5_data import clean_json, station_settings
 from v5_extensions import plan_constraints
+from v5_projects import project_outlook, project_spec
 from v5_sessions import (
     continuous_windows,
     session_limits,
@@ -170,7 +171,7 @@ def _timeline_weather(intervals, left, right, now):
 
 
 def _target_options(
-    site, times, lunar, weather, dark, now, constraints, limits, requested
+    site, times, lunar, weather, dark, now, constraints, limits, requested, pool=None
 ):
     altitude, separation, rotation, horizon, equipment = constraints
     targets, tracks = [], []
@@ -178,7 +179,7 @@ def _target_options(
     # Keep the endpoints adjacent to the exact twilight/forecast boundaries
     # for the same conservative segment intersection as the planner.
     relevant = (times >= max(dark[0], now) - STEP) & (times <= dark[1] + STEP)
-    pool = recommended_targets()
+    pool = recommended_targets() if pool is None else pool
     if requested and requested.name not in {target.name for target in pool}:
         pool.append(requested)
     for target in pool:
@@ -262,6 +263,14 @@ def _target_options(
     return sorted(targets, key=rank)
 
 
+def _sample_times(bounds):
+    left, right = bounds
+    times = pd.date_range(left.floor("min"), right.ceil("min"), freq=STEP)
+    if times[-1] < right:
+        times = times.append(pd.DatetimeIndex([right.ceil("min")]))
+    return times
+
+
 def night_report(context: ObservingContext, values: dict) -> dict:
     site, snapshot, now = context.site, context.snapshot, context.now
     profile = values.get("profile", "deep_sky")
@@ -269,6 +278,11 @@ def night_report(context: ObservingContext, values: dict) -> dict:
     constraints = plan_constraints(values)
     requested_target = (
         resolve_target(values["target"]) if values.get("target") else None
+    )
+    project = (
+        project_spec(values["project"])
+        if profile == "deep_sky" and values.get("project") is not None
+        else None
     )
     altitude, separation, rotation, horizon, equipment = constraints
     requested = (
@@ -309,9 +323,7 @@ def night_report(context: ObservingContext, values: dict) -> dict:
     timeline, targets = None, []
     if bounds and bounds[0] < bounds[1]:
         left, right = bounds
-        times = pd.date_range(left.floor("min"), right.ceil("min"), freq=STEP)
-        if times[-1] < right:
-            times = times.append(pd.DatetimeIndex([right.ceil("min")]))
+        times = _sample_times(bounds)
         lunar = lunar_track(times, site)
         timeline = {
             "start": left,
@@ -340,6 +352,35 @@ def night_report(context: ObservingContext, values: dict) -> dict:
                 limits,
                 requested_target,
             )
+    outlook = None
+    if project:
+        goal = resolve_target(project["target"])
+        project_windows = {}
+        for day, (bounds, dark, weather, _) in detail.items():
+            if not bounds or not dark or dark[1] <= now:
+                project_windows[day] = []
+                continue
+            matching = (
+                next((target for target in targets if target["id"] == goal.name), None)
+                if day == selected
+                else None
+            )
+            if matching is None:
+                times = _sample_times(bounds)
+                matching = _target_options(
+                    site,
+                    times,
+                    lunar_track(times, site),
+                    weather,
+                    dark,
+                    now,
+                    constraints,
+                    limits,
+                    None,
+                    [goal],
+                )[0]
+            project_windows[day] = matching["windows"]
+        outlook = project_outlook(site, project, project_windows, values)
     return clean_json(
         {
             "schema": 1,
@@ -357,6 +398,7 @@ def night_report(context: ObservingContext, values: dict) -> dict:
             "selected": selected,
             "timeline": timeline,
             "targets": targets,
+            "project": outlook,
             "field": asdict(field_of_view(equipment)) if equipment else None,
             "constraints": {
                 "altitude": altitude,
