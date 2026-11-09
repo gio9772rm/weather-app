@@ -9,7 +9,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
@@ -565,6 +565,44 @@ def _airmass(altitude_deg: np.ndarray) -> np.ndarray:
     return output
 
 
+class SkyLocation(Protocol):
+    @property
+    def latitude(self) -> float: ...
+
+    @property
+    def longitude(self) -> float: ...
+
+
+def lunar_track(times: pd.DatetimeIndex, cfg: SkyLocation) -> dict[str, np.ndarray]:
+    ra, dec, illumination = _moon_position(_julian_date(times))
+    altitude, _ = equatorial_altaz(
+        ra, dec, times, latitude=cfg.latitude, longitude=cfg.longitude
+    )
+    return {"ra": ra, "dec": dec, "illumination": illumination, "altitude": altitude}
+
+
+def target_geometry(target, times, cfg, moon, minimum_altitude, horizon_mask):
+    """Shared samples for the observing console and the detailed planner."""
+    altitude, azimuth = equatorial_altaz(
+        target.ra_deg,
+        target.dec_deg,
+        times,
+        latitude=cfg.latitude,
+        longitude=cfg.longitude,
+    )
+    horizon = horizon_altitudes(azimuth, horizon_mask)
+    return {
+        "altitude": altitude,
+        "azimuth": azimuth,
+        "horizon_altitude": horizon,
+        "visible": altitude >= np.maximum(float(minimum_altitude), horizon),
+        "moon_separation": _angular_separation(
+            target.ra_deg, target.dec_deg, moon["ra"], moon["dec"]
+        ),
+        "moon_visible": moon["altitude"] >= 0,
+    }
+
+
 def night_plan_tracks(
     astronomy: pd.DataFrame,
     cfg: Settings,
@@ -598,6 +636,7 @@ def night_plan_tracks(
         "stability_proxy",
         "moon_separation",
         "moon_illumination",
+        "moon_visible",
         "horizon_altitude",
         "horizon_clearance",
         "visible",
@@ -633,25 +672,20 @@ def night_plan_tracks(
         freq=f"{interval}min",
         inclusive="both",
     )
+    end_utc = end_time.tz_convert("UTC")
+    if utc_times[-1] < end_utc:
+        utc_times = utc_times.append(pd.DatetimeIndex([end_utc]))
     weather = _interpolate_track_weather(astronomy, utc_times)
-    julian = _julian_date(utc_times)
-    moon_ra, moon_dec, moon_illumination = _moon_position(julian)
+    moon = lunar_track(utc_times, cfg)
     weather_score = weather["astro_score"].to_numpy(dtype=float)
     rows: list[pd.DataFrame] = []
     for target in targets:
-        altitude, azimuth = equatorial_altaz(
-            target.ra_deg,
-            target.dec_deg,
-            utc_times,
-            latitude=cfg.latitude,
-            longitude=cfg.longitude,
+        geometry = target_geometry(
+            target, utc_times, cfg, moon, minimum_altitude, horizon_mask
         )
-        local_horizon = horizon_altitudes(azimuth, horizon_mask)
+        altitude = geometry["altitude"]
+        local_horizon = geometry["horizon_altitude"]
         required_altitude = np.maximum(float(minimum_altitude), local_horizon)
-        visible = altitude >= required_altitude
-        separation = _angular_separation(
-            target.ra_deg, target.dec_deg, moon_ra, moon_dec
-        )
         altitude_quality = (
             np.clip(
                 (altitude - required_altitude) / np.maximum(90 - required_altitude, 1),
@@ -661,19 +695,23 @@ def night_plan_tracks(
             * 100
         )
         lunar_proximity = np.clip(
-            (minimum_moon_separation * 2 - separation)
+            (minimum_moon_separation * 2 - geometry["moon_separation"])
             / max(minimum_moon_separation * 2, 1),
             0,
             1,
         )
-        lunar_penalty = moon_illumination / 100 * lunar_proximity * 35
+        lunar_penalty = (
+            moon["illumination"] / 100 * lunar_proximity * 35 * geometry["moon_visible"]
+        )
         geometry_score = altitude_quality - lunar_penalty
         combined_score = np.where(
             np.isfinite(weather_score),
             weather_score * 0.72 + altitude_quality * 0.28 - lunar_penalty,
             geometry_score,
         )
-        combined_score = np.where(visible, np.clip(combined_score, 0, 100), 0)
+        combined_score = np.where(
+            geometry["visible"], np.clip(combined_score, 0, 100), 0
+        )
         target_frame = pd.DataFrame(
             {
                 "target": target.name,
@@ -682,8 +720,7 @@ def night_plan_tracks(
                 "magnitude": target.magnitude,
                 "valid_time": utc_times,
                 "local_time": utc_times.tz_convert(cfg.local_timezone),
-                "altitude": altitude,
-                "azimuth": azimuth,
+                **geometry,
                 "airmass": _airmass(altitude),
                 "planner_score": combined_score,
                 "weather_score": weather_score,
@@ -694,11 +731,8 @@ def night_plan_tracks(
                     dtype=float
                 ),
                 "stability_proxy": weather["stability_proxy"].to_numpy(dtype=float),
-                "moon_separation": separation,
-                "moon_illumination": moon_illumination,
-                "horizon_altitude": local_horizon,
+                "moon_illumination": moon["illumination"],
                 "horizon_clearance": altitude - local_horizon,
-                "visible": visible,
                 "weather_available": np.isfinite(weather_score),
             }
         )

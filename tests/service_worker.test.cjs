@@ -4,7 +4,8 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 
 const origin = 'https://meteo.example';
-const shell = 'meteo-v5-shell-12';
+const workerCode = fs.readFileSync('static/v5/sw.js', 'utf8');
+const shell = workerCode.match(/const SHELL = "([^"]+)"/)[1];
 const key = request => new URL(typeof request === 'string' ? request : request.url, origin).pathname;
 const home = () => new Response('<html><main id="content"></main><script src="/assets/v5/app.js"></script></html>', { headers: { 'Content-Type': 'text/html', 'X-Meteo-App': 'v5' } });
 const loader = () => new Response('<html>Your app is almost live<script>location.reload()</script></html>', { headers: { 'Content-Type': 'text/html' } });
@@ -25,7 +26,7 @@ function worker(fetcher) {
   class AbsoluteRequest extends Request {
     constructor(input, options) { super(typeof input === 'string' ? new URL(input, origin) : input, options); }
   }
-  vm.runInNewContext(fs.readFileSync('static/v5/sw.js', 'utf8'), {
+  vm.runInNewContext(workerCode, {
     self: { location: { origin }, addEventListener(type, callback) { handlers[type] = callback; }, async skipWaiting() { skipped++; }, clients: { async claim() {} } },
     caches, fetch: fetcher, Request: AbsoluteRequest, Response, Headers, URL, URLSearchParams, AbortController,
     setTimeout: callback => setTimeout(callback, 5), clearTimeout,
@@ -107,6 +108,7 @@ test('verified installation activates the complete shell', async () => {
   await Promise.all(w.event('install').pending);
   assert.equal(w.skipped(), 1);
   assert.ok(await (await w.caches.open(shell)).match('/'));
+  assert.ok(await (await w.caches.open(shell)).match('/assets/v5/cielo.js'));
 });
 
 test('turning off saved weather data disables the JSON fallback', async () => {

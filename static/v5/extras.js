@@ -121,7 +121,9 @@
 
   let equipmentChoice=null, loadedConfig=null, planValues=null;
   function plannerView(){
-    const config=loadedConfig||local("planner",{}), night=data.astronomy?.[prefs.profile]?.nights?.[0];
+    const saved=loadedConfig||local("planner",{}), night=data.astronomy?.[prefs.profile]?.nights?.[0];
+    const config=saved.station_id&&saved.station_id!==activeId
+      ? {...saved,start:null,end:null,horizon:{},horizonText:""} : saved;
     const date=night?.date||new Date().toISOString().slice(0,10), tomorrow=new Date(Date.parse(date+"T12:00Z")+86400000).toISOString().slice(0,10);
     const profile=config.profile||prefs.profile, limits={clouds:profile==="visual"?45:profile==="planetary"?30:35,wind_kmh:profile==="visual"?12:8,gust_kmh:profile==="visual"?24:16,dew_margin_c:profile==="visual"?1:2,rain_probability:profile==="visual"?30:20,...config.limits};
     const eq={name:"80/480 + camera 571",telescope:"Rifrattore 80/480",camera:"Camera 571",aperture_mm:80,focal_length_mm:480,sensor_width_mm:23.5,sensor_height_mm:15.7,pixel_size_um:3.76,...config.equipment,...equipmentChoice};
@@ -139,11 +141,11 @@
   async function bindPlanner(){
     if(!catalog.length){try{catalog=(await api("catalog")).targets;if(page==="planner")render();}catch(e){notice(e.message);}return;}
     window.MeteoV54.bindWizard();
-    $("#remember-equipment").onclick=()=>{const invalid=[...$("#planner-step-1").querySelectorAll("input")].find(el=>!el.checkValidity());if(invalid){invalid.closest("details")?.setAttribute("open","");invalid.reportValidity();return;}window.MeteoV53?.rememberEquipment({name:$("#eq-name").value,telescope:$("#eq-telescope").value,camera:$("#eq-camera").value,aperture_mm:Number($("#eq-aperture").value),focal_length_mm:Number($("#eq-focal").value),sensor_width_mm:Number($("#eq-width").value),sensor_height_mm:Number($("#eq-height").value),pixel_size_um:Number($("#eq-pixel").value)});};
+    $("#remember-equipment").onclick=()=>{const invalid=[...$("#planner-step-1").querySelectorAll("input")].find(el=>!el.checkValidity());if(invalid){invalid.closest("details")?.setAttribute("open","");invalid.reportValidity();return;}window.MeteoV53?.rememberEquipment({name:$("#eq-name").value,telescope:$("#eq-telescope").value,camera:$("#eq-camera").value,aperture_mm:Number($("#eq-aperture").value),focal_length_mm:Number($("#eq-focal").value),sensor_width_mm:Number($("#eq-width").value),sensor_height_mm:Number($("#eq-height").value),pixel_size_um:Number($("#eq-pixel").value),focal_multiplier:Number($("#eq-multiplier").value)});};
     $("#plan-profile").onchange=()=>{const visual=$("#plan-profile").value==="visual",planet=$("#plan-profile").value==="planetary";for(const [id,value] of [["clouds",visual?45:planet?30:35],["wind",visual?12:8],["gust",visual?24:16],["dew",visual?1:2],["pop",visual?30:20]])$("#plan-"+id).value=value;};
     $("#planner-form").onsubmit=async e=>{e.preventDefault();const b=$("#calculate-plan");b.disabled=true;try{
       const horizonText=$("#plan-horizon").value;const horizon={};for(const pair of horizonText.split(",").filter(x=>x.trim())){const parts=pair.trim().split(":");if(parts.length!==2||!parts.every(finite))throw Error("Orizzonte: usa azimut:altezza, per esempio 90:25.");horizon[Number(parts[0])]=Number(parts[1]);}
-      const values={station_id:activeId,profile:$("#plan-profile").value,limits:{clouds:Number($("#plan-clouds").value),wind_kmh:Number($("#plan-wind").value),gust_kmh:Number($("#plan-gust").value),dew_margin_c:Number($("#plan-dew").value),rain_probability:Number($("#plan-pop").value)},start:$("#plan-start").value,end:$("#plan-end").value,targets:[...document.querySelectorAll('[name="target"]:checked')].map(x=>x.value),altitude:Number($("#plan-alt").value),moon:Number($("#plan-moon").value),rotation:Number($("#eq-rotation").value),horizon,equipment:{name:$("#eq-name").value,telescope:$("#eq-telescope").value,camera:$("#eq-camera").value,aperture_mm:Number($("#eq-aperture").value),focal_length_mm:Number($("#eq-focal").value),sensor_width_mm:Number($("#eq-width").value),sensor_height_mm:Number($("#eq-height").value),pixel_size_um:Number($("#eq-pixel").value)}};
+      const values={station_id:activeId,profile:$("#plan-profile").value,limits:{clouds:Number($("#plan-clouds").value),wind_kmh:Number($("#plan-wind").value),gust_kmh:Number($("#plan-gust").value),dew_margin_c:Number($("#plan-dew").value),rain_probability:Number($("#plan-pop").value)},start:window.MeteoV54.plannerDateValue("plan-start"),end:window.MeteoV54.plannerDateValue("plan-end"),targets:[...document.querySelectorAll('[name="target"]:checked')].map(x=>x.value),altitude:Number($("#plan-alt").value),moon:Number($("#plan-moon").value),rotation:Number($("#eq-rotation").value),horizon,equipment:{name:$("#eq-name").value,telescope:$("#eq-telescope").value,camera:$("#eq-camera").value,aperture_mm:Number($("#eq-aperture").value),focal_length_mm:Number($("#eq-focal").value),sensor_width_mm:Number($("#eq-width").value),sensor_height_mm:Number($("#eq-height").value),pixel_size_um:Number($("#eq-pixel").value),focal_multiplier:Number($("#eq-multiplier").value)}};
       if(!values.targets.length||values.targets.length>8)throw Error("Seleziona da uno a otto oggetti.");
       Object.assign(values,window.MeteoV53?.readOptions()||{});
       loadedConfig={...values,horizonText};save("planner",loadedConfig);$("#plan-status").textContent="Calcolo…";const result=await api("planner",values);plan=result;planValues=values;if(page==="planner"&&activeId===values.station_id){$("#plan-result").innerHTML=planMarkup();bindPlanResult();$("#plan-status").textContent="Piano aggiornato";}
@@ -203,7 +205,7 @@
   window.MeteoExtra={
     resetPersonal:(preserve=false)=>{if(preserve){captureDrafts();}else{drafts.clear();plan=null;planValues=null;editingEntry=null;loadedConfig=null;equipmentChoice=null;}activity=local("activity-choice","walk");},
     useEquipment:equipment=>{equipmentChoice=equipment;drafts.delete("planner:"+activeId);},
-    loadPlan:config=>{loadedConfig={...config,horizonText:Object.entries(config.horizon||{}).map(([a,h])=>`${a}:${h}`).join(", ")};plan=null;drafts.delete("planner:"+config.station_id);},
+    loadPlan:config=>{loadedConfig={...config,horizonText:Object.entries(config.horizon||{}).map(([a,h])=>`${a}:${h}`).join(", ")};equipmentChoice=null;plan=null;planValues=null;drafts.delete("planner:"+config.station_id);},
     view:p=>{switch(p){
       case "maps": return radarView();
       case "cities": return citiesView();

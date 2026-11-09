@@ -447,6 +447,68 @@ def _seed_second_station() -> None:
                 )
 
 
+def _cielo_checks(page, width: int, height: int) -> None:
+    from playwright.sync_api import expect
+
+    expect(page.locator("[data-cielo-night]")).to_have_count(3, timeout=20000)
+    tomorrow = PLANNER_START.date().isoformat()
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/v5/tools/cielo")
+        and r.request.post_data_json.get("date") == tomorrow
+    ) as response:
+        page.locator(f'[data-cielo-night="{tomorrow}"]').click()
+    report = response.value.json()
+    assert report["selected"] == tomorrow
+    expect(page.locator("#cielo-panel")).to_have_attribute("aria-busy", "false")
+    expect(page.locator(f'[data-cielo-night="{tomorrow}"]')).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    slider = page.locator("#cielo-cursor")
+    expect(slider).to_be_visible()
+    cursor_before = slider.input_value()
+    slider.press("ArrowRight")
+    assert slider.input_value() != cursor_before
+    cursors = page.locator(".cielo-cursor").evaluate_all(
+        "(lines) => lines.map(line => line.getAttribute('x1'))"
+    )
+    assert len(cursors) == 6 and len(set(cursors)) == 1
+    page.select_option("#cielo-filter", "narrowband")
+    assert page.locator("[data-cielo-target]").count() > 0
+    assert "Galassia" not in page.locator(".cielo-target-list").inner_text()
+    page.select_option("#cielo-filter", "")
+    target = report["targets"][0]
+    assert target["best_window"]
+    page.locator(f'[data-cielo-target="{target["id"]}"]').click()
+    expect(page.locator("#cielo-go-plot")).to_contain_text(target["id"])
+    if width == 390:
+        page.set_viewport_size({"width": 320, "height": height})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 3")
+        page.set_viewport_size({"width": width, "height": height})
+    page.locator("#cielo-plan").click()
+    start = pd.Timestamp(target["best_window"]["start"])
+    end = pd.Timestamp(target["best_window"]["end"])
+    expect(page.locator("#plan-start")).to_have_value(
+        start.tz_convert("Europe/Rome").strftime("%Y-%m-%dT%H:%M")
+    )
+    expect(page.locator("#plan-end")).to_have_value(
+        end.tz_convert("Europe/Rome").strftime("%Y-%m-%dT%H:%M")
+    )
+    expect(page.locator("#eq-focal")).to_have_value("500")
+    expect(page.locator("[name=target]:checked")).to_have_count(1)
+    assert page.locator("[name=target]:checked").input_value() == target["id"]
+    page.go_back()
+    expect(page.locator(f'[data-cielo-night="{tomorrow}"]')).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    page.select_option("#station", "visual-secondary")
+    expect(page.locator(".cielo-context")).to_contain_text("Comacchio")
+    expect(page.locator("[data-cielo-night]")).to_have_count(3, timeout=20000)
+    expect(page.locator("#cielo-plan")).to_have_count(0)
+    page.select_option("#station", "visual-primary")
+    expect(page.locator("#cielo-plan")).to_be_visible()
+    page.evaluate("localStorage.removeItem('meteo.v5.planner')")
+
+
 def _v5_checks(browser, base_url: str, output: Path) -> dict:
     """Real root API, responsive UI, offline snapshot and a single 600s timer."""
     from playwright.sync_api import expect
@@ -493,6 +555,14 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             ):
                 name = f"v5-{view}-{theme}-{width}"
                 try:
+                    if view == "astronomy":
+                        page.evaluate(
+                            """() => localStorage.setItem("meteo.v5.planner", JSON.stringify({
+                              station_id: "visual-primary", profile: "deep_sky", altitude: 0, moon: 0,
+                              equipment: {name:"Ottica di prova", telescope:"Test 80/500", camera:"APS-C",
+                                aperture_mm:80, focal_length_mm:500, sensor_width_mm:23.5, sensor_height_mm:15.7, pixel_size_um:3.76}
+                            }))"""
+                        )
                     page.goto(f"{base_url}/?page={view}&theme={theme}")
                     page.wait_for_function(
                         "document.querySelector('#snapshot-time').textContent.includes('Fotografia')"
@@ -607,11 +677,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                         page.mouse.up()
                         expect(page.locator("#timeline-range")).to_be_visible()
                     if view == "astronomy":
-                        page.select_option("#station", "visual-secondary")
-                        expect(page.locator("#station")).to_have_value(
-                            "visual-secondary"
-                        )
-                        expect(page.locator("#view")).to_contain_text("0,0")
+                        _cielo_checks(page, width, height)
                 finally:
                     screenshot = output / f"{name}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
@@ -789,6 +855,45 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
         page.screenshot(path=str(output / "v5-offline-mobile.png"), full_page=True)
     context.close()
     return digests
+
+
+def _opening_recovery_check(browser, base_url: str) -> None:
+    """A 200 HTML wake page must yield to fresh JSON without a manual click."""
+    from playwright.sync_api import expect
+
+    # Exercise the page's recovery logic independently of the worker's fallback
+    # (the worker and true offline mode have their own tests).
+    context = browser.new_context(service_workers="block")
+    try:
+        page = context.new_page()
+        page.clock.install()
+        page.goto(base_url)
+        expect(page.locator("#connection")).to_contain_text("Stazione live")
+        ready, requests = False, []
+
+        def wake(route):
+            requests.append(route.request.url)
+            if ready:
+                route.continue_()
+            else:
+                route.fulfill(
+                    status=200, content_type="text/html", body="<h1>Service waking up</h1>"
+                )
+
+        page.route("**/api/v5/snapshot/*", wake)
+        page.reload()
+        expect(page.locator("#refresh")).to_be_enabled()
+        expect(page.locator("#connection")).to_contain_text("Cerco aggiornamenti")
+        expect(page.locator("#notice")).to_contain_text("Riprovo automaticamente")
+        assert len(requests) == 2
+        ready = True
+        page.clock.fast_forward(5000)
+        expect(page.locator("#connection")).to_contain_text("Stazione live")
+        assert len(requests) == 3
+        page.clock.fast_forward(590000)
+        assert len(requests) == 3, "Recovery must stop when the first valid snapshot arrives"
+    finally:
+        context.close()
 
 
 def _v53_private_checks(browser, base_url: str, output: Path) -> None:
@@ -1009,6 +1114,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                     headless=True,
                     executable_path=os.getenv("METEO_BROWSER_EXECUTABLE") or None,
                 )
+                _opening_recovery_check(browser, base_url)
                 digests.update(_v5_checks(browser, base_url, output_path))
                 _v53_private_checks(browser, base_url, output_path)
                 digests.update(_android_update_checks(browser, base_url, output_path))
