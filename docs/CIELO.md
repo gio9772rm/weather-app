@@ -40,15 +40,27 @@ e cambio soggetto sono già fuori dai blocchi. Il bilancio per notte e totale
 si esporta in CSV; la [sequenza base N.I.N.A.](NINA_EXPORT.md) si esporta una
 notte per volta.
 
-**Profili.** Preferiti, strumento selezionato, postazioni e ricetta del piano
-si sincronizzano dopo l’accesso. L’ospite può usarli sul dispositivo. Un futuro
-accesso Google può essere aggiunto allo stesso account: autorizzare il dominio
-in Google Cloud, verificare il token sul server e collegare l’identità Google
-verificata al profilo che l’utente ha già aperto.
+**Orizzonte.** In Cielo scegli la postazione, apri **Orizzonte della
+postazione** e carica un file `.hrz` o `.txt` con coppie azimut e altezza
+in gradi (Nord 0°, Est 90°). L'anteprima mostra il profilo degli ostacoli.
+Puoi scaricarlo di nuovo in formato `.hrz` o rimuoverlo. Cielo e Pianificatore
+applicano la maschera alla postazione a cui appartiene. Nel Pianificatore
+puoi specificare punti diversi per il singolo piano.
 
-Per l’orizzonte e il panorama, `target_geometry` usa `horizon_altitudes` sia
-in Cielo sia nel piano. Un import/export HRZ può alimentare la stessa maschera
-della singola postazione. Il panorama può restare un livello visivo privato.
+**Obiettivi per filtro.** In Cielo seleziona un soggetto e inserisci, per
+ogni filtro, l'obiettivo, le ore già raccolte e la durata della posa.
+**Confronta le tre notti** stima quanto una finestra può contribuire alle
+ore mancanti. Usa buio, ostacoli, soglie meteo e lunari e i tempi di
+preparazione della ricetta. Se c'è una finestra utile, **Usa la notte
+consigliata** apre una bozza del piano con la finestra e i filtri ancora
+da completare. Le stime non incrementano le ore raccolte: aggiornare
+quelle ore dopo la sessione cambia il confronto successivo.
+
+**Account.** L'icona del profilo apre la scheda Account da ogni vista.
+Mostra il metodo di accesso e le preferenze principali. Puoi scegliere
+un nome, una foto, un colore e una nota privata. Preferiti, strumenti,
+postazioni, orizzonti, progetti e piani si sincronizzano dopo l'accesso.
+L'ospite può usarli sul dispositivo. Vedi [attivazione di Google](ACCOUNT_GOOGLE.md).
 
 Le serie del grafico sono campionate a 15 minuti. Geometria, campo e budget
 sono stime per organizzare una sessione; non misurano il seeing e non

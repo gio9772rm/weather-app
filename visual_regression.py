@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -526,6 +527,53 @@ def _cielo_checks(page, width: int, height: int) -> None:
     expect(page.locator("#cielo-plan")).to_have_count(0)
     page.select_option("#station", "visual-primary")
     expect(page.locator("#cielo-plan")).to_be_visible()
+    if width == 390:
+        page.locator("#project-edit").click()
+        page.locator("#project-dialog [data-desired]").fill("4")
+        page.locator("#project-dialog [data-acquired]").fill("0.5")
+        page.get_by_role("button", name="Salva obiettivi").click()
+        expect(page.locator(".project-progress")).to_contain_text("4")
+        with page.expect_response(
+            lambda r: (
+                r.url.endswith("/api/v5/tools/cielo")
+                and bool(r.request.post_data_json.get("project"))
+            )
+        ) as comparison:
+            page.locator("#project-compare").click()
+        advice = comparison.value.json()["project"]
+        assert advice["best"] and advice["missing_seconds"] == 12600
+        page.locator("#project-use-window").click()
+        expect(page.locator("#budget-recipe")).to_have_value("OSC; 180; 1")
+        expect(page.locator("#plan-start")).to_have_value(
+            pd.Timestamp(advice["best"]["window"]["start"])
+            .tz_convert("Europe/Rome")
+            .strftime("%Y-%m-%dT%H:%M")
+        )
+        page.go_back()
+        page.locator("#cielo-horizon > summary").click()
+        page.locator("#horizon-file").set_input_files(
+            {
+                "name": "test.hrz",
+                "mimeType": "text/plain",
+                "buffer": b"0 90\n180 90\n360 90\n",
+            }
+        )
+        with page.expect_response(
+            lambda r: (
+                r.url.endswith("/api/v5/tools/cielo")
+                and r.request.post_data_json.get("horizon", {}).get("180") == 90
+            )
+        ) as horizon:
+            page.locator("#horizon-import button").click()
+        assert all(t["best_window"] is None for t in horizon.value.json()["targets"])
+        expect(page.locator("#cielo-horizon > summary")).to_contain_text("2 punti")
+        page.select_option("#station", "visual-secondary")
+        expect(page.locator("#cielo-horizon > summary")).to_contain_text(
+            "non impostato"
+        )
+        page.select_option("#station", "visual-primary")
+        expect(page.locator("#cielo-horizon > summary")).to_contain_text("2 punti")
+        page.locator("#horizon-clear").click()
     page.evaluate("localStorage.removeItem('meteo.v5.planner')")
 
 
@@ -946,6 +994,7 @@ def _opening_recovery_check(browser, base_url: str) -> None:
 
 def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     """Two independent browsers exercise real private sync and conflict recovery."""
+    from PIL import Image
     from playwright.sync_api import expect
 
     first = browser.new_context(viewport={"width": 1440, "height": 1000})
@@ -962,6 +1011,18 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     a.locator("#account-form button").click()
     expect(a.locator("#download-recovery")).to_be_visible()
     a.locator("#hide-recovery").click()
+    a.locator("#account-edit").click()
+    a.locator("#account-display-name").fill("Osservatore di prova")
+    a.locator("#account-accent").select_option("violet")
+    a.locator("#account-note").fill("Il mio cielo")
+    photo = io.BytesIO()
+    Image.new("RGB", (192, 128), "#356c8a").save(photo, "PNG")
+    a.locator("#account-photo").set_input_files(
+        {"name": "profilo.png", "mimeType": "image/png", "buffer": photo.getvalue()}
+    )
+    expect(a.locator("#account-preview img")).to_be_visible()
+    a.locator("#account-save-identity").click()
+    expect(a.locator("#sync-status")).to_contain_text("Sincronizzato")
     a.locator("#add-571").click()
     expect(a.locator("#sync-status")).to_contain_text("Sincronizzato")
     a.evaluate("""() => MeteoSky.update({
@@ -972,6 +1033,17 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     b.locator("#account-password").fill("visual-private-password-53")
     b.locator("#account-form button").click()
     expect(b.locator('[data-use-equipment="0"]')).to_be_visible()
+    expect(b.locator(".account-identity h2")).to_have_text("Osservatore di prova")
+    expect(b.locator("#account-shortcut img")).to_be_visible()
+    expect(b.locator("#account-shortcut")).to_have_attribute(
+        "aria-label", "Account · Osservatore di prova"
+    )
+    b.set_viewport_size({"width": 320, "height": 844})
+    assert b.evaluate("document.documentElement.scrollWidth <= innerWidth + 3")
+    b.set_viewport_size({"width": 390, "height": 844})
+    b.screenshot(path=str(output / "v59-account-mobile.png"), full_page=True)
+    b.locator("#account-shortcut").click()
+    expect(b.locator(".account-overview")).to_be_visible()
     assert b.evaluate("MeteoSky.settings().targets") == ["B033"]
     assert b.evaluate("MeteoSky.settings().sites[0].geo_id") == 3871781
     # Device A edits without polling B; B must expose a conflict, not overwrite.
@@ -1116,6 +1188,7 @@ def _wait_for_app(url: str, process: subprocess.Popen[str]) -> None:
 
 def run_visual_checks(output: str | Path) -> dict[str, str]:
     try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError("Installare Playwright per il controllo visuale") from exc
@@ -1366,20 +1439,9 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                 )
                             save_profile.click()
                             # The old plots remain mounted during the form rerun.
-                            # Wait for its result, then for Streamlit's stale fade
-                            # to finish before auditing actual settled contrast.
                             page.get_by_text(
                                 re.compile(r"^Profilo .+ attivo\.$")
                             ).wait_for(state="visible", timeout=30_000)
-                            page.wait_for_function(
-                                """() => [...document.querySelectorAll('[data-testid="stCaptionContainer"] p')].every(el => {
-                                  for (let node=el; node && !node.matches('.stApp'); node=node.parentElement) {
-                                    if (Number(getComputedStyle(node).opacity) < 0.99) return false;
-                                  }
-                                  return true;
-                                })""",
-                                timeout=15_000,
-                            )
                             page.wait_for_function(
                                 "document.querySelectorAll('.js-plotly-plot').length >= 3",
                                 timeout=30_000,
@@ -1393,8 +1455,28 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                     f"{name}: grafico astronomico eccede di "
                                     f"{chart_overflow}px"
                                 )
-                            audit = page.evaluate(ASTRONOMY_CONTRAST_AUDIT)
-                            if not audit["samples"] or not audit["numberContainers"]:
+                            # Several fading ancestors can each exceed .99
+                            # while their product is still below it. Capture
+                            # the settled sample in the same browser frame.
+                            try:
+                                audit = page.wait_for_function(
+                                    f"""() => {{
+                                      const audit = ({ASTRONOMY_CONTRAST_AUDIT})();
+                                      const captions = audit.samples.filter(
+                                        s => s.selector.includes('stCaptionContainer'));
+                                      return captions.length && audit.numberContainers.length
+                                        && captions.every(s => s.opacity >= 0.99) && audit;
+                                    }}""",
+                                    timeout=15_000,
+                                ).json_value()
+                            except PlaywrightTimeoutError:
+                                audit = page.evaluate(ASTRONOMY_CONTRAST_AUDIT)
+                            captions = [
+                                sample
+                                for sample in audit["samples"]
+                                if "stCaptionContainer" in sample["selector"]
+                            ]
+                            if not captions or not audit["numberContainers"]:
                                 raise AssertionError(
                                     f"{name}: controlli astronomici non verificabili"
                                 )
@@ -1410,9 +1492,8 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                                 )
                             faded = [
                                 sample
-                                for sample in audit["samples"]
-                                if "stCaptionContainer" in sample["selector"]
-                                and sample["opacity"] < 0.99
+                                for sample in captions
+                                if sample["opacity"] < 0.99
                             ]
                             if faded:
                                 raise AssertionError(

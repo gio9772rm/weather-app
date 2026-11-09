@@ -31,6 +31,7 @@ SYNC_KEYS = {
     "plans",
     "equipment",
     "observing",
+    "identity",
 }
 ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
@@ -85,7 +86,7 @@ def rate_limit(bucket, maximum, minutes=15):
         raise RateLimitError("Troppi tentativi; riprova tra 15 minuti")
 
 
-def issue_session(account_id, con):
+def issue_session(account_id, con, method="password"):
     token = secrets.token_urlsafe(32)
     now = pd.Timestamp.now(tz="UTC")
     con.execute(
@@ -109,11 +110,12 @@ def issue_session(account_id, con):
         )
     con.execute(
         text(
-            "INSERT INTO personal_sessions(token_hash,account_id,expires_at) VALUES(:token,:id,:end)"
+            "INSERT INTO personal_sessions(token_hash,account_id,auth_method,expires_at) VALUES(:token,:id,:method,:end)"
         ),
         {
             "token": digest(token),
             "id": account_id,
+            "method": method,
             "end": (now + pd.Timedelta(days=30)).isoformat(),
         },
     )
@@ -127,7 +129,7 @@ def authenticate(token):
         row = (
             con.execute(
                 text(
-                    "SELECT a.id,a.username FROM personal_accounts a JOIN personal_sessions s ON s.account_id=a.id WHERE s.token_hash=:token AND s.expires_at>:now"
+                    "SELECT a.id,a.username,s.auth_method FROM personal_accounts a JOIN personal_sessions s ON s.account_id=a.id WHERE s.token_hash=:token AND s.expires_at>:now"
                 ),
                 {"token": digest(token), "now": pd.Timestamp.now(tz="UTC").isoformat()},
             )
@@ -241,6 +243,7 @@ def plan_config(value):
     from astronomy_planner import equipment_profile
     from sky_catalog import plan_targets
     from v5_data import public_stations
+    from v5_horizons import horizon_mask
     from v5_imaging_budget import budget_options
     from v5_observatories import site_spec, timezone_name
     from v5_sessions import session_limits
@@ -276,17 +279,9 @@ def plan_config(value):
         if not 0 <= v <= maximum:
             raise ValueError("Soglia non valida")
         result[key] = v
-    horizon = value.get("horizon", {})
-    if (
-        not isinstance(horizon, dict)
-        or len(horizon) > 72
-        or any(
-            not 0 <= float(k) < 360 or not 0 <= float(v) <= 90
-            for k, v in horizon.items()
-        )
-    ):
-        raise ValueError("Orizzonte non valido")
-    result["horizon"] = horizon
+    result["horizon"] = {
+        f"{az:g}": alt for az, alt in horizon_mask(value.get("horizon", {})).items()
+    }
     if value.get("equipment"):
         from dataclasses import asdict
 
@@ -299,9 +294,18 @@ def plan_config(value):
 
 def validate_observing(value):
     from sky_catalog import resolve_target
+    from v5_horizons import saved_horizons
     from v5_observatories import site_spec
+    from v5_projects import saved_projects
 
-    if not isinstance(value, dict) or set(value) - {"site", "sites", "targets", "rig"}:
+    if not isinstance(value, dict) or set(value) - {
+        "site",
+        "sites",
+        "targets",
+        "rig",
+        "horizons",
+        "projects",
+    }:
         raise ValueError("Preferenze Cielo non valide")
     sites, targets, rig = (
         value.get("sites", []),
@@ -324,6 +328,16 @@ def validate_observing(value):
             dict.fromkeys(resolve_target(target).name for target in targets)
         ),
         "rig": rig,
+        **(
+            {"horizons": saved_horizons(value["horizons"])}
+            if "horizons" in value
+            else {}
+        ),
+        **(
+            {"projects": saved_projects(value["projects"])}
+            if "projects" in value
+            else {}
+        ),
     }
 
 
@@ -335,6 +349,10 @@ def validate_profile(value):
     if len(encoded.encode()) > 2400000:
         raise ValueError("Profilo troppo grande; esporta e riduci il diario")
     result = {}
+    if "identity" in value:
+        from v53_identity import identity_spec
+
+        result["identity"] = identity_spec(value["identity"])
     if "observing" in value:
         result["observing"] = validate_observing(value["observing"])
     prefs = value.get("preferences", {})
@@ -447,7 +465,7 @@ def validate_profile(value):
         raise ValueError("Massimo tre piani con avvisi attivi")
     for name in ("planner", "activity-rules", "activity-choice"):
         if name in value:
-            if len(json.dumps(value[name])) > 16000:
+            if len(json.dumps(value[name])) > (32000 if name == "planner" else 16000):
                 raise ValueError("Impostazioni troppo grandi")
             if name == "planner":
                 result[name] = {
@@ -486,8 +504,16 @@ def read_profile(account):
                 {"id": account["id"]},
             ).scalars()
         ]
+        link = con.execute(
+            text("SELECT email FROM personal_google_links WHERE account_id=:id"),
+            {"id": account["id"]},
+        ).first()
     return {
-        "account": account,
+        "account": {
+            **account,
+            "auth_method": account.get("auth_method", "password"),
+            "google": {"email": link[0]} if link is not None else None,
+        },
         "revision": row["revision"],
         "profile": json.loads(row["payload"]),
         "updated_at": row["updated_at"],
@@ -591,6 +617,8 @@ def account_action(action, values, account, token):
                 "personal_profiles",
                 "personal_alerts",
                 "personal_devices",
+                "personal_google_links",
+                "personal_google_challenges",
             ):
                 con.execute(
                     text(f"DELETE FROM {table} WHERE account_id=:id"),
@@ -635,6 +663,10 @@ async def private_api(request):
     action = request.path_params["action"]
     token = request.cookies.get(COOKIE, "")
     try:
+        if request.method == "GET" and action == "google-config":
+            from v53_google import client_id
+
+            return JSONResponse({"enabled": bool(client_id())}, headers=HEADERS)
         await run_in_threadpool(ensure_schema)
         if request.method == "GET":
             if action != "profile":
@@ -650,7 +682,7 @@ async def private_api(request):
         if request.headers.get("content-type", "").split(";")[0] != "application/json":
             raise ValueError("Formato JSON richiesto")
         account = None
-        if action not in {"register", "login", "recover"}:
+        if action not in {"register", "login", "recover", "google-start", "google"}:
             account = await run_in_threadpool(authenticate, token)
         body = bytearray()
         async for chunk in request.stream():
@@ -664,6 +696,43 @@ async def private_api(request):
         values = json.loads(body)
         if not isinstance(values, dict):
             raise TypeError("Richiesta non valida")
+        if action in {"google-start", "google"}:
+            from v53_google import (
+                CHALLENGE_COOKIE,
+                MAX_AGE,
+                finish_google,
+                start_google,
+            )
+
+            address = request.client.host if request.client else "unknown"
+            flags = {
+                "secure": True,
+                "httponly": True,
+                "samesite": "strict",
+                "path": "/",
+            }
+            if action == "google-start":
+                config, challenge = await run_in_threadpool(
+                    start_google, values.get("mode"), token, address
+                )
+                response = JSONResponse(config, headers=HEADERS)
+                response.set_cookie(
+                    CHALLENGE_COOKIE, challenge, max_age=MAX_AGE, **flags
+                )
+                return response
+            account, new_token, recovery = await run_in_threadpool(
+                finish_google,
+                values.get("credential"),
+                request.cookies.get(CHALLENGE_COOKIE, ""),
+                token,
+                address,
+            )
+            profile = await run_in_threadpool(read_profile, account)
+            response = JSONResponse({**profile, "recovery": recovery}, headers=HEADERS)
+            response.delete_cookie(CHALLENGE_COOKIE, **flags)
+            if new_token:
+                response.set_cookie(COOKIE, new_token, max_age=30 * 86400, **flags)
+            return response
         if action in {"register", "login", "recover"}:
             account, new_token = await run_in_threadpool(
                 account_login,

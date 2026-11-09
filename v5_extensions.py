@@ -199,18 +199,14 @@ def secondary_ensemble(cfg: Settings):
 
 def plan_constraints(values):
     from astronomy_planner import equipment_profile
+    from v5_horizons import horizon_mask
 
     minimum = float(values.get("altitude", 25))
     moon = float(values.get("moon", 30))
     rotation = float(values.get("rotation", 0))
     if not 0 <= minimum <= 85 or not 0 <= moon <= 180 or not 0 <= rotation <= 360:
         raise ValueError("Soglie non valide")
-    horizon = values.get("horizon", {})
-    if not isinstance(horizon, dict) or len(horizon) > 72:
-        raise ValueError("Orizzonte non valido")
-    horizon = {float(k): float(v) for k, v in horizon.items()}
-    if any(not 0 <= a < 360 or not 0 <= h <= 90 for a, h in horizon.items()):
-        raise ValueError("Azimut 0–359°, ostacoli 0–90°")
+    horizon = horizon_mask(values.get("horizon", {}))
     equipment = (
         equipment_profile(**values["equipment"]) if values.get("equipment") else None
     )

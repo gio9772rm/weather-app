@@ -117,6 +117,7 @@ def _schema_statements() -> list[str]:
 def _additive_migrations(engine: Engine) -> None:
     """Add V3 observation columns to pre-existing V1/V2 databases."""
     additions = {
+        "personal_sessions": {"auth_method": "TEXT NOT NULL DEFAULT 'password'"},
         "compact_archives": {
             "object_key": "TEXT",
             "object_bytes": "BIGINT",

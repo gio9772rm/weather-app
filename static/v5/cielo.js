@@ -11,7 +11,7 @@
   let request = null;
   const getState = () => {
     const key = activeId + ":" + prefs.profile + ":" + MeteoSky.placeKey(MeteoSky.settings().site);
-    if (!states.has(key)) states.set(key, { night: "", filter: "", category: "", framing: "", showAll: false, target: "", requested: "", catalogOpen: false, cursor: NaN });
+    if (!states.has(key)) states.set(key, { night: "", filter: "", category: "", framing: "", showAll: false, target: "", requested: "", projectId: "", catalogOpen: false, cursor: NaN });
     if (states.size > 32) states.delete(states.keys().next().value);
     return states.get(key);
   };
@@ -41,18 +41,19 @@
     const choice = observing.rig ?? (window.MeteoV53?.isSignedIn() ? rigs[0]?.[0] || "" : storage.get("meteo.v5.cielo.rig", rigs[0]?.[0] || ""));
     const rig = rigs.find(([id]) => id === choice);
     const sameSite = site ? MeteoSky.placeKey(site) === MeteoSky.placeKey(saved.site) : !saved.site && saved.station_id === activeId;
+    const legacy = sameSite ? (saved.horizon || {}) : {};
     return {
-      saved, site, rigs, choice: rig?.[0] || "", equipment: rig?.[1] || null,
+      saved, site, legacy, rigs, choice: rig?.[0] || "", equipment: rig?.[1] || null,
       constraints: {
         altitude: saved.altitude ?? 25, moon: saved.moon ?? 30, rotation: saved.rotation ?? 0,
-        horizon: sameSite ? (saved.horizon || {}) : {},
+        horizon: MeteoHorizon.saved(site, activeId)?.mask ?? legacy,
         limits: saved.profile === prefs.profile ? (saved.limits || {}) : {},
       },
     };
   }
 
   function view() {
-    const { rigs, choice, site } = setup();
+    const { rigs, choice, site, legacy } = setup();
     return `<section class="cielo" aria-labelledby="cielo-title">
       <header class="cielo-heading"><div><span class="eyebrow">OSSERVAZIONE E ASTROFOTOGRAFIA</span>
         <h1 id="cielo-title">Cielo · scegli la tua notte</h1><p>Confronta le prossime tre notti e trova quando il meteo e il soggetto sono dalla tua parte.</p></div>
@@ -65,6 +66,7 @@
         </select><button type="button" class="cielo-link" data-go="personal">Gestisci strumenti →</button></div>
       </section>
       ${MeteoSky.placesMarkup()}
+      ${MeteoHorizon.markup(site, activeId, legacy)}
       <div id="cielo-panel"></div>
       ${site ? "" : '<details class="card detail-row" id="cielo-atmosphere"><summary>Atmosfera e trasparenza stimate · CAMS</summary><div id="cielo-atmosphere-content"></div></details>'}
     </section>`;
@@ -155,6 +157,8 @@
         <button type="button" class="quiet" id="cielo-save-target" aria-pressed="${favorites.includes(selected.id)}">${favorites.includes(selected.id) ? "★ Rimuovi dai preferiti" : "☆ Salva nei preferiti"}</button>
         ${selected.best_window ? '<button type="button" data-cielo-plan class="primary">Usa questa finestra →</button>' : ""}
         <span class="cielo-plan-status metric-caption" role="status"></span></div>` : ""}
+      ${report.profile === "deep_sky" && MeteoProjects.list().length ? `<label>Apri un progetto <select id="cielo-project-select"><option value="">Scegli…</option>${MeteoProjects.list().map(p => option(p.target, p.target, selected?.id)).join("")}</select></label>` : ""}
+      ${MeteoProjects.markup(report, selected)}
       <details id="cielo-catalog" class="detail-row"${state.catalogOpen ? " open" : ""}><summary>Cerca un soggetto o filtra il catalogo</summary>
       ${MeteoSky.lookupMarkup("cielo-search")}
       ${favorites.length ? `<label>Preferiti <select id="cielo-favorite"><option value="">Scegli…</option>${favorites.map(id => option(id, id, selected?.id)).join("")}</select></label>` : ""}
@@ -174,7 +178,7 @@
       }).join("")}</ol>` : '<p class="empty">Nessun soggetto con questi filtri.</p>'}
       ${candidates.length > 5 ? `<button type="button" class="quiet" id="cielo-all">${state.showAll ? "Mostra i primi cinque" : "Mostra tutti i " + candidates.length + " soggetti"}</button>` : ""}
       <p class="metric-caption">Catalogo esteso: <a href="https://github.com/mattiaverga/OpenNGC" rel="noopener">OpenNGC</a> · <a href="https://creativecommons.org/licenses/by-sa/4.0/" rel="noopener">CC BY-SA 4.0</a>.</p></details>
-      <details class="detail-row cielo-rules"><summary>Soglie usate e qualità dei dati</summary><p>Altezza minima ${num(report.constraints.altitude, 0)}° · separazione lunare ${num(report.constraints.moon, 0)}° con Luna sopra l’orizzonte · rotazione ${num(report.constraints.rotation, 0)}° · ${report.constraints.horizon_configured ? "ostacoli del piano salvato" : "orizzonte senza ostacoli configurati"}.</p>
+      <details class="detail-row cielo-rules"><summary>Soglie usate e qualità dei dati</summary><p>Altezza minima ${num(report.constraints.altitude, 0)}° · separazione lunare ${num(report.constraints.moon, 0)}° con Luna sopra l’orizzonte · rotazione ${num(report.constraints.rotation, 0)}° · ${report.constraints.horizon_configured ? "ostacoli applicati" : "orizzonte senza ostacoli configurati"}.</p>
         <p>Nuvole ≤${num(report.constraints.limits.clouds, 0)}%, vento ≤${num(report.constraints.limits.wind_kmh, 0)} km/h, raffiche ≤${num(report.constraints.limits.gust_kmh, 0)} km/h, margine rugiada ≥${num(report.constraints.limits.dew_margin_c, 1)} °C, probabilità pioggia ≤${num(report.constraints.limits.rain_probability, 0)}%, pioggia prevista assente e indice meteo cielo ≥65/100. Gli intervalli mancanti interrompono la finestra.</p>
         <p>Puoi cambiare queste soglie nel pianificatore. I valori meteo sono previsioni; seeing, trasparenza e inquadratura sono stime.</p></details>
     </article>`;
@@ -313,7 +317,7 @@
       };
     }
     document.querySelectorAll("[data-cielo-target],[data-cielo-pick]").forEach(b => b.onclick = () => {
-      state.requested = "";
+      state.requested = ""; state.projectId = "";
       state.target = b.dataset.cieloTarget || b.dataset.cieloPick;
       show(report, state);
       document.querySelector(b.dataset.cieloPick ? '[data-cielo-pick][aria-pressed="true"]' : '[data-cielo-target][aria-pressed="true"]')?.focus({ preventScroll: true });
@@ -322,13 +326,25 @@
     if (catalog) catalog.ontoggle = () => { state.catalogOpen = catalog.open; };
     const selectTarget = id => {
       if (!id) return;
-      state.requested = id; state.target = id; state.catalogOpen = true;
+      state.requested = id; state.target = id; state.projectId = ""; state.catalogOpen = true;
       if (report.targets.some(t => t.id === id)) show(report, state, "cielo-go-plot");
       else load(state);
     };
     MeteoSky.bindLookup("cielo-search", result => selectTarget(result.name));
     const favorite = $("#cielo-favorite");
     if (favorite) favorite.onchange = event => selectTarget(event.target.value);
+    const projectSelect = $("#cielo-project-select");
+    if (projectSelect) projectSelect.onchange = event => selectTarget(event.target.value);
+    const edit = $("#project-edit");
+    if (edit) edit.onclick = () => MeteoProjects.edit(target, setup().saved.budget, () => {
+      state.projectId = "";
+      show({ ...report, project: null }, state, "project-edit");
+    });
+    const compare = $("#project-compare");
+    if (compare) compare.onclick = () => {
+      state.projectId = target.id; state.requested = target.id; state.target = target.id;
+      load(state, true);
+    };
     const save = $("#cielo-save-target");
     if (save) save.onclick = () => {
       const { targets } = MeteoSky.settings(), exists = targets.includes(target.id);
@@ -344,12 +360,12 @@
     };
     const goPlot = $("#cielo-go-plot");
     if (goPlot) goPlot.onclick = () => $("#cielo-timeline-title")?.focus();
-    const openPlanner = (start, end) => {
+    const openPlanner = (start, end, extra = {}) => {
       const { saved, equipment, constraints, site } = setup();
       window.MeteoExtra.loadPlan({
         ...saved, ...constraints, station_id: activeId, profile: prefs.profile, equipment,
         site, site_timezone: zone, priorities: saved.priorities?.[target?.id] ? { [target.id]: saved.priorities[target.id] } : {},
-        start, end, targets: target ? [target.id] : saved.targets,
+        start, end, targets: target ? [target.id] : saved.targets, ...extra,
       });
       navigate("planner");
     };
@@ -368,13 +384,22 @@
       }
       openPlanner(new Date(start).toISOString(), new Date(end).toISOString());
     });
+    const projectUse = $("#project-use-window");
+    if (projectUse) projectUse.onclick = () => {
+      const { best, budget, setup_minutes, minimum_minutes } = report.project;
+      const start = Math.max(Date.parse(best.window.start), Math.ceil(Date.now() / minute) * minute);
+      if (Date.parse(best.window.end) - start < (setup_minutes + minimum_minutes) * minute) {
+        notice("La finestra è cambiata: confronta di nuovo le tre notti."); return;
+      }
+      openPlanner(new Date(start).toISOString(), best.window.end, { budget, setup_minutes, minimum_minutes });
+    };
     if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
   }
 
   function load(state, force = false, focusNight = "") {
     const panel = $("#cielo-panel");
     if (!panel) return;
-    const { equipment, constraints, site } = setup();
+    const { equipment, constraints, site, saved } = setup();
     const planner = $("#cielo-open-planner");
     planner.disabled = !!site;
     planner.onclick = () => navigate("planner");
@@ -382,7 +407,9 @@
     const optical = equipment ? { name: "Strumento", camera: "Camera", telescope: "Ottica",
       ...Object.fromEntries(["aperture_mm", "focal_length_mm", "sensor_width_mm", "sensor_height_mm", "pixel_size_um", "focal_multiplier"].map(key => [key, equipment[key]])),
     } : null;
-    const body = { ...constraints, station_id: activeId, profile: prefs.profile, date: state.night, equipment: optical, site, target: state.requested || null };
+    const project = state.projectId && MeteoProjects.find(state.projectId);
+    const body = { ...constraints, station_id: activeId, profile: prefs.profile, date: state.night, equipment: optical, site, target: state.requested || null,
+      ...(project ? { project, budget: saved.budget, setup_minutes: saved.setup_minutes, minimum_minutes: saved.minimum_minutes } : {}) };
     const cacheKey = JSON.stringify([data.generated_at, body]);
     const finish = report => {
       show(report, state);
@@ -468,10 +495,13 @@
       if (atmosphere.open && !content.innerHTML) content.innerHTML = window.MeteoV53?.skyCard() || "";
     };
     MeteoSky.bindPlaces(render);
+    const { site, legacy } = setup();
+    MeteoHorizon.bind(site, activeId, legacy, render);
     load(getState());
   }
 
   function resetPersonal() {
+    $("#project-dialog")?.remove();
     request?.controller.abort();
     request = null;
     reports.clear();

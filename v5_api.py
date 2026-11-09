@@ -417,7 +417,7 @@ async def extra_tool(request):
             body = bytearray()
             async for chunk in request.stream():
                 body.extend(chunk)
-                if len(body) > 16384:
+                if len(body) > 32768:
                     return JSONResponse(
                         {"error": "Richiesta troppo grande"},
                         status_code=413,

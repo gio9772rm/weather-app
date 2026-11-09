@@ -3,7 +3,7 @@
 (() => {
   const prefKey = "meteo.v5.observing";
   let placesOpen = false;
-  const settings = () => ({ site: null, sites: [], targets: [], ...storage.get(prefKey, {}) });
+  const settings = () => ({ site: null, sites: [], targets: [], horizons: {}, projects: [], ...storage.get(prefKey, {}) });
   const update = value => storage.set(prefKey, { ...settings(), ...value });
   const placeKey = site => !site ? "" : site.kind === "city" ? "city:" + site.geo_id :
     [site.latitude, site.longitude, site.timezone, site.elevation_m || 0].join(":");
@@ -125,14 +125,14 @@
     $("#sky-point").onsubmit = event => {
       event.preventDefault();
       const timezone = $("#sky-point-zone").value.trim();
-      const latitude = Number($("#sky-point-lat").value);
+      const latitude = Number(Number($("#sky-point-lat").value).toFixed(6));
       if (Math.abs(latitude) >= 90) { $("#sky-point-status").textContent = "Usa una latitudine fra −90° e 90°, esclusi i poli."; return; }
       try { new Intl.DateTimeFormat("it-IT", { timeZone: timezone }); }
       catch { $("#sky-point-status").textContent = "Verifica il fuso, per esempio America/Santiago."; return; }
       choose({
         kind: "point", label: $("#sky-point-label").value.trim(), timezone,
-        latitude, longitude: Number($("#sky-point-lon").value),
-        elevation_m: Number($("#sky-point-height").value),
+        latitude, longitude: Number(Number($("#sky-point-lon").value).toFixed(6)),
+        elevation_m: Number(Number($("#sky-point-height").value).toFixed(1)),
       });
     };
   }

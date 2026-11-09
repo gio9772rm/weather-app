@@ -1,0 +1,59 @@
+.profile-avatar {
+  --avatar-color: var(--teal);
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex: none;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--avatar-color) 16%, var(--surface));
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+.profile-avatar.accent-blue { --avatar-color: var(--blue); }
+.profile-avatar.accent-violet { --avatar-color: #9363d0; }
+.profile-avatar.accent-orange { --avatar-color: var(--orange); }
+.profile-avatar.large { width: 64px; height: 64px; font-size: 1.35rem; }
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+#account-shortcut { padding: 0; flex: none; }
+#account-shortcut[aria-current="page"] { border-color: var(--teal); }
+.account-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.account-identity > div { flex: 1 1 190px; min-width: 0; }
+.account-identity h2 { margin: 0; overflow-wrap: anywhere; }
+.account-identity p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.account-prefs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin: 17px 0; }
+.account-prefs > div { background: var(--soft); border-radius: 9px; padding: 8px 10px; }
+.account-prefs dt { color: var(--muted); font-size: 0.8rem; }
+.account-prefs dd { margin: 4px 0 0; font-weight: 650; }
+.account-google { margin-top: 14px; }
+#account-google-button:not(:empty) { margin-top: 9px; }
+.account-google-tag { display: inline-block; color: var(--muted); font-size: 0.85rem; margin: 7px 10px; }
+#account-preview { margin: 12px 0; }
+#account-dialog form > label, #project-dialog form > label { display: block; margin-bottom: 8px; }
+#account-photo, #horizon-file { max-width: 100%; display: block; }
+.horizon-preview { margin: 10px 0; background: var(--soft); border-radius: 8px; overflow: hidden; }
+.horizon-preview svg { display: block; width: 100%; height: 72px; }
+.horizon-preview polygon { fill: color-mix(in srgb, var(--teal) 18%, transparent); }
+.horizon-preview polyline { fill: none; stroke: var(--teal); stroke-width: 2; }
+.horizon-preview > div { display: flex; justify-content: space-between; gap: 4px; color: var(--muted); padding: 6px 8px; font-size: 0.75rem; }
+.cielo-project { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-block: 12px; }
+.cielo-project .card-header { flex-wrap: wrap; margin: 0 0 8px; }
+.cielo-project h3 { margin: 0; }
+.project-progress { display: grid; gap: 7px; }
+.project-progress > div { display: grid; grid-template-columns: minmax(2rem, 1fr) minmax(80px, 3fr) auto; gap: 8px; align-items: center; }
+.project-progress b { overflow-wrap: anywhere; }
+.project-progress progress { width: 100%; accent-color: var(--teal); }
+.project-progress span { font-size: 0.82rem; color: var(--muted); }
+.project-best { margin-top: 12px; padding: 12px; border-radius: 9px; background: var(--soft); }
+#project-dialog { max-height: min(86vh, 760px); overflow: auto; }
+#project-filter-rows > fieldset { margin: 9px 0; min-width: 0; }
+@media (max-width: 650px) {
+  .account-prefs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .topbar .version { display: none; }
+  .topbar .brand { font-size: 19px; gap: 6px; }
+  .top-actions { gap: 4px; }
+}
