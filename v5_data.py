@@ -474,13 +474,20 @@ def build_snapshot(
 
     payload["uncertainty"] = uncertainty(station_id, now)
     payload["radar_animation"] = read_product("radar_frames")
+    from v5_decision import published_cloud_disagreement, quick_check
+
+    payload["quick_check"] = quick_check(payload, now)
+    if primary:
+        payload["cloud_disagreement"] = published_cloud_disagreement(now)
     from v53_sky import sky_rows
 
     payload["atmosphere"] = sky_rows(future, payload["air"], now)
     payload["window_probabilities"] = read_product("windows:" + station_id)
     from v53_windows import validation_key
 
-    payload["window_validation"] = read_product(validation_key(station_id))
+    payload["window_validation"] = read_product(
+        validation_key(station_id)
+    ) or read_product("window-validation:v56:" + station_id)
     from v56_probability_calibration import calibration_key, public_windows
 
     payload["window_calibration"] = read_product(calibration_key(station_id))

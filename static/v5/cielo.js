@@ -154,6 +154,7 @@
         <strong>${interval(target.best_window, zone)} · ${duration(target.best_window.hours)}</strong></button>`).join("")}</div>` : '<p class="metric-caption">Nessun altro soggetto con una finestra utile per queste soglie e questi filtri.</p>'}
       ${selected ? `<div class="controls cielo-selected"><b>${esc(selected.id)} · ${esc(selected.name)}</b>
         <button type="button" class="quiet" id="cielo-go-plot">Vedi grafico · ${esc(selected.id)} ↓</button>
+        ${field && finite(selected.ra_deg) && finite(selected.dec_deg) ? '<button type="button" class="quiet" id="cielo-preview-framing">Inquadratura sul cielo</button>' : ""}
         <button type="button" class="quiet" id="cielo-save-target" aria-pressed="${favorites.includes(selected.id)}">${favorites.includes(selected.id) ? "★ Rimuovi dai preferiti" : "☆ Salva nei preferiti"}</button>
         ${selected.best_window ? '<button type="button" data-cielo-plan class="primary">Usa questa finestra →</button>' : ""}
         <span class="cielo-plan-status metric-caption" role="status"></span></div>` : ""}
@@ -268,6 +269,7 @@
       value("wind", row ? quantity(row.wind_kmh, " km/h") + " · " + quantity(row.wind_gust_kmh, " km/h raffiche") : "Meteo non disponibile");
       value("dew", row ? quantity(row.dew_margin_c, " °C", 1) : "Meteo non disponibile");
       if (target) value("target", quantity(at(target.altitude, state.cursor), "°") + " · " + quantity(at(target.moon_separation, state.cursor), "° dalla Luna") + (inWindow(state.cursor, target.windows) ? " · in finestra" : ""));
+      MeteoDecision.cursor(report, target, state.cursor, at);
     };
     const night = report.nights.find(n => n.date === report.selected);
     const window = target?.best_window || night.best_window;
@@ -275,6 +277,9 @@
       window ? (Date.parse(window.start) + Date.parse(window.end)) / 2 : Math.max(t0, Math.min(t1, Date.now()));
     update(Math.round((initial - t0) / minute));
     slider.oninput = () => update(Number(slider.value));
+    document.querySelectorAll("[data-night-hour]").forEach(button => {
+      button.onclick = () => update(Math.round((Number(button.dataset.nightHour) - t0) / minute));
+    });
     document.querySelectorAll(".cielo-plot").forEach(plot => {
       plot.onclick = event => {
         const box = plot.getBoundingClientRect();
@@ -299,11 +304,14 @@
     $("#cielo-location-name").textContent = report.site.name;
     $("#cielo-location-zone").textContent = zone + (report.weather_source ? " · Meteo globale" : "");
     $("#cielo-panel").innerHTML = nightCards(report) + spotlight(report, current, target) +
+      MeteoDecision.quick(report.quick_check, zone, !!MeteoSky.settings().site) +
+      MeteoDecision.hourStrip(report, target) +
       targetsMarkup(report, state, candidates, target) +
       (report.timeline ? graph(report.timeline, current, target, report.constraints.limits, zone) : "") +
       hourly(report.timeline?.hourly || [], false, zone);
     $("#cielo-panel").setAttribute("aria-busy", "false");
     bindGraph(report, target, state);
+    MeteoDecision.bind();
     $("#cielo-panel").querySelectorAll("[data-cielo-night]").forEach(b => b.onclick = () => {
       if (b.dataset.cieloNight === state.night) return;
       state.night = b.dataset.cieloNight; state.target = state.requested; state.cursor = NaN; state.showAll = false;
@@ -345,6 +353,15 @@
       state.projectId = target.id; state.requested = target.id; state.target = target.id;
       load(state, true);
     };
+    const imported = $("#project-import");
+    if (imported) imported.onclick = () => MeteoIntegration.open(target, zone, () => {
+      state.projectId = "";
+      show({ ...report, project: null }, state, "project-import");
+    });
+    const compareSites = $("#project-compare-sites");
+    if (compareSites) compareSites.onclick = () => MeteoSiteCompare.open(
+      report, target, MeteoIntegration.totals(MeteoProjects.find(target.id)), setup(), activeId,
+    );
     const save = $("#cielo-save-target");
     if (save) save.onclick = () => {
       const { targets } = MeteoSky.settings(), exists = targets.includes(target.id);
@@ -360,6 +377,8 @@
     };
     const goPlot = $("#cielo-go-plot");
     if (goPlot) goPlot.onclick = () => $("#cielo-timeline-title")?.focus();
+    const framing = $("#cielo-preview-framing");
+    if (framing) framing.onclick = () => MeteoFraming.open(report, target);
     const openPlanner = (start, end, extra = {}) => {
       const { saved, equipment, constraints, site } = setup();
       window.MeteoExtra.loadPlan({
@@ -407,7 +426,8 @@
     const optical = equipment ? { name: "Strumento", camera: "Camera", telescope: "Ottica",
       ...Object.fromEntries(["aperture_mm", "focal_length_mm", "sensor_width_mm", "sensor_height_mm", "pixel_size_um", "focal_multiplier"].map(key => [key, equipment[key]])),
     } : null;
-    const project = state.projectId && MeteoProjects.find(state.projectId);
+    const rawProject = state.projectId && MeteoProjects.find(state.projectId);
+    const project = rawProject && MeteoIntegration.totals(rawProject);
     const body = { ...constraints, station_id: activeId, profile: prefs.profile, date: state.night, equipment: optical, site, target: state.requested || null,
       ...(project ? { project, budget: saved.budget, setup_minutes: saved.setup_minutes, minimum_minutes: saved.minimum_minutes } : {}) };
     const cacheKey = JSON.stringify([data.generated_at, body]);
@@ -502,6 +522,10 @@
 
   function resetPersonal() {
     $("#project-dialog")?.remove();
+    for (const id of ["integration-dialog", "site-compare-dialog", "panorama-dialog", "framing-dialog"]) {
+      const dialog = $("#" + id);
+      if (dialog?.open) dialog.close();
+    }
     request?.controller.abort();
     request = null;
     reports.clear();

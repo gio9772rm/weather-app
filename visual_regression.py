@@ -449,6 +449,7 @@ def _seed_second_station() -> None:
 
 
 def _cielo_checks(page, width: int, height: int) -> None:
+    from PIL import Image
     from playwright.sync_api import expect
 
     expect(page.locator("[data-cielo-night]")).to_have_count(3, timeout=20000)
@@ -475,6 +476,12 @@ def _cielo_checks(page, width: int, height: int) -> None:
         "(lines) => lines.map(line => line.getAttribute('x1'))"
     )
     assert len(cursors) == 6 and len(set(cursors)) == 1
+    expect(page.get_by_role("article", name="Ultimo controllo")).to_be_visible()
+    page.locator("[data-night-hour]").first.click()
+    expect(page.locator("[data-night-hour]").first).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    expect(page.locator("#cielo-hour-info")).not_to_be_empty()
     expect(page.locator(".cielo-pick").first).to_be_visible()
     expect(page.locator("#cielo-search")).to_be_hidden()
     page.locator("#cielo-catalog > summary").click()
@@ -573,6 +580,80 @@ def _cielo_checks(page, width: int, height: int) -> None:
         )
         page.select_option("#station", "visual-primary")
         expect(page.locator("#cielo-horizon > summary")).to_contain_text("2 punti")
+        page.locator("#horizon-clear").click()
+        page.locator("#project-import").click()
+        csv = {
+            "name": "pose.csv",
+            "mimeType": "text/csv",
+            "buffer": b"filtro;pose_valide;secondi_per_posa\nOSC;12;150\n",
+        }
+        page.locator("#integration-file").set_input_files(csv)
+        expect(page.locator("#integration-preview")).to_contain_text("1,00 h")
+        page.locator("#integration-confirm").check()
+        page.locator("#integration-commit").click()
+        expect(page.locator(".project-progress")).to_contain_text("1")
+        page.locator("#project-import").click()
+        page.locator("#integration-file").set_input_files(csv)
+        expect(page.locator("#integration-status")).to_contain_text(
+            "già stato registrato"
+        )
+        page.locator("#integration-close").click()
+
+        page.locator("#project-compare-sites").click()
+        page.locator("#site-compare-dialog .primary").click()
+        expect(page.locator("#site-compare-result article")).to_have_count(
+            2, timeout=20000
+        )
+        expect(page.locator("#site-compare-result")).to_contain_text("Comacchio")
+        expect(page.locator("#site-compare-result")).to_contain_text("h stimate")
+        page.locator("#site-compare-close").click()
+
+        sample = io.BytesIO()
+        Image.new("RGB", (512, 512), "#141e30").save(sample, "JPEG")
+        pattern = re.compile(
+            r"https://alasky(?:bis)?\.cds\.unistra\.fr/hips-image-services/hips2fits\?"
+        )
+        page.route(
+            pattern,
+            lambda route: route.fulfill(
+                content_type="image/jpeg", body=sample.getvalue()
+            ),
+        )
+        page.locator("#cielo-preview-framing").click()
+        expect(page.locator("#framing-preview img")).to_be_visible()
+        page.locator("#framing-cols").fill("2")
+        page.locator("#framing-rows").fill("2")
+        page.locator("#framing-dialog .primary").click()
+        expect(page.locator("#framing-preview polygon")).to_have_count(4)
+        expect(page.locator("#framing-status")).to_contain_text(
+            "immagine DSS2 caricata"
+        )
+        page.locator("#framing-close").click()
+        page.unroute(pattern)
+
+        photo = io.BytesIO()
+        Image.new("RGB", (360, 180), "#31496a").save(photo, "PNG")
+        page.locator("#horizon-photo").click()
+        page.locator("#panorama-file").set_input_files(
+            {
+                "name": "panorama.png",
+                "mimeType": "image/png",
+                "buffer": photo.getvalue(),
+            }
+        )
+        expect(page.locator("#panorama-canvas")).to_be_visible()
+        page.locator("#panorama-dialog details summary").click()
+        point = page.locator("#panorama-point")
+        page.locator("#panorama-x").fill("25")
+        point.click()
+        page.locator("#panorama-y").fill("50")
+        point.click()
+        page.locator("#panorama-y").fill("45")
+        for x in ("0", "25", "50", "75"):
+            page.locator("#panorama-x").fill(x)
+            point.click()
+        page.locator("#panorama-save").click()
+        expect(page.locator("#cielo-horizon > summary")).to_contain_text("4 punti")
         page.locator("#horizon-clear").click()
     page.evaluate("localStorage.removeItem('meteo.v5.planner')")
 

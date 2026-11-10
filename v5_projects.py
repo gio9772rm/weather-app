@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import re
+from datetime import date as calendar_date
 
 import pandas as pd
 
@@ -55,9 +57,61 @@ def project_spec(value):
 def saved_projects(value):
     if not isinstance(value, list) or len(value) > 30:
         raise ValueError("Puoi salvare fino a trenta progetti")
-    result = [project_spec(item) for item in value]
+    result = []
+    for item in value:
+        project = project_spec(item)
+        if "imports" in item:
+            project["imports"] = saved_imports(item["imports"], project["filters"])
+        result.append(project)
     if len({item["target"] for item in result}) != len(result):
         raise ValueError("Usa un progetto per soggetto")
+    return result
+
+
+def saved_imports(value, filters):
+    if not isinstance(value, list) or len(value) > 60:
+        raise ValueError("Puoi conservare fino a sessanta serate per progetto")
+    keys, digests, result = set(), set(), []
+    totals = {f["name"].casefold(): f["acquired_seconds"] for f in filters}
+    for entry in value:
+        day, batch, digest = entry["day"], entry["batch"], entry["digest"]
+        if (
+            calendar_date.fromisoformat(day).isoformat() != day
+            or not 1 <= len(batch) <= 24
+            or batch != " ".join(batch.split())
+            or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or digest in digests
+            or (day, batch.casefold()) in keys
+        ):
+            raise ValueError("Serata importata non valida o già registrata")
+        keys.add((day, batch.casefold()))
+        digests.add(digest)
+        parts, names = [], set()
+        if (
+            not isinstance(entry["filters"], list)
+            or not 1 <= len(entry["filters"]) <= 8
+        ):
+            raise ValueError("Filtri importati non validi")
+        for part in entry["filters"]:
+            name, frames, seconds = part["name"], part["frames"], part["seconds"]
+            if (
+                not 1 <= len(name) <= 24
+                or ";" in name
+                or name != " ".join(name.split())
+                or name.casefold() in names
+                or type(frames) is not int
+                or not 1 <= frames <= 100000
+                or type(seconds) is not int
+                or not 1 <= seconds <= 3600000
+            ):
+                raise ValueError("Pose importate non valide")
+            key = name.casefold()
+            names.add(key)
+            totals[key] = totals.get(key, 0) + seconds
+            if totals[key] > 3600000:
+                raise ValueError("Ore raccolte oltre il limite")
+            parts.append({"name": name, "frames": frames, "seconds": seconds})
+        result.append({"day": day, "batch": batch, "digest": digest, "filters": parts})
     return result
 
 

@@ -1,5 +1,5 @@
 "use strict";
-const SHELL = "meteo-v5-shell-16",
+const SHELL = "meteo-v5-shell-17",
   DATA = "meteo-v5-data",
   SETTINGS = "meteo-v5-settings";
 const ASSETS = [
@@ -22,6 +22,12 @@ const ASSETS = [
   "/assets/v5/sky-tools.js",
   "/assets/v5/sky-horizon.js",
   "/assets/v5/sky-projects.js",
+  "/assets/v5/decision.js",
+  "/assets/v5/decision.css",
+  "/assets/v5/integration.js",
+  "/assets/v5/sky-compare.js",
+  "/assets/v5/panorama.js",
+  "/assets/v5/framing.js",
   "/assets/v5/account.js",
   "/assets/v5/sky-personal.css",
   "/assets/v5/sky-budget.js",

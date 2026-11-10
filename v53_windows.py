@@ -2,13 +2,14 @@
 
 import json
 import re
+from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
 from db import get_engine
-from v5_calibration import observed_hourly, utc
+from v5_calibration import VARIABLES, observed_hourly, utc
 
 FIELDS = {
     "precipitation": "rain",
@@ -197,7 +198,7 @@ def archive_paths(station_id, paths, cfg):
 
 
 def validation_key(station_id):
-    return "window-validation:v56:" + station_id
+    return "window-validation:coverage:" + station_id
 
 
 def sample_readiness(selected, timezone="Europe/Rome"):
@@ -239,7 +240,7 @@ def sample_readiness(selected, timezone="Europe/Rome"):
     }
 
 
-def collect_window_samples(station_id, now=None):
+def collect_window_samples(station_id, now=None, *, diagnose=False):
     from data_access import load_station
 
     now = utc(now if now is not None else pd.Timestamp.now(tz="UTC"))
@@ -250,7 +251,11 @@ def collect_window_samples(station_id, now=None):
             ),
             {"id": station_id},
         ).all()
-    hourly = window_rain_hourly(load_station(24 * 92, station_id))
+    observations = window_rain_input(load_station(24 * 92, station_id))
+    hourly = observed_hourly(observations)
+    slots = rain_slots(observations) if diagnose else None
+    coverage = Counter()
+    gaps = defaultdict(Counter)
     rain = (
         hourly.set_index("time").rain_mm
         if "rain_mm" in hourly
@@ -298,6 +303,10 @@ def collect_window_samples(station_id, now=None):
         )
         if len(values) != 2 or values.isna().any():
             missing_observations += 1
+            if slots is not None:
+                details = missing_rain_slots(slots, start, end)
+                coverage.update(details)
+                gaps[start.date().isoformat()].update({"windows": 1, **details})
             continue
         selected[start] = {
             "start": start,
@@ -321,11 +330,26 @@ def collect_window_samples(station_id, now=None):
         if len(candidates) > pending
         else None,
         "retention_days": 90,
+        **(
+            {
+                "rain_coverage": {
+                    **dict(coverage),
+                    "worst_days_utc": [
+                        {"date": day, **detail}
+                        for day, detail in sorted(
+                            gaps.items(), key=lambda row: (-row[1]["windows"], row[0])
+                        )[:7]
+                    ],
+                }
+            }
+            if diagnose
+            else {}
+        ),
     }
 
 
-def window_rain_hourly(observations):
-    """Keep valid rain when a different sensor is flagged, never estimated rain."""
+def window_rain_input(observations):
+    """Rain-specific quality, before aggregation and coverage diagnostics."""
     observations = observations.copy()
     if "data_quality" in observations:
         unrelated = {
@@ -351,18 +375,52 @@ def window_rain_hourly(observations):
         observations["data_quality"] = observations.data_quality.fillna("").map(
             rain_quality
         )
-    return observed_hourly(
-        observations[
-            [c for c in ("time", "rain_mm", "data_quality") if c in observations]
-        ]
-    )
+    return observations[
+        [c for c in ("time", "rain_mm", "data_quality") if c in observations]
+    ]
+
+
+def window_rain_hourly(observations):
+    """Keep valid rain when a different sensor is flagged, never estimated rain."""
+    return observed_hourly(window_rain_input(observations))
+
+
+def rain_slots(observations):
+    if observations.empty or "time" not in observations:
+        return set(), set(), set()
+    rows = observations.assign(time=utc(observations["time"]))
+    rows = rows.dropna(subset=["time"]).sort_values("time").drop_duplicates("time")
+    buckets = rows["time"].dt.ceil("5min")
+    nearby = set(rows["time"].dt.round("5min"))
+    if "rain_mm" not in rows:
+        return set(buckets), set(), nearby
+    low, high, _ = VARIABLES["rain_mm"]
+    good = pd.to_numeric(rows["rain_mm"], errors="coerce").between(low, high)
+    if "data_quality" in rows:
+        good &= ~rows["data_quality"].fillna("").str.contains(
+            "suspect|invalid|stuck", case=False
+        )
+    return set(buckets), set(buckets[good]), nearby
+
+
+def missing_rain_slots(slots, start, end):
+    present, valid, nearby = slots
+    expected = set(pd.date_range(start + pd.Timedelta(minutes=5), end, freq="5min"))
+    missing, unusable = len(expected - present), len((expected & present) - valid)
+    return {
+        "missing_slots": missing,
+        "unusable_slots": unusable,
+        "windows_with_gaps": int(bool(missing)),
+        "windows_with_unusable_rain": int(bool(unusable)),
+        "missing_slots_with_nearby_measurement": len((expected - present) & nearby),
+    }
 
 
 def validate_windows(station_id, now=None):
     from v5_data import clean_json
 
     now = utc(now if now is not None else pd.Timestamp.now(tz="UTC"))
-    samples, collection = collect_window_samples(station_id, now)
+    samples, collection = collect_window_samples(station_id, now, diagnose=True)
     selected = {start: (s["raw"], s["observed"]) for start, s in samples.items()}
     bins = []
     for low in (0, 0.2, 0.4, 0.6, 0.8):
