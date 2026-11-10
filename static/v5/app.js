@@ -549,6 +549,7 @@ function todayView() {
   };
   return (
     currentHero() +
+    (window.MeteoDecision?.quick(data.quick_check, tz()) || "") +
     (window.MeteoV54?.briefing() || "") +
     (window.MeteoInsights?.homeFocus() || "") +
     title(
@@ -800,6 +801,7 @@ function render() {
   window.MeteoV53?.bind(page);
   window.MeteoTimeline?.bind();
   window.MeteoCielo?.bind(page);
+  window.MeteoDecision?.bind();
   if (page === "notifications") checkPush();
 }
 function bindView() {

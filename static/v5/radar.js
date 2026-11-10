@@ -77,5 +77,9 @@
       <p class="metric-caption">Riflettività: ${esc(status(d.vmi_observed_at))} · ${dateTime(d.vmi_observed_at)}.<br>Fulmini: ${validLightning ? esc(status(d.lightning_observed_at)) + " · " + dateTime(d.lightning_observed_at) : "fotogramma non disponibile"}. Conteggi riferiti al prodotto osservato, non a fulmini futuri.</p>
       <a href="https://radar.protezionecivile.gov.it/" target="_blank" rel="noopener noreferrer">Mappa ufficiale DPC ↗</a></article>`;
   }
-  window.MeteoRadar = {view, bind, dpcCard, embedUrl, status};
+  function open(key) {
+    if (Object.hasOwn(layers, key)) layer = key;
+    navigate("maps");
+  }
+  window.MeteoRadar = {view, bind, dpcCard, embedUrl, status, open};
 })();

@@ -47,6 +47,13 @@ Puoi scaricarlo di nuovo in formato `.hrz` o rimuoverlo. Cielo e Pianificatore
 applicano la maschera alla postazione a cui appartiene. Nel Pianificatore
 puoi specificare punti diversi per il singolo piano.
 
+**Orizzonte da foto.** Apri **Crea da foto panoramica** nella stessa riga.
+Usa una foto sferica 360° × 180° (2:1), livellata e presa dal punto del
+telescopio. Indica sulla foto il Nord geografico e la quota 0°, quindi
+traccia gli ostacoli tutt'intorno. La foto viene letta sul dispositivo;
+nel profilo rimangono le coppie azimut e altezza. Rivedi il tracciato
+prima di sostituire un orizzonte già salvato.
+
 **Obiettivi per filtro.** In Cielo seleziona un soggetto e inserisci, per
 ogni filtro, l'obiettivo, le ore già raccolte e la durata della posa.
 **Confronta le tre notti** stima quanto una finestra può contribuire alle
@@ -55,6 +62,45 @@ preparazione della ricetta. Se c'è una finestra utile, **Usa la notte
 consigliata** apre una bozza del piano con la finestra e i filtri ancora
 da completare. Le stime non incrementano le ore raccolte: aggiornare
 quelle ore dopo la sessione cambia il confronto successivo.
+
+**Chiudi serata.** Da un progetto con obiettivi, carica il CSV o TSV
+delle pose accettate. Il modello minimo ha intestazioni
+`filtro;pose_valide;secondi_per_posa`. Le intestazioni del file si
+possono associare a mano (anche per report del Tracker o di altri programmi).
+Se il CSV contiene più soggetti, esiti o date di serata, associa anche
+quelle colonne per escludere le righe che non appartengono alla serata.
+Controlla anteprima e filtri prima del salvataggio. I totali del file
+si aggiungono alle ore manuali. La stessa data e lotto sostituiscono il
+riepilogo precedente, e lo stesso file non può essere contato in due lotti
+dello stesso progetto. Puoi rimuovere un riepilogo dal registro.
+FITS, percorsi e contenuto del CSV restano sul dispositivo.
+
+**Confronta due postazioni.** Scegli due postazioni e un filtro ancora da
+completare. Vedi la migliore finestra continua delle prossime tre notti
+locali per ciascuna: le soglie e lo strumento sono uguali, orizzonte e fuso
+seguono la postazione. Le ore utili sono stime verso l'obiettivo del filtro.
+Il confronto è su richiesta e non cambia la postazione attiva.
+
+**Ultimo controllo.** Oggi e Cielo affiancano l'orario del radar osservato
+alle prossime ore previste. Radar e satellite si aprono dalla riga dei
+dettagli. La fascia **La notte ora per ora** usa le finestre calcolate dal
+pianificatore: tocca un intervallo per leggere soglie, nuvole, raffiche,
+Luna e ostacoli pertinenti. Quando il sito dispone di due previsioni
+confrontabili, un disaccordo rilevante mostra la stessa ora e lo stesso
+strato di nuvole. Le postazioni senza dati comparabili non ereditano
+i modelli di Roma.
+
+**Inquadratura sul cielo.** Seleziona soggetto e strumento per sovrapporre
+il sensore al campo DSS2 Color servito da [CDS HiPS2FITS](https://alasky.cds.unistra.fr/hips-image-services/hips2fits).
+Puoi scegliere orientamento, griglia e sovrapposizione, e scaricare i centri
+ICRS dei pannelli in CSV. Il servizio immagini riceve le coordinate
+celesti del soggetto, senza la posizione della postazione. Quando
+l'immagine non è raggiungibile restano il disegno e il CSV del mosaico.
+
+**Verifica pioggia.** La scheda *Campioni per la calibrazione* distingue
+gli intervalli di cinque minuti senza misure da quelli con pioggia non
+utilizzabile. Mostra i giorni con più esclusioni nel periodo di raccolta.
+La verifica delle due ore asciutte conserva i criteri e i dati precedenti.
 
 **Account.** L'icona del profilo apre la scheda Account da ogni vista.
 Mostra il metodo di accesso e le preferenze principali. Puoi scegliere

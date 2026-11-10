@@ -59,6 +59,7 @@
       <form id="horizon-import" class="sky-place-actions"><label>File orizzonte<input type="file" id="horizon-file" accept=".hrz,.txt,text/plain" required></label>
         <button class="quiet">Salva per questa postazione</button></form>
       <div class="controls">${count >= 2 ? '<button id="horizon-export" type="button" class="quiet">Scarica .hrz</button>' : ""}
+        <button id="horizon-photo" type="button" class="quiet">Crea da foto panoramica</button>
         ${count ? '<button id="horizon-clear" type="button" class="quiet">Rimuovi orizzonte</button>' : ""}</div>
       <p class="metric-caption">Una coppia azimut altezza per riga, in gradi. Nord 0°, est 90°. Il file viene letto qui; nel profilo si salvano i punti, senza il file originale.</p>
       <p id="horizon-status" role="status"></p></details>`;
@@ -72,12 +73,13 @@
       const horizons = { ...MeteoSky.settings().horizons };
       if (value || Object.keys(legacy || {}).length) {
         if (!horizons[id] && Object.keys(horizons).length >= 16) {
-          report("Puoi conservare fino a sedici orizzonti. Rimuovine uno prima di continuare."); return;
+          report("Puoi conservare fino a sedici orizzonti. Rimuovine uno prima di continuare."); return false;
         }
         horizons[id] = value || { name: "", mask: {} };
       } else delete horizons[id];
       MeteoSky.update({ horizons }); open = true; change();
       $("#horizon-status").textContent = message;
+      return true;
     };
     $("#horizon-import").onsubmit = async event => {
       event.preventDefault();
@@ -89,6 +91,9 @@
       } catch (error) { report(error.message); }
     };
     const clear = $("#horizon-clear"), download = $("#horizon-export");
+    $("#horizon-photo").onclick = () => MeteoPanorama.open(mask => set(
+      { name: "Panoramica tracciata", mask }, "Orizzonte da foto applicato alla postazione."
+    ), Boolean(Object.keys(saved(site, station)?.mask ?? legacy ?? {}).length));
     if (clear) clear.onclick = () => set(null, "Orizzonte rimosso.");
     if (download) download.onclick = () => {
       const mask = saved(site, station)?.mask ?? legacy;

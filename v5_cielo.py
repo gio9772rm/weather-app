@@ -20,6 +20,7 @@ from config import Settings
 from sky_catalog import recommended_targets, resolve_target, target_filters
 from v5_astronomy import PROFILES, night_darkness
 from v5_data import clean_json, station_settings
+from v5_decision import quick_check
 from v5_extensions import plan_constraints
 from v5_projects import project_outlook, project_spec
 from v5_sessions import (
@@ -210,6 +211,8 @@ def _target_options(
                 "name": target.common_name,
                 "category": target.category,
                 "filters": target_filters(target),
+                "ra_deg": target.ra_deg,
+                "dec_deg": target.dec_deg,
                 "framing": asdict(framing) if framing else None,
                 "peak_altitude": round(peak, 1) if peak is not None else None,
                 "altitude": geometry["altitude"].round(1).tolist(),
@@ -284,6 +287,7 @@ def night_report(context: ObservingContext, values: dict) -> dict:
         if profile == "deep_sky" and values.get("project") is not None
         else None
     )
+    compare_only = values.get("compare_only") is True and project is not None
     altitude, separation, rotation, horizon, equipment = constraints
     requested = (
         date.fromisoformat(values["date"]).isoformat() if values.get("date") else None
@@ -321,7 +325,7 @@ def night_report(context: ObservingContext, values: dict) -> dict:
     selected = requested if requested in detail else nights[0]["date"]
     bounds, dark, weather, windows = detail[selected]
     timeline, targets = None, []
-    if bounds and bounds[0] < bounds[1]:
+    if not compare_only and bounds and bounds[0] < bounds[1]:
         left, right = bounds
         times = _sample_times(bounds)
         lunar = lunar_track(times, site)
@@ -334,6 +338,19 @@ def night_report(context: ObservingContext, values: dict) -> dict:
             "moon_illumination": lunar["illumination"].round(1).tolist(),
             "weather": _timeline_weather(intervals, left, right, now),
             "weather_windows": windows,
+            "weather_checks": [
+                {
+                    "start": row["start"],
+                    "end": row["end"],
+                    "reasons": weather_blockers(row, limits)[0],
+                }
+                for row in weather
+            ],
+            "cloud_disagreement": [
+                row
+                for row in snapshot.get("cloud_disagreement", [])
+                if left - HOUR < pd.Timestamp(row["valid_time"]) < right
+            ],
             "hourly": [
                 {key: row.get(key) for key in HOURLY_FIELDS}
                 for row in hours
@@ -355,10 +372,11 @@ def night_report(context: ObservingContext, values: dict) -> dict:
     outlook = None
     if project:
         goal = resolve_target(project["target"])
-        project_windows = {}
+        project_windows, reasons = {}, {}
         for day, (bounds, dark, weather, _) in detail.items():
             if not bounds or not dark or dark[1] <= now:
                 project_windows[day] = []
+                reasons[day] = "Buio disponibile insufficiente"
                 continue
             matching = (
                 next((target for target in targets if target["id"] == goal.name), None)
@@ -380,7 +398,14 @@ def night_report(context: ObservingContext, values: dict) -> dict:
                     [goal],
                 )[0]
             project_windows[day] = matching["windows"]
+            reasons[day] = matching["limiting_factor"]
         outlook = project_outlook(site, project, project_windows, values)
+        for night in outlook["nights"]:
+            night["limiting_factor"] = (
+                "Durata utile dopo preparazione e tempi della ricetta"
+                if not night["window"] and project_windows[night["date"]]
+                else reasons.get(night["date"])
+            )
     return clean_json(
         {
             "schema": 1,
@@ -399,6 +424,13 @@ def night_report(context: ObservingContext, values: dict) -> dict:
             "timeline": timeline,
             "targets": targets,
             "project": outlook,
+            "quick_check": None
+            if compare_only
+            else quick_check(
+                snapshot,
+                now,
+                local=values.get("site") is None and context.weather_source is None,
+            ),
             "field": asdict(field_of_view(equipment)) if equipment else None,
             "constraints": {
                 "altitude": altitude,

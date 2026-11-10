@@ -7,14 +7,16 @@
   const missing = project => project.filters.reduce((sum, f) => sum + Math.max(0, f.desired_seconds - f.acquired_seconds), 0);
   function markup(report, target) {
     if (!target || report.profile !== "deep_sky") return "";
-    const project = find(target.id), outlook = project && report.project?.target === target.id ? report.project : null;
+    const raw = find(target.id), project = raw && MeteoIntegration.totals(raw);
+    const outlook = project && report.project?.target === target.id ? report.project : null;
     const best = outlook?.best, zone = report.site.timezone;
     return `<section class="cielo-project" aria-labelledby="cielo-project-title">
       <div class="card-header"><h3 id="cielo-project-title">Obiettivi per filtro · ${esc(target.id)}</h3><button type="button" id="project-edit" class="quiet">${project ? "Modifica" : "Imposta obiettivi"}</button></div>
       ${!project ? '<p class="metric-caption">Indica le ore che vuoi raggiungere e quelle già raccolte per confrontare le prossime tre notti.</p>' :
         `<div class="project-progress">${project.filters.map(f => `<div><b>${esc(f.name)}</b><progress aria-label="Integrazione ${esc(f.name)}" max="${f.desired_seconds}" value="${Math.min(f.acquired_seconds, f.desired_seconds)}"></progress><span>${hours(f.acquired_seconds)} / ${hours(f.desired_seconds)}</span></div>`).join("")}</div>
         <p>${missing(project) ? "Mancano " + hours(missing(project)) : "Obiettivi raggiunti"}</p>
-        ${missing(project) ? '<button id="project-compare" type="button" class="quiet">Confronta le tre notti</button>' : ""}`}
+        <div class="controls"><button id="project-import" type="button" class="quiet">Chiudi serata</button>
+        ${missing(project) ? '<button id="project-compare" type="button" class="quiet">Confronta le tre notti</button><button id="project-compare-sites" type="button" class="quiet">Confronta due postazioni</button>' : ""}</div>`}
       ${best ? `<div class="project-best"><b>Notte consigliata · ${esc(MeteoSky.dateTime(best.window.start, zone))}</b>
         <p>${hours(best.useful_seconds)} stimate verso gli obiettivi · ${best.filters.map(f => esc(f.name) + " " + hours(f.integration_seconds)).join(" · ")}</p>
         <button id="project-use-window" type="button" class="primary">Usa la notte consigliata →</button>
@@ -27,14 +29,14 @@
     const dialog = document.createElement("dialog"), old = find(target.id);
     dialog.id = "project-dialog";
     const row = f => `<fieldset data-project-filter class="form-grid"><legend>Filtro</legend>
-      <label>Nome<input data-name maxlength="24" value="${esc(f.name || "")}" required></label>
+      <label>Nome<input data-name maxlength="24" value="${esc(f.name || "")}" ${old?.imports?.some(entry => entry.filters.some(part => part.name === f.name)) ? "readonly" : ""} required></label>
       <label>Obiettivo · ore<input data-desired type="number" min=".01" max="1000" step=".01" value="${f.desired_seconds ? +(f.desired_seconds / 3600).toFixed(2) : ""}" required></label>
-      <label>Già raccolte · ore<input data-acquired type="number" min="0" max="1000" step=".01" value="${+((f.acquired_seconds || 0) / 3600).toFixed(2)}" required></label>
+      <label>Raccolte a mano · ore<input data-acquired type="number" min="0" max="1000" step=".01" value="${+((f.acquired_seconds || 0) / 3600).toFixed(2)}" required></label>
       <label>Posa · secondi<input data-exposure type="number" min="1" max="3600" step=".1" value="${f.exposure_seconds || 180}" required></label>
       <button type="button" data-remove class="quiet">Togli filtro</button></fieldset>`;
     const initial = old?.filters || (recipe?.filters || [{ name: "OSC", seconds: 180 }]).map(f => ({ name: f.name, exposure_seconds: f.seconds }));
     dialog.innerHTML = `<form><div class="dialog-title"><h2>Obiettivi · ${esc(target.id)}</h2><button id="project-close" type="button" class="quiet" aria-label="Chiudi">×</button></div>
-      <p>Le ore raccolte sono quelle che inserisci qui. Le previsioni non le modificano.</p>
+      <p>Inserisci le ore manuali. I totali caricati con «Chiudi serata» si aggiungono qui solo nel riepilogo.</p>
       <div id="project-filter-rows">${initial.map(row).join("")}</div>
       <div class="controls"><button type="button" id="project-add" class="quiet">Aggiungi filtro</button><button class="primary">Salva obiettivi</button>
       ${old ? '<button type="button" id="project-remove" class="quiet">Rimuovi obiettivi</button>' : ""}</div><p id="project-status" role="status"></p></form>`;
@@ -64,7 +66,11 @@
       if (filters.some(f => !f.name || f.name.includes(";")) || new Set(filters.map(f => f.name.toLowerCase())).size !== filters.length) {
         $("#project-status").textContent = "Usa nomi distinti per i filtri, senza punto e virgola."; return;
       }
-      commit({ target: target.id, filters });
+      const updated = { target: target.id, filters, ...(old?.imports ? { imports: old.imports } : {}) };
+      if (MeteoIntegration.totals(updated).filters.some(f => f.acquired_seconds > 3600000)) {
+        $("#project-status").textContent = "Ore manuali e importate superano il limite."; return;
+      }
+      commit(updated);
     };
   }
   window.MeteoProjects = { list, find, markup, edit };
