@@ -852,6 +852,12 @@ def _city_home_checks(browser, base_url, output):
             "Confronto tra 3 fonti"
         )
         expect(page.locator(".city-hour-list strong").first).to_have_text("21°")
+        page.get_by_role("button", name="Previsioni", exact=True).click()
+        expect(page.get_by_role("heading", name="Stazione di Roma")).to_be_visible()
+        expect(
+            page.get_by_role("region", name="Misure di Roma a confronto")
+        ).to_contain_text("16,0 °C")
+        page.get_by_role("button", name="Oggi", exact=True).click()
         expect(page.locator("#location-row")).to_be_hidden()
         assert not any(
             "/api/v5/stations" in r or "/api/v5/snapshot/" in r for r in requests
@@ -995,7 +1001,15 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                         )
                     page.goto(f"{base_url}/?page={view}&theme={theme}")
                     if view in {"today", "forecast", "cities"}:
-                        expect(page.locator(".city-temperature")).to_have_text("17°")
+                        if view == "forecast":
+                            expect(page.locator(".city-forecast-lead h1")).to_have_text(
+                                "Previsioni per Roma"
+                            )
+                            expect(page.locator("#city-hour-detail")).to_be_visible()
+                        else:
+                            expect(page.locator(".city-temperature")).to_have_text(
+                                "16°"
+                            )
                         expect(page.locator("#location-row")).to_be_hidden()
                     elif view not in {"more", "personal"}:
                         page.wait_for_function(
