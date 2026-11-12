@@ -136,6 +136,27 @@ def test_v5_snapshot_does_not_expose_private_configuration(sqlite_engine, monkey
     assert result["radar"][0]["sri_observed_at"] != result["radar"][0]["vmi_observed_at"]
 
 
+def test_v5_snapshot_keeps_raw_samples_when_all_hourly_samples_are_rejected(
+    sqlite_engine, monkeypatch
+):
+    now = pd.Timestamp("2026-11-12T17:07:00Z")
+    station = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["2026-11-12T16:58:00Z", "2026-11-12T17:03:00Z"]),
+            "temp_c": [17.2, 17.4],
+            "humidity": [92.0, 92.0],
+            "rain_mm": [0.0, 0.0],
+            "data_quality": ["stuck_humidity", "stuck_humidity"],
+        }
+    )
+    monkeypatch.setattr("v5_data.load_station", lambda *_: station)
+    result = build_snapshot(Settings.from_env().station_id, now=now)
+    assert result["observed_at"] == "2026-11-12T17:03:00+00:00"
+    assert result["observed_hourly"] == []
+    assert result["current"]["data_quality"] == "stuck_humidity"
+    assert len(result["observations"]) == 2
+
+
 def test_v5_unknown_station_is_not_primary_fallback(sqlite_engine):
     with pytest.raises(ValueError):
         station_settings("not-configured")
