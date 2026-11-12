@@ -702,6 +702,16 @@ def _city_forecast_fixture(geo_id):
                 precipitation_partial=True,
             )
     return {
+        **(
+            {
+                "station_observation": {
+                    "time": now.isoformat(),
+                    "values": {"temp_c": 16, "humidity": 65},
+                }
+            }
+            if geo_id == 3169070
+            else {}
+        ),
         "geo_id": identifier,
         "name": name,
         "label": label,
@@ -730,6 +740,67 @@ def _city_routes(page):
         route.fulfill(json=_city_forecast_fixture(int(match[1])))
 
     page.route(re.compile(r"/api/v5/tools/city\?geo_id=\d+"), forecast)
+
+    def city_comparison(route):
+        if route.request.method == "POST":
+            point = route.request.post_data_json
+            assert (point["latitude"], point["longitude"]) == (48.86, 2.35)
+            route.fulfill(
+                json={"geo_id": None, "hourly": [], "daily": [], "sources": []}
+            )
+            return
+        match = re.search(r"[?&]geo_id=(\d+)", route.request.url)
+        geo_id = int(match[1])
+        base = _city_forecast_fixture(geo_id)
+        source_names = (
+            ("ecmwf", "ECMWF IFS"),
+            ("gfs", "NOAA GFS"),
+            ("icon", "DWD ICON"),
+        )
+        route.fulfill(
+            json={
+                "geo_id": geo_id,
+                "sources": [
+                    {"id": k, "name": name, "via": "Open-Meteo"}
+                    for k, name in source_names
+                ],
+                "hourly": [
+                    {
+                        "time": r["time"],
+                        "values": {
+                            "temp_c": [21, 17, 22, 3],
+                            "clouds": [70, 60, 85, 3],
+                            "cloud_low": [50, 40, 54, 3],
+                            "visibility_m": [10000, 8000, 11500, 3],
+                            **(
+                                {"precipitation_mm": [0.3, 0.0, 0.6, 3]}
+                                if geo_id == 3169070
+                                else {}
+                            ),
+                        },
+                    }
+                    for r in base["hourly"]
+                ],
+                "daily": [
+                    {
+                        "date": r["time"][:10],
+                        "temp_hours": 24,
+                        "rain_hours": 0,
+                        "values": {
+                            "temp_min_c": [11, 9, 12, 3],
+                            "temp_max_c": [23, 22, 25, 3],
+                        },
+                        "models": [
+                            {"id": k, "temp_min_c": 9 + i, "temp_max_c": 22 + i}
+                            for i, (k, _) in enumerate(source_names)
+                        ],
+                    }
+                    for r in base["daily"]
+                ],
+            }
+        )
+
+    page.route("**/api/v5/tools/city-comparison**", city_comparison)
     page.route(
         re.compile(r"/api/v5/tools/cities\?q="),
         lambda route: route.fulfill(
@@ -775,7 +846,12 @@ def _city_home_checks(browser, base_url, output):
         page.on("request", lambda r: requests.append(r.url))
         page.goto(base_url)
         expect(page.locator(".city-hero h1")).to_have_text("Roma")
-        expect(page.locator(".city-temperature")).to_have_text("17°")
+        expect(page.locator(".city-temperature")).to_have_text("16°")
+        expect(page.locator(".city-time")).to_contain_text("Stazione di Roma")
+        expect(page.locator(".city-cross-strip")).to_contain_text(
+            "Confronto tra 3 fonti"
+        )
+        expect(page.locator(".city-hour-list strong").first).to_have_text("21°")
         expect(page.locator("#location-row")).to_be_hidden()
         assert not any(
             "/api/v5/stations" in r or "/api/v5/snapshot/" in r for r in requests
@@ -794,6 +870,22 @@ def _city_home_checks(browser, base_url, output):
         expect(page.locator(".city-week-list li")).to_have_count(7)
         page.locator("[data-city-day]").nth(1).click()
         expect(page.get_by_role("heading", name=re.compile("Ore di"))).to_be_visible()
+        expect(page.locator(".city-hero")).to_have_count(0)
+        expect(page.locator(".city-forecast-lead h1")).to_have_text(
+            "Previsioni per Tokyo"
+        )
+        expect(page.get_by_role("heading", name="Stazione di Roma")).to_have_count(0)
+        expect(
+            page.get_by_role("region", name="Confronto delle fonti")
+        ).to_contain_text("DWD ICON")
+        page.locator("#city-metric").select_option("cloud_low")
+        expect(
+            page.get_by_role("img", name="Andamento orario: Nuvole basse")
+        ).to_be_visible()
+        expect(page.get_by_role("columnheader", name="Nuvole medie")).to_be_visible()
+        expect(
+            page.get_by_role("region", name="Tabella oraria scorrevole")
+        ).to_contain_text("50 %")
         expect(page.locator("[data-city-day]").nth(1)).to_have_attribute(
             "aria-pressed", "true"
         )
@@ -824,10 +916,19 @@ def _city_home_checks(browser, base_url, output):
 
         page.route("**/api/v5/tools/nearby-city", locate)
         page.locator("#city-locate").click()
-        expect(page.locator(".city-hero h1")).to_have_text("Vicino a te")
+        expect(page.locator(".city-forecast-lead h1")).to_have_text(
+            "Previsioni per Vicino a te"
+        )
+        expect(page.locator(".city-lead-cross")).to_contain_text(
+            "Confronto non disponibile"
+        )
         expect(page.locator(".city-source")).to_contain_text("Europe/Paris")
         expect(page.locator("#city-pin")).to_have_count(0)
         page.reload()
+        expect(page.locator(".city-forecast-lead h1")).to_have_text(
+            "Previsioni per Tokyo"
+        )
+        page.get_by_role("button", name="Oggi", exact=True).click()
         expect(page.locator(".city-hero h1")).to_have_text("Tokyo")
         expect(page.locator(".city-temperature")).to_have_text("17°")
         context.set_offline(True)
