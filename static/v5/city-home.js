@@ -338,7 +338,9 @@
   }
   function forecastBody() {
     if (mode() === "forecast" && !day && report?.daily.length) day = localDay(report.daily[0].time);
-    const footer = report ? `<div class="city-source"><p>Previsioni: <b>${esc(report.source)}</b> · aggiornate ${esc(dateTime(report.fetched_at))} · ${esc(report.timezone)}. Località: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a>.</p>
+    const source = report?.source === "MET Norway" ? '<a href="https://www.met.no/en" target="_blank" rel="noopener noreferrer">MET Norway</a>'
+      : report?.source === "Open-Meteo" ? '<a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a>' : esc(report?.source);
+    const footer = report ? `<div class="city-source"><p>Previsioni: <b>${source}</b> · aggiornate ${esc(dateTime(report.fetched_at))} · ${esc(report.timezone)}. Località: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a>. Dati rielaborati · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.</p>
       ${saved(place) ? '<button id="city-sky" type="button" class="quiet">Pianifica il cielo per questa città →</button>' : ""}</div>` : "";
     return hero() + details() + (mode() === "forecast" ? week() + hours() : hours() + week()) + footer;
   }

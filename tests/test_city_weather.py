@@ -225,6 +225,7 @@ def test_fetch_city_forecast_uses_metno_when_open_meteo_is_unavailable() -> None
             self._payload = payload or {}
             self.status_code = status
             self.ok = status < 400
+            self.headers = {}
 
         def json(self):
             return self._payload
@@ -256,3 +257,45 @@ def test_fetch_city_forecast_uses_metno_when_open_meteo_is_unavailable() -> None
         "https://api.open-meteo.com/v1/forecast",
         "https://api.met.no/weatherapi/locationforecast/2.0/compact",
     ]
+
+
+def test_metno_respects_expires_and_revalidates_with_last_modified(monkeypatch):
+    from collections import OrderedDict
+    from email.utils import formatdate
+    from types import SimpleNamespace
+
+    import city_weather
+
+    now = [1_800_000_000.0]
+    last_modified = formatdate(now[0] - 3600, usegmt=True)
+    expires = formatdate(now[0] + 14400, usegmt=True)
+    requests = []
+
+    class Session:
+        def get(self, _url, *, headers, params, timeout):
+            requests.append(headers)
+            if len(requests) == 1:
+                return SimpleNamespace(
+                    ok=True,
+                    status_code=200,
+                    headers={"Last-Modified": last_modified, "Expires": expires},
+                    json=_metno_payload,
+                )
+            return SimpleNamespace(ok=True, status_code=304, headers={})
+
+    monkeypatch.setattr(city_weather, "_METNO_CACHE", OrderedDict())
+    monkeypatch.setattr(city_weather, "time", SimpleNamespace(time=lambda: now[0]))
+    location = CityLocation("Verona", "Italia", "Veneto", 45.44, 10.99, "Europe/Rome")
+    first = city_weather._fetch_metno_city_forecast(location, Session())
+    now[0] += 12600
+    assert (
+        city_weather._fetch_metno_city_forecast(location, Session()).fetched_at
+        == first.fetched_at
+    )
+    assert len(requests) == 1
+    now[0] += 2000
+    assert (
+        city_weather._fetch_metno_city_forecast(location, Session()).fetched_at
+        == first.fetched_at
+    )
+    assert requests[1]["If-Modified-Since"] == last_modified

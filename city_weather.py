@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,6 +32,16 @@ class CityWeatherError(RuntimeError):
 
 
 LOGGER = logging.getLogger(__name__)
+_METNO_CACHE = OrderedDict()
+_METNO_CACHE_LOCK = threading.Lock()
+_METNO_REQUEST_LOCKS = tuple(threading.Lock() for _ in range(8))
+_NORDIC_ZONES = {
+    "Europe/Oslo",
+    "Europe/Stockholm",
+    "Europe/Helsinki",
+    "Europe/Copenhagen",
+    "Atlantic/Reykjavik",
+}
 
 
 @dataclass(frozen=True)
@@ -634,20 +648,65 @@ def _fetch_metno_city_forecast(
     timeout: tuple[int, int] = (8, 30),
 ) -> CityForecast:
     params: dict[str, Any] = {
-        "lat": round(location.latitude, 5),
-        "lon": round(location.longitude, 5),
+        "lat": round(location.latitude, 4),
+        "lon": round(location.longitude, 4),
     }
     if location.elevation_m is not None:
         params["altitude"] = round(location.elevation_m)
-    payload = _get_json(
-        session,
-        "https://api.met.no/weatherapi/locationforecast/2.0/compact",
-        params,
-        "MET Norway",
-        headers={"User-Agent": "weather-app-v3/1.0 github.com/gio9772rm/weather-app"},
-        timeout=timeout,
-    )
+    key = tuple(params.values())
+    with _METNO_REQUEST_LOCKS[hash(key) % len(_METNO_REQUEST_LOCKS)]:
+        payload = _metno_payload(location, session, params, key, timeout)
     return parse_metno_city_forecast(payload, location)
+
+
+def _metno_payload(location, session, params, key, timeout):
+    with _METNO_CACHE_LOCK:
+        saved = _METNO_CACHE.get(key)
+        if saved:
+            _METNO_CACHE.move_to_end(key)
+    if saved and time.time() < saved[0]:
+        return saved[2]
+    headers = {
+        "User-Agent": "weather-app-v3/1.0 https://github.com/gio9772rm/weather-app"
+    }
+    if saved and saved[1]:
+        headers["If-Modified-Since"] = saved[1]
+    try:
+        response = session.get(
+            "https://api.met.no/weatherapi/locationforecast/2.0/compact",
+            params=params,
+            headers=headers,
+            timeout=timeout,
+        )
+        response_headers = response.headers
+        if response.status_code == 304 and saved:
+            payload, last_modified = saved[2], saved[1]
+        elif response.ok:
+            payload, last_modified = (
+                response.json(),
+                response_headers.get("Last-Modified"),
+            )
+        else:
+            raise CityWeatherError(f"MET Norway: risposta HTTP {response.status_code}")
+    except (requests.RequestException, ValueError) as exc:
+        raise CityWeatherError("MET Norway: servizio non raggiungibile") from exc
+    if not isinstance(payload, dict) or not (payload.get("properties") or {}).get(
+        "timeseries"
+    ):
+        raise CityWeatherError("MET Norway: previsione vuota")
+    # Honour both the product's refresh interval and a later HTTP Expires.
+    deadline = time.time() + (1800 if location.timezone in _NORDIC_ZONES else 10800)
+    if expires := response_headers.get("Expires"):
+        try:
+            deadline = max(deadline, parsedate_to_datetime(expires).timestamp())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    with _METNO_CACHE_LOCK:
+        _METNO_CACHE[key] = deadline, last_modified, payload
+        _METNO_CACHE.move_to_end(key)
+        while len(_METNO_CACHE) > 32:
+            _METNO_CACHE.popitem(last=False)
+    return payload
 
 
 def fetch_city_forecast(

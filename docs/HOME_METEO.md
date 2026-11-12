@@ -24,7 +24,8 @@ Si può cercare per nome, CAP o
 
 La home non carica le fotografie delle stazioni. Le previsioni della città
 sono richieste su domanda a Open-Meteo, con MET Norway come riserva. Il
-servizio conserva in memoria un numero limitato di risposte. Se l'uso offline
+servizio conserva in memoria un numero limitato di risposte e rispetta le
+scadenze indicate dal fornitore. Se l'uso offline
 è abilitato, il dispositivo può mostrare l'ultima previsione di un massimo
 di quattro città, indicandone l'orario e la provenienza.
 
