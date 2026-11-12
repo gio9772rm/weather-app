@@ -183,8 +183,40 @@ def test_parse_metno_city_forecast_normalises_units_and_daily_data() -> None:
     assert result.current["description"] == "Parzialmente nuvoloso"
     assert result.current["wind_kmh"] == 10.8
     assert result.hourly.iloc[0]["precip_probability"] == 30
+    assert result.hourly.iloc[0]["probability_hours"] == 6
+    assert result.hourly.iloc[0]["precipitation_hours"] == 1
     assert result.hourly.iloc[1]["precipitation_mm"] == 1.1
     assert result.daily.iloc[0]["precipitation_mm"] == 1.3
+    assert result.daily.iloc[0]["precipitation_partial"]
+
+
+def test_metno_daily_precipitation_does_not_sum_overlapping_or_cross_midnight_periods():
+    location = CityLocation("Verona", "Italia", "Veneto", 45.44, 10.99, "Europe/Rome")
+    periods = [
+        ("2026-08-21T20:00:00Z", 5.0),  # crosses midnight locally
+        ("2026-08-21T22:00:00Z", 0.8),
+        ("2026-08-21T23:00:00Z", 1.2),  # overlaps the previous interval
+        ("2026-08-22T04:00:00Z", 1.0),
+    ]
+    payload = {
+        "properties": {
+            "timeseries": [
+                {
+                    "time": at,
+                    "data": {
+                        "instant": {"details": {"air_temperature": 20}},
+                        "next_6_hours": {"details": {"precipitation_amount": amount}},
+                    },
+                }
+                for at, amount in periods
+            ]
+        }
+    }
+    report = parse_metno_city_forecast(payload, location)
+    assert pd.isna(report.daily.iloc[0]["precipitation_mm"])
+    assert report.daily.iloc[1]["precipitation_mm"] == 1.8
+    assert report.daily.iloc[1]["precipitation_hours"] == 12
+    assert report.daily.iloc[1]["precipitation_partial"]
 
 
 def test_fetch_city_forecast_uses_metno_when_open_meteo_is_unavailable() -> None:

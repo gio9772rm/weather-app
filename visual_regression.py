@@ -689,6 +689,18 @@ def _city_forecast_fixture(geo_id):
         }
         for i, time in enumerate(pd.date_range(now.normalize(), periods=7, freq="D"))
     ]
+    if geo_id == 1850147:
+        for row in rows:
+            row.update(
+                precip_probability=None, precipitation_mm=0.5, precipitation_hours=1
+            )
+        for row in daily:
+            row.update(
+                precip_probability=None,
+                precipitation_mm=4.2,
+                precipitation_hours=12,
+                precipitation_partial=True,
+            )
     return {
         "geo_id": identifier,
         "name": name,
@@ -770,6 +782,9 @@ def _city_home_checks(browser, base_url, output):
         )
         _pick_tokyo(page)
         expect(page.locator(".city-source")).to_contain_text("Asia/Tokyo")
+        expect(page.locator(".city-fact").first).to_contain_text("4,2 mm")
+        expect(page.locator(".city-fact").first).to_contain_text("12 h coperte")
+        expect(page.locator(".city-hour-list .city-rain").first).to_have_text("0,5 mm")
         page.locator("#city-favorite").click()
         page.locator("#city-pin").click()
         expect(page.locator("#city-pin")).to_have_attribute("aria-pressed", "true")
