@@ -345,7 +345,7 @@ async def push_subscription(request):
 
 
 async def extra_tool(request):
-    from v5_city import city_forecast, nearby_city, search_city
+    from v5_city import city_comparison, city_forecast, nearby_city, search_city
     from v5_extensions import catalog, planner
 
     headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
@@ -418,7 +418,17 @@ async def extra_tool(request):
                 stable=request.query_params.get("geo_id"),
             )
             return JSONResponse(value, headers=headers)
-        if request.method == "POST" and action in {"planner", "cielo", "nearby-city"}:
+        if request.method == "GET" and action == "city-comparison":
+            value = await run_in_threadpool(
+                city_comparison, stable=request.query_params.get("geo_id")
+            )
+            return JSONResponse(value, headers=headers)
+        if request.method == "POST" and action in {
+            "planner",
+            "cielo",
+            "nearby-city",
+            "city-comparison",
+        }:
             if not origin_matches(request):
                 return JSONResponse(
                     {"error": "Origine non consentita"},
@@ -433,7 +443,9 @@ async def extra_tool(request):
             body = bytearray()
             async for chunk in request.stream():
                 body.extend(chunk)
-                if len(body) > (1024 if action == "nearby-city" else 32768):
+                if len(body) > (
+                    1024 if action in {"nearby-city", "city-comparison"} else 32768
+                ):
                     return JSONResponse(
                         {"error": "Richiesta troppo grande"},
                         status_code=413,
@@ -442,6 +454,11 @@ async def extra_tool(request):
             values = json.loads(body)
             if action == "nearby-city":
                 value = await run_in_threadpool(nearby_city, values)
+                return JSONResponse(value, headers=headers)
+            if action == "city-comparison":
+                if not isinstance(values, dict):
+                    raise ValueError("Posizione non valida")
+                value = await run_in_threadpool(city_comparison, point=values)
                 return JSONResponse(value, headers=headers)
             if not isinstance(values, dict) or not isinstance(
                 values.get("station_id"), str
