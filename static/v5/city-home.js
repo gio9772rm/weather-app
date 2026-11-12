@@ -29,6 +29,18 @@
   const localDay = v => typeof v === "string" ? v.slice(0, 10) : "";
   const unit = (v, suffix, digits = 0) => finite(v) ? num(v, digits) + suffix : "—";
   const compass = v => finite(v) ? ["N","NE","E","SE","S","SO","O","NO"][Math.round(((Number(v) % 360 + 360) % 360) / 45) % 8] : "";
+  function precipitation(row, daily = false) {
+    if (finite(row.precip_probability)) {
+      const span = !daily && row.probability_hours > 1 ? " nelle prossime " + num(row.probability_hours, 0) + " h" : "";
+      return [unit(row.precip_probability, "%"), daily ? "Probabilità massima" : "Probabilità di precipitazione" + span];
+    }
+    const amount = finite(row.precipitation_mm) ? row.precipitation_mm : row.rain_mm;
+    if (!finite(amount)) return ["—", "Dato non disponibile"];
+    const span = daily && row.precipitation_partial ? "nelle " + num(row.precipitation_hours, 0) + " h coperte"
+      : !daily && row.precipitation_hours > 1 ? "nelle prossime " + num(row.precipitation_hours, 0) + " h"
+      : daily ? "nella giornata" : "per l’ora indicata";
+    return [unit(amount, " mm", Number.isInteger(Number(amount)) ? 0 : 1), "Precipitazioni previste " + span];
+  }
   const canonical = value => typeof value?.timezone === "string" && Number.isFinite(Date.parse(value.fetched_at)) &&
     finite(value.current?.temp_c) && Array.isArray(value.hourly) && value.hourly.length > 0 && Array.isArray(value.daily);
   const readCache = () => {
@@ -266,7 +278,7 @@
       </div>
       ${report ? `<div class="city-now"><div><div class="city-temperature">${unit(c.temp_c, "°")}</div>
         <p><strong>${esc(c.description || "Condizioni previste")}</strong></p>
-        <p class="city-range">Percepita ${unit(c.feels_like_c, "°")} <span>↓ ${unit(local.temp_min_c,"°")} · ↑ ${unit(local.temp_max_c,"°")}</span></p></div>
+        <p class="city-range">${finite(c.feels_like_c) ? "Percepita " + unit(c.feels_like_c, "°") : ""}<span>↓ ${unit(local.temp_min_c,"°")} · ↑ ${unit(local.temp_max_c,"°")}</span></p></div>
         ${weatherIcon(c.description, night(c), "city-now-icon")}</div>
         <p class="city-time">${finite(c.temp_c) ? "Stima delle " + esc(hour(c.time)) + " · " : ""}${esc(dayName(c.time))} · ora locale</p>`
       : `<p class="city-loading">${flight || !error ? "Carico la previsione per questa località…" : "Previsione momentaneamente non disponibile."}</p>`}
@@ -275,9 +287,10 @@
   function details() {
     if (!report) return "";
     const c = report.current, d = report.daily.find(v => localDay(v.time) === localDay(c.time)) || report.daily[0] || {};
+    const rain = precipitation(d, true);
     const rows = [
-      ["Pioggia oggi", unit(d.precip_probability,"%"), "probabilità massima"],
-      ["Vento", unit(c.wind_kmh," km/h"), [compass(c.wind_dir), "Raffica " + unit(c.wind_gust_kmh, " km/h")].filter(Boolean).join(" · ")],
+      [copy ? "Precipitazioni" : "Precipitazioni oggi", ...rain],
+      ["Vento", unit(c.wind_kmh," km/h"), [compass(c.wind_dir), finite(c.wind_gust_kmh) ? "Raffica " + unit(c.wind_gust_kmh, " km/h") : ""].filter(Boolean).join(" · ")],
       ["Umidità", unit(c.humidity,"%"), "umidità relativa"],
       ["Luce", hour(d.sunset), "Tramonto · alba " + hour(d.sunrise)],
     ];
@@ -289,13 +302,16 @@
     const at = copy ? Date.parse(report.fetched_at) : Date.now();
     const selected = mode() === "forecast" ? day : "";
     const rows = report.hourly.filter(r => selected ? localDay(r.time) === selected : Date.parse(r.time) + HOUR > at).slice(0, 24);
-    return `<article class="card city-hours" id="city-hour-detail"><div class="card-header"><div><h2 id="city-hour-heading" tabindex="-1">${selected && rows.length ? "Ore di " + esc(dayName(rows[0].time)) : "Prossime ore"}</h2><p>Ora locale · probabilità di precipitazione</p></div>
+    return `<article class="card city-hours" id="city-hour-detail"><div class="card-header"><div><h2 id="city-hour-heading" tabindex="-1">${selected && rows.length ? "Ore di " + esc(dayName(rows[0].time)) : "Prossime ore"}</h2><p>Ora locale · precipitazioni in % o mm</p></div>
       ${mode() === "today" ? '<button class="quiet" type="button" data-go="forecast">Tutte le previsioni →</button>' : ""}</div>
-      ${rows.length ? `<ul class="city-hour-list" tabindex="0" aria-label="Previsioni ora per ora">${rows.map((r, i) => `<li>
+      ${rows.length ? `<ul class="city-hour-list" tabindex="0" aria-label="Previsioni ora per ora">${rows.map((r, i) => {
+        const [rain, hint] = precipitation(r);
+        return `<li>
         <time datetime="${esc(r.time)}">${!selected && i === 0 && !copy && Date.parse(r.time) <= at ? "Ora" : esc(hour(r.time))}</time>
         ${weatherIcon(r.description, night(r))}<span class="sr-only">${esc(r.description)}</span>
-        <strong>${unit(r.temp_c,"°")}</strong><small class="city-rain">${unit(r.precip_probability,"%")}</small>
-        ${selected ? '<small>' + unit(r.wind_kmh," km/h") + '</small>' : ""}</li>`).join("")}</ul>`
+        <strong>${unit(r.temp_c,"°")}</strong><small class="city-rain" title="${esc(hint)}">${esc(rain)}</small>
+        ${selected ? '<small>' + unit(r.wind_kmh," km/h") + '</small>' : ""}</li>`;
+      }).join("")}</ul>`
       : '<p class="empty">Ore non disponibili per questa data.</p>'}</article>`;
   }
   function week() {
@@ -311,17 +327,20 @@
         const left = showRange ? (Number(d.temp_min_c) - low) / span * 100 : 0;
         const width = showRange ? Math.max(1, (Number(d.temp_max_c) - Number(d.temp_min_c)) / span * 100) : 0;
         const key = localDay(d.time), label = key === today && !copy ? "Oggi" : key === tomorrow && !copy ? "Domani" : stamp(d.time, {weekday: "long"});
+        const [rain, hint] = precipitation(d, true);
         return `<li><button type="button" data-city-day="${esc(key)}" aria-pressed="${mode() === "forecast" && day === key}">
           <span class="city-week-date"><b>${esc(label)}</b><small>${esc(stamp(d.time, {day:"numeric", month:"short"}))}</small></span>
           <span class="city-week-condition">${weatherIcon(d.description)}<small>${esc(d.description || "—")}</small></span>
-          <span class="city-rain" title="Probabilità di precipitazione">${unit(d.precip_probability,"%")}</span>
+          <span class="city-rain" title="${esc(hint)}">${esc(rain)}</span>
           <span class="city-week-range"><span>${unit(d.temp_min_c,"°")}</span><i aria-hidden="true"><span style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"></span></i><b>${unit(d.temp_max_c,"°")}</b></span>
           </button></li>`;
       }).join("")}</ul></article>`;
   }
   function forecastBody() {
     if (mode() === "forecast" && !day && report?.daily.length) day = localDay(report.daily[0].time);
-    const footer = report ? `<div class="city-source"><p>Previsioni: <b>${esc(report.source)}</b> · aggiornate ${esc(dateTime(report.fetched_at))} · ${esc(report.timezone)}. Località: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a>.</p>
+    const source = report?.source === "MET Norway" ? '<a href="https://www.met.no/en" target="_blank" rel="noopener noreferrer">MET Norway</a>'
+      : report?.source === "Open-Meteo" ? '<a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a>' : esc(report?.source);
+    const footer = report ? `<div class="city-source"><p>Previsioni: <b>${source}</b> · aggiornate ${esc(dateTime(report.fetched_at))} · ${esc(report.timezone)}. Località: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a>. Dati rielaborati · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.</p>
       ${saved(place) ? '<button id="city-sky" type="button" class="quiet">Pianifica il cielo per questa città →</button>' : ""}</div>` : "";
     return hero() + details() + (mode() === "forecast" ? week() + hours() : hours() + week()) + footer;
   }

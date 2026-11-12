@@ -545,8 +545,12 @@ def publish_snapshots(cfg: Settings | None = None) -> int:
     for station in public_stations(cfg):
         try:
             payload = build_snapshot(station["id"], daily=daily)
-        except Exception:  # noqa: BLE001 - station failures are independent
-            logging.getLogger(__name__).warning("Snapshot V5 rinviato per una stazione")
+        except Exception as error:  # noqa: BLE001 - station failures are independent
+            logging.getLogger(__name__).warning(
+                "Snapshot V5 rinviato per %s (%s)",
+                station["id"],
+                type(error).__name__,
+            )
             continue
         with get_engine().begin() as con:
             con.execute(

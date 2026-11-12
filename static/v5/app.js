@@ -505,15 +505,18 @@ function currentHero() {
     fresh = finite(currentAge()) && currentAge() <= 20 && !offline;
   const measured = finite(c.temp_c),
     temp = measured ? c.temp_c : f.temp_c;
-  return `<div class="grid"><article class="card hero span-8"><div class="hero-main"><div><span class="eyebrow">${measured ? "MISURA ECOWITT" : "PREVISIONE · NON MISURA"}</span><h1>${esc(f.description || "Il tempo nella tua stazione")}</h1><div class="temperature">${num(temp)}<sup>°C</sup></div><p class="status-line">${measured ? "Rilevata alle " + clock(c.time) : "Valida alle " + clock(f.valid_time)} · ${fresh ? "live" : measured ? ageText(currentAge()) : "fonte modellistica"}</p></div>${weatherIcon(f.description, f.is_day === 0, "weather-art")}</div><div class="hero-bottom"><span>Previsione da ora <b>${num(day.temp_min)}° / ${num(day.temp_max)}°</b></span><span>Percepita <b>${num(measured ? c.feels_like_c : f.feels_like_c)}°</b></span><span>${esc(offline ? "DATI SALVATI" : data.station.role === "primary" ? "ROMA · STAZIONE" : "COMACCHIO · STAZIONE")}</span></div></article><div class="side-metrics">${[
-    ["Umidità", c.humidity, "%", `Rugiada ${num(c.dewpoint_c)}°`],
-    ["Vento", c.wind_kmh, "km/h", `Raffica ${num(c.windgust_kmh)}`],
-    ["Pioggia 24 h", data.rain_24h_mm, "mm", "Somma campioni disponibili"],
-    ["Pressione", c.pressure_hpa, "hPa", "Misura della stazione"],
+  const flags = String(c.data_quality || "").split(";");
+  const suspect = key => flags.includes("stuck_" + key) || (data.insights?.quality?.measurements || [])
+    .some(row => row.variable === key && row.status === "suspect");
+  return `<div class="grid"><article class="card hero span-8"><div class="hero-main"><div><span class="eyebrow">${measured ? suspect("temp_c") ? "MISURA DA VERIFICARE" : "MISURA ECOWITT" : "PREVISIONE · NON MISURA"}</span><h1>${esc(f.description || "Il tempo nella tua stazione")}</h1><div class="temperature">${num(temp)}<sup>°C</sup></div><p class="status-line">${measured ? "Rilevata alle " + clock(c.time) : "Valida alle " + clock(f.valid_time)} · ${fresh ? "live" : measured ? ageText(currentAge()) : "fonte modellistica"}</p></div>${weatherIcon(f.description, f.is_day === 0, "weather-art")}</div><div class="hero-bottom"><span>Previsione da ora <b>${num(day.temp_min)}° / ${num(day.temp_max)}°</b></span><span>Percepita <b>${num(measured ? c.feels_like_c : f.feels_like_c)}°</b></span><span>${esc(offline ? "DATI SALVATI" : data.station.role === "primary" ? "ROMA · STAZIONE" : "COMACCHIO · STAZIONE")}</span></div></article><div class="side-metrics">${[
+    ["humidity", "Umidità", c.humidity, "%", `Rugiada ${num(c.dewpoint_c)}°`],
+    ["wind_kmh", "Vento", c.wind_kmh, "km/h", `Raffica ${num(c.windgust_kmh)}`],
+    ["rain_mm", "Pioggia 24 h", data.rain_24h_mm, "mm", "Somma campioni disponibili"],
+    ["pressure_hpa", "Pressione", c.pressure_hpa, "hPa", "Misura della stazione"],
   ]
     .map(
-      ([name, value, unit, note]) =>
-        `<article class="card"><h3>${name}</h3><div class="metric">${num(value, name === "Umidità" ? 0 : 1)}<small>${unit}</small></div><div class="metric-caption">${note}</div></article>`,
+      ([key, name, value, unit, note]) =>
+        `<article class="card"><h3>${name}</h3><div class="metric">${num(value, name === "Umidità" ? 0 : 1)}<small>${unit}</small></div><div class="metric-caption">${suspect(key) ? "<strong>Misura da verificare</strong>" : note}</div></article>`,
     )
     .join("")}</div></div>`;
 }

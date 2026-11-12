@@ -178,12 +178,12 @@ select, select option, select optgroup { color: var(--ink); background-color: va
 .city-hour-list li:first-child { border-inline-start: 1px solid var(--line); }
 .city-hour-list time { font-size: .8rem; color: var(--muted); }
 .city-hour-list .mini-weather, .city-week .mini-weather { width: 2rem; height: 1.7rem; }
-.city-rain { color: var(--blue); font-size: .82rem; font-weight: 700; white-space: nowrap; }
+.city-rain { color: var(--blue); font-size: .82rem; font-weight: 700; overflow-wrap: anywhere; }
 .city-week-list { padding: 0; margin: .45rem 0 0; list-style: none; }
 .city-week-list li + li { border-top: 1px solid var(--line); }
 .city-week-list button {
   display: grid;
-  grid-template-columns: minmax(5.4rem, .8fr) minmax(5rem, 1fr) 2.8rem minmax(7rem, 1fr);
+  grid-template-columns: minmax(5.4rem, .8fr) minmax(5rem, 1fr) 4.3rem minmax(7rem, 1fr);
   width: 100%;
   align-items: center;
   gap: .4rem .65rem;
@@ -227,7 +227,7 @@ select, select option, select optgroup { color: var(--ink); background-color: va
   .city-toolbar { grid-template-columns: minmax(0, 1fr); gap: .45rem; }
   #city-locate { justify-self: start; min-height: 2.35rem; }
   .city-results { grid-template-columns: minmax(0, 1fr); }
-  .city-week-list button { grid-template-columns: minmax(3.3rem, 1fr) minmax(2rem, .5fr) 2.45rem minmax(4.8rem, 1.15fr); gap: .25rem; padding-inline: .1rem; }
+  .city-week-list button { grid-template-columns: minmax(3.3rem, 1fr) minmax(2rem, .5fr) 3.4rem minmax(4.8rem, 1.15fr); gap: .25rem; padding-inline: .1rem; }
   .city-week-condition small { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
   .city-week-range { grid-template-columns: minmax(1.85rem, auto) minmax(0, 1fr) minmax(1.85rem, auto); gap: .13rem; }
 }

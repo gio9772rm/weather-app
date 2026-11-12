@@ -339,6 +339,12 @@ def observed_hourly(observations):
             "suspect|invalid|stuck", case=False
         )
         data = data[~bad]
+    if data.empty:
+        # A station can keep reporting while all its samples fail validation.
+        # There is then no hourly series; the dated raw snapshot can still publish.
+        return pd.DataFrame(
+            columns=["time", *(var for var in VARIABLES if var in data)]
+        )
     data = data.set_index("time")
     output = pd.DataFrame()
     for var, (low, high, _) in VARIABLES.items():

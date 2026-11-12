@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,6 +32,16 @@ class CityWeatherError(RuntimeError):
 
 
 LOGGER = logging.getLogger(__name__)
+_METNO_CACHE = OrderedDict()
+_METNO_CACHE_LOCK = threading.Lock()
+_METNO_REQUEST_LOCKS = tuple(threading.Lock() for _ in range(8))
+_NORDIC_ZONES = {
+    "Europe/Oslo",
+    "Europe/Stockholm",
+    "Europe/Helsinki",
+    "Europe/Copenhagen",
+    "Atlantic/Reykjavik",
+}
 
 
 @dataclass(frozen=True)
@@ -421,23 +435,25 @@ def _metno_description(symbol: Any) -> str:
     return METNO_DESCRIPTIONS_IT.get(value, "Variabile")
 
 
-def _metno_period(data: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def _metno_period(data: dict[str, Any]) -> tuple[dict[str, Any], str, int, int]:
     """Use the most detailed available precipitation/summary period."""
-    for name in ("next_1_hours", "next_6_hours", "next_12_hours"):
-        period = data.get(name)
+    for hours in (1, 6, 12):
+        period = data.get(f"next_{hours}_hours")
         if isinstance(period, dict):
             details = dict(period.get("details") or {})
+            probability_hours = hours
             if details.get("probability_of_precipitation") is None:
-                for probability_period in ("next_6_hours", "next_12_hours"):
+                for longer in (6, 12):
                     probability = (
-                        (data.get(probability_period) or {}).get("details") or {}
+                        (data.get(f"next_{longer}_hours") or {}).get("details") or {}
                     ).get("probability_of_precipitation")
                     if probability is not None:
                         details["probability_of_precipitation"] = probability
+                        probability_hours = longer
                         break
             symbol = (period.get("summary") or {}).get("symbol_code") or ""
-            return details, str(symbol)
-    return {}, ""
+            return details, str(symbol), hours, probability_hours
+    return {}, "", 0, 0
 
 
 def _speed_kmh(value: Any) -> float:
@@ -450,18 +466,25 @@ def _metno_hourly(payload: dict[str, Any], timezone: str) -> pd.DataFrame:
     for item in (payload.get("properties") or {}).get("timeseries") or []:
         data = item.get("data") or {}
         details = (data.get("instant") or {}).get("details") or {}
-        period, symbol = _metno_period(data)
+        period, symbol, amount_hours, probability_hours = _metno_period(data)
         rows.append(
             {
                 "time": item.get("time"),
                 "temp_c": details.get("air_temperature"),
-                "feels_like_c": details.get("air_temperature"),
+                "feels_like_c": details.get("apparent_temperature"),
                 "humidity": details.get("relative_humidity"),
                 "precip_probability": period.get("probability_of_precipitation"),
                 "precipitation_mm": period.get("precipitation_amount"),
+                "precipitation_hours": amount_hours,
+                "probability_hours": probability_hours,
                 "rain_mm": period.get("precipitation_amount"),
                 "weather_code": np.nan,
                 "description": _metno_description(symbol),
+                "is_day": 0
+                if symbol.endswith("_night")
+                else 1
+                if symbol.endswith("_day")
+                else None,
                 "clouds": details.get("cloud_area_fraction"),
                 "pressure_hpa": details.get("air_pressure_at_sea_level"),
                 "visibility_m": np.nan,
@@ -529,9 +552,14 @@ def _metno_daily(
             location.longitude,
             location.timezone,
         )
+        start = pd.Timestamp(day).tz_localize(ZoneInfo(location.timezone))
+        stop = pd.Timestamp(day + timedelta(days=1)).tz_localize(
+            ZoneInfo(location.timezone)
+        )
+        amount, coverage = _daily_precipitation(group, start, stop)
         rows.append(
             {
-                "time": pd.Timestamp(day).tz_localize(ZoneInfo(location.timezone)),
+                "time": start,
                 "weather_code": np.nan,
                 "description": midday.get("description", "Variabile"),
                 "temp_max_c": pd.to_numeric(group["temp_c"], errors="coerce").max(),
@@ -544,15 +572,17 @@ def _metno_daily(
                 ).min(),
                 "sunrise": sunrise,
                 "sunset": sunset,
-                "precipitation_mm": pd.to_numeric(
-                    group["precipitation_mm"], errors="coerce"
-                ).sum(min_count=1),
-                "rain_mm": pd.to_numeric(group["rain_mm"], errors="coerce").sum(
-                    min_count=1
-                ),
-                "precip_probability": pd.to_numeric(
-                    group["precip_probability"], errors="coerce"
-                ).max(),
+                "precipitation_mm": amount,
+                "rain_mm": amount,
+                "precipitation_hours": coverage,
+                "precipitation_partial": coverage
+                < (stop - start) / pd.Timedelta(hours=1),
+                "precip_probability": group.loc[
+                    group["time"]
+                    + pd.to_timedelta(group["probability_hours"], unit="h")
+                    <= stop,
+                    "precip_probability",
+                ].max(),
                 "wind_max_kmh": pd.to_numeric(group["wind_kmh"], errors="coerce").max(),
                 "wind_gust_max_kmh": pd.to_numeric(
                     group["wind_gust_kmh"], errors="coerce"
@@ -562,6 +592,22 @@ def _metno_daily(
             }
         )
     return pd.DataFrame(rows).head(7)
+
+
+def _daily_precipitation(group, start, stop):
+    # Only count non-overlapping forecast intervals entirely inside this day.
+    # A 6 h total that crosses midnight cannot be split without hourly data.
+    amount, coverage, last_end = 0.0, 0, start
+    for row in group.itertuples():
+        if not np.isfinite(row.precipitation_mm) or row.precipitation_hours <= 0:
+            continue
+        end = row.time + pd.Timedelta(hours=row.precipitation_hours)
+        if row.time < last_end or end > stop:
+            continue
+        amount += row.precipitation_mm
+        coverage += row.precipitation_hours
+        last_end = end
+    return amount if coverage else np.nan, coverage
 
 
 def parse_metno_city_forecast(
@@ -575,13 +621,11 @@ def parse_metno_city_forecast(
         raise CityWeatherError("MET Norway: previsione vuota")
     daily = _metno_daily(hourly, location)
     first = hourly.iloc[0]
-    symbol = str(first.get("symbol") or "")
     current = {target: first.get(target) for target in CURRENT_FIELDS.values()}
     current.update(
         {
             "time": first["time"],
             "description": first.get("description", "Variabile"),
-            "is_day": 0 if symbol.endswith("_night") else 1,
         }
     )
     updated_at = ((payload.get("properties") or {}).get("meta") or {}).get("updated_at")
@@ -604,20 +648,65 @@ def _fetch_metno_city_forecast(
     timeout: tuple[int, int] = (8, 30),
 ) -> CityForecast:
     params: dict[str, Any] = {
-        "lat": round(location.latitude, 5),
-        "lon": round(location.longitude, 5),
+        "lat": round(location.latitude, 4),
+        "lon": round(location.longitude, 4),
     }
     if location.elevation_m is not None:
         params["altitude"] = round(location.elevation_m)
-    payload = _get_json(
-        session,
-        "https://api.met.no/weatherapi/locationforecast/2.0/compact",
-        params,
-        "MET Norway",
-        headers={"User-Agent": "weather-app-v3/1.0 github.com/gio9772rm/weather-app"},
-        timeout=timeout,
-    )
+    key = tuple(params.values())
+    with _METNO_REQUEST_LOCKS[hash(key) % len(_METNO_REQUEST_LOCKS)]:
+        payload = _metno_payload(location, session, params, key, timeout)
     return parse_metno_city_forecast(payload, location)
+
+
+def _metno_payload(location, session, params, key, timeout):
+    with _METNO_CACHE_LOCK:
+        saved = _METNO_CACHE.get(key)
+        if saved:
+            _METNO_CACHE.move_to_end(key)
+    if saved and time.time() < saved[0]:
+        return saved[2]
+    headers = {
+        "User-Agent": "weather-app-v3/1.0 https://github.com/gio9772rm/weather-app"
+    }
+    if saved and saved[1]:
+        headers["If-Modified-Since"] = saved[1]
+    try:
+        response = session.get(
+            "https://api.met.no/weatherapi/locationforecast/2.0/compact",
+            params=params,
+            headers=headers,
+            timeout=timeout,
+        )
+        response_headers = response.headers
+        if response.status_code == 304 and saved:
+            payload, last_modified = saved[2], saved[1]
+        elif response.ok:
+            payload, last_modified = (
+                response.json(),
+                response_headers.get("Last-Modified"),
+            )
+        else:
+            raise CityWeatherError(f"MET Norway: risposta HTTP {response.status_code}")
+    except (requests.RequestException, ValueError) as exc:
+        raise CityWeatherError("MET Norway: servizio non raggiungibile") from exc
+    if not isinstance(payload, dict) or not (payload.get("properties") or {}).get(
+        "timeseries"
+    ):
+        raise CityWeatherError("MET Norway: previsione vuota")
+    # Honour both the product's refresh interval and a later HTTP Expires.
+    deadline = time.time() + (1800 if location.timezone in _NORDIC_ZONES else 10800)
+    if expires := response_headers.get("Expires"):
+        try:
+            deadline = max(deadline, parsedate_to_datetime(expires).timestamp())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    with _METNO_CACHE_LOCK:
+        _METNO_CACHE[key] = deadline, last_modified, payload
+        _METNO_CACHE.move_to_end(key)
+        while len(_METNO_CACHE) > 32:
+            _METNO_CACHE.popitem(last=False)
+    return payload
 
 
 def fetch_city_forecast(
