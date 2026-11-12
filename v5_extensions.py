@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import threading
@@ -19,7 +18,6 @@ from v5_data import clean_json, records, scoped_forecast, station_settings
 
 _CACHE: OrderedDict = OrderedDict()
 _LOCK = threading.Lock()
-_CITY: OrderedDict = OrderedDict()
 
 
 def cached(key, loader, ttl=600):
@@ -34,63 +32,6 @@ def cached(key, loader, ttl=600):
         while len(_CACHE) > 128:
             _CACHE.popitem(last=False)
         return value
-
-
-def search_city(query: str) -> list[dict]:
-    from city_weather import search_cities
-    from v5_observatories import remember_city
-
-    query = " ".join(query.split())
-    if not 2 <= len(query) <= 80:
-        raise ValueError("Scrivi da 2 a 80 caratteri")
-
-    def load():
-        found = []
-        for city in search_cities(query):
-            remember_city(city)
-            identifier = hashlib.sha256(
-                json.dumps(asdict(city), sort_keys=True).encode()
-            ).hexdigest()[:24]
-            _CITY[identifier] = city
-            _CITY.move_to_end(identifier)
-            found.append(
-                {
-                    "id": identifier,
-                    "label": city.label,
-                    "timezone": city.timezone,
-                    "geo_id": city.geonames_id,
-                }
-            )
-        while len(_CITY) > 1024:
-            _CITY.popitem(last=False)
-        return found
-
-    return cached(("search", query.casefold()), load)
-
-
-def city_forecast(identifier: str) -> dict:
-    from city_weather import fetch_city_forecast
-
-    if identifier not in _CITY:
-        raise ValueError("Ripeti la ricerca della città: la selezione è scaduta")
-    location = _CITY[identifier]
-
-    def load():
-        result = fetch_city_forecast(location)
-        return clean_json(
-            {
-                "id": identifier,
-                "label": location.label,
-                "timezone": result.timezone,
-                "source": result.source,
-                "fetched_at": result.fetched_at,
-                "current": result.current,
-                "hourly": records(result.hourly),
-                "daily": records(result.daily),
-            }
-        )
-
-    return cached(("city", identifier), load)
 
 
 def read_product(key: str):

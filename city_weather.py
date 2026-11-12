@@ -104,6 +104,8 @@ def search_cities(
     query: str,
     session: requests.Session | None = None,
     limit: int = 8,
+    *,
+    timeout: tuple[int, int] = (8, 30),
 ) -> list[CityLocation]:
     """Return globally matching cities in Italian, most relevant first."""
     query = " ".join(str(query or "").split())
@@ -122,6 +124,7 @@ def search_cities(
                 "format": "json",
             },
             "Ricerca città",
+            timeout=timeout,
         )
     finally:
         if own_session:
@@ -151,14 +154,16 @@ def _city_location(item):
     )
 
 
-def city_by_geonames_id(identifier: int) -> CityLocation:
+def city_by_geonames_id(
+    identifier: int, *, timeout: tuple[int, int] = (7, 8)
+) -> CityLocation:
     with build_session(retries=0) as session:
         data = _get_json(
             session,
             "https://geocoding-api.open-meteo.com/v1/get",
             {"id": identifier, "language": "it"},
             "Località",
-            timeout=(7, 8),
+            timeout=timeout,
         )
     location = _city_location(data)
     if location is None or location.geonames_id != identifier:
@@ -204,6 +209,7 @@ HOURLY_FIELDS = {
     "precipitation": "precipitation_mm",
     "rain": "rain_mm",
     "weather_code": "weather_code",
+    "is_day": "is_day",
     "cloud_cover": "clouds",
     "pressure_msl": "pressure_hpa",
     "visibility": "visibility_m",
@@ -617,6 +623,8 @@ def _fetch_metno_city_forecast(
 def fetch_city_forecast(
     location: CityLocation,
     session: requests.Session | None = None,
+    *,
+    timeout: tuple[int, int] = (8, 30),
 ) -> CityForecast:
     """Fetch seven days of internet weather for one geocoded city."""
     own_session = session is None
@@ -640,6 +648,7 @@ def fetch_city_forecast(
                 "https://api.open-meteo.com/v1/forecast",
                 params,
                 "Open-Meteo",
+                timeout=timeout,
             )
             return parse_city_forecast(payload)
         except CityWeatherError as primary_error:
@@ -648,7 +657,7 @@ def fetch_city_forecast(
                 primary_error,
             )
             try:
-                return _fetch_metno_city_forecast(location, session)
+                return _fetch_metno_city_forecast(location, session, timeout)
             except CityWeatherError as fallback_error:
                 raise CityWeatherError(
                     "provider meteo temporaneamente non disponibili"

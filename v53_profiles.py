@@ -342,6 +342,8 @@ def validate_observing(value):
 
 
 def validate_profile(value):
+    from v5_city import saved_city
+
     if not isinstance(value, dict) or set(value) - SYNC_KEYS:
         raise ValueError("Profilo non valido")
     # JSON only, bounded payload; never persist provider/admin/push tokens.
@@ -381,6 +383,8 @@ def validate_profile(value):
         str(result["preferences"]["station"])
     ):
         raise ValueError("Località iniziale non valida")
+    if prefs.get("home_city") is not None:
+        result["preferences"]["home_city"] = saved_city(prefs["home_city"])
     for name in ("cities", "equipment", "journal", "plans"):
         values = value.get(name, [])
         if (
@@ -395,7 +399,9 @@ def validate_profile(value):
                 raise TypeError("Elemento non valido")
             if name == "cities":
                 result[name].append(
-                    {k: str(item.get(k, ""))[:120] for k in ("label", "query")}
+                    saved_city(item)
+                    if item.get("geo_id") is not None
+                    else {k: str(item.get(k, ""))[:120] for k in ("label", "query")}
                 )
             elif name == "equipment":
                 from dataclasses import asdict

@@ -2,8 +2,8 @@
 "use strict";
 (() => {
   let animation = null, playing = false, frameIndex = 0, lastFrameAt = 0;
-  let catalog = [], plan = null, city = null, cityId = "", cityQuery = "", cityBusy = false;
-  let cityResults = [], editingEntry = null;
+  let catalog = [], plan = null;
+  let editingEntry = null;
   const drafts = new Map();
   function captureDrafts(){
     document.querySelectorAll("#view form[data-draft-key]").forEach(form=>{
@@ -97,26 +97,6 @@
     $("#radar-frame").oninput=e=>show(Number(e.target.value));
     const tick=now=>{if(!playing||page!=="maps"||!$("#radar-image"))return;if(now-lastFrameAt>900){show((frameIndex+1)%frames.length);lastFrameAt=now;}animation=requestAnimationFrame(tick);};
     $("#radar-play").onclick=()=>{playing=!playing;$("#radar-play").textContent=playing?"Pausa":"Avvia animazione";if(playing)animation=requestAnimationFrame(tick);else cancelAnimationFrame(animation);};
-  }
-
-  function citiesView(){
-    const favorites=local("cities",[]);
-    return `<h1>Il meteo, dove vuoi</h1><p>Previsioni da internet per la città scelta. Le misure Ecowitt restano nelle sezioni delle due stazioni.</p><form id="city-search" class="card controls"><label>Città o CAP<input id="city-query" minlength="2" maxlength="80" value="${esc(cityQuery)}" placeholder="Es. Firenze o 50122" required></label><button class="primary">Cerca</button><span id="city-status" role="status"></span></form><div class="controls">${favorites.map((f,i)=>`<button class="quiet" data-city-favorite="${i}">${esc(f.label)}</button><button class="quiet" data-remove-city="${i}" aria-label="Rimuovi ${esc(f.label)} dai preferiti">×</button>`).join("")}</div><div id="city-results">${cityResults.map(r=>`<button class="city-choice" data-city="${r.id}">${esc(r.label)}</button>`).join("")}</div><section id="city-weather">${cityMarkup()}</section>`;
-  }
-  function cityMarkup(){
-    if(!city)return empty("Cerca una città e seleziona il risultato corretto.");
-    const fmt=v=>new Intl.DateTimeFormat("it-IT",{timeZone:city.timezone,day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(v));
-    const rows=(city.hourly||[]).filter(f=>Date.parse(f.time||f.valid_time)>=Date.now()-3600000).slice(0,72);
-    return `<article class="card"><div class="card-header"><h2>${esc(city.label)}</h2><button id="save-city" class="quiet">Salva nei preferiti</button></div><p>${esc(city.source)} · acquisizione ${fmt(city.fetched_at)} · orari ${esc(city.timezone)}</p>${table(["Ora locale","Temperatura","Umidità","Vento / raffica","Pioggia","Probabilità"],rows.map(r=>[fmt(r.time||r.valid_time),num(r.temp_c)+" °C",num(r.humidity,0)+"%",num(r.wind_kmh)+" / "+num(r.wind_gust_kmh)+" km/h",num(r.rain_mm)+" mm",num(r.precip_probability,0)+"%"]))}</article>`;
-  }
-  async function search(query){cityQuery=query;if($("#city-query"))$("#city-query").value=query;try{cityResults=(await api("cities?q="+encodeURIComponent(query))).results;render();if(!cityResults.length)$("#city-results").innerHTML=empty("Nessuna città trovata. Prova il nome del comune.");}catch(e){notice(e.message);}}
-  async function loadCity(id){if(cityBusy)return;cityBusy=true;try{const value=await api("city?id="+encodeURIComponent(id));city=value;cityId=id;if(page==="cities"){const holder=$("#city-weather");if(holder){holder.innerHTML=cityMarkup();bindCitySave();}}}catch(e){notice(e.message);}finally{cityBusy=false;}}
-  function bindCitySave(){if($("#save-city"))$("#save-city").onclick=()=>{const list=local("cities",[]).filter(f=>f.label!==city.label);list.push({label:city.label,query:cityQuery});save("cities",list.slice(-12));render();};}
-  function bindCities(){
-    $("#city-search").onsubmit=e=>{e.preventDefault();$("#city-status").textContent="Ricerca…";search($("#city-query").value);};
-    document.querySelectorAll("[data-city]").forEach(b=>b.onclick=()=>loadCity(b.dataset.city));
-    document.querySelectorAll("[data-city-favorite]").forEach(b=>b.onclick=()=>search(local("cities",[])[Number(b.dataset.cityFavorite)].query));
-    document.querySelectorAll("[data-remove-city]").forEach(b=>b.onclick=()=>{save("cities",local("cities",[]).filter((_,i)=>i!==Number(b.dataset.removeCity)));render();});bindCitySave();
   }
 
   let equipmentChoice=null, loadedConfig=null, planValues=null;
@@ -241,7 +221,6 @@
     loadPlan:config=>{loadedConfig={...config,horizonText:Object.keys(config.horizon||{}).length<=24?Object.entries(config.horizon||{}).map(([a,h])=>`${a}:${h}`).join(", "):""};equipmentChoice=null;plan=null;planValues=null;drafts.delete("planner:"+config.station_id);},
     view:p=>{switch(p){
       case "maps": return radarView();
-      case "cities": return citiesView();
       case "planner": return plannerView();
       case "journal": return journalView();
       case "inbox": return inboxView();
@@ -250,7 +229,6 @@
     }},
     bind:p=>{restoreDrafts();switch(p){
       case "maps": return bindRadar();
-      case "cities": return bindCities();
       case "planner": return bindPlanner();
       case "journal": return bindJournal();
       case "inbox": return bindInbox();
@@ -258,7 +236,6 @@
       default: return undefined;
     }},
     beforeRender:()=>{captureDrafts();playing=false;if(animation)cancelAnimationFrame(animation);},
-    refreshCity:()=>{if(page==="cities"&&cityId)loadCity(cityId);},
     recordEvents,uncertaintyCard,verificationTable,activityWindows
   };
 })();

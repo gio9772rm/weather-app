@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from math import isfinite
+from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -168,6 +169,7 @@ def render_precision(snapshot, timezone):
     st.caption(
         f"{number(collection.get('pending'))} finestre da attendere · {number(collection.get('missing_observations'))} con osservazioni incomplete · copertura {number(collection.get('coverage_percent'))}%"
     )
+    _rain_coverage(collection.get("rain_coverage"))
     requirements = r.get("requirements") or []
     if requirements:
         st.dataframe(
@@ -215,6 +217,81 @@ def render_precision(snapshot, timezone):
     )
     _render_comparison(snapshot.get("insights", {}).get("comparison") or {}, timezone)
     _render_alerts(snapshot.get("alert_verification") or {}, timezone)
+    _render_station_checks(snapshot, timezone)
+
+
+def _rain_coverage(coverage):
+    if not coverage:
+        return
+    with st.expander("Perché mancano riscontri della pioggia"):
+        st.write(
+            f"{number(coverage.get('missing_slots'))} intervalli di cinque minuti senza campione assegnato; "
+            f"{number(coverage.get('unusable_slots'))} con pioggia non utilizzabile. Servono tutti i 24 intervalli."
+        )
+        st.write(
+            f"Finestre con buchi: {number(coverage.get('windows_with_gaps'))} · "
+            f"con pioggia non utilizzabile: {number(coverage.get('windows_with_unusable_rain'))}. "
+            "Una finestra può avere entrambe le cause."
+        )
+        if coverage.get("missing_slots_with_nearby_measurement"):
+            st.caption(
+                f"{number(coverage['missing_slots_with_nearby_measurement'])} intervalli mancanti hanno una misura vicina "
+                "al confine. È un indizio per controllare gli orari; la misura non viene riassegnata."
+            )
+        if rows := coverage.get("worst_days_utc"):
+            st.dataframe(
+                pd.DataFrame(rows).rename(
+                    columns={
+                        "date": "Data UTC",
+                        "windows": "Finestre escluse",
+                        "missing_slots": "Intervalli senza campione",
+                        "unusable_slots": "Intervalli non utilizzabili",
+                    }
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+
+
+def _render_station_checks(snapshot, timezone):
+    quality = (snapshot.get("insights") or {}).get("quality") or {}
+    labels = {
+        "current": "Recente",
+        "stale": "Datata",
+        "missing": "Mancante",
+        "previous_sample": "Campione precedente",
+        "suspect": "Da verificare",
+    }
+    with st.expander("Origine e controlli delle misure"):
+        st.caption(f"Verifica: {stamp(quality.get('evaluated_at'), timezone)}")
+        for issue in quality.get("issues", []):
+            if issue.get("variable") == "time":
+                st.write(issue.get("message", ""))
+        if rows := quality.get("measurements"):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Parametro": row["label"],
+                            "Misura": f"{number(row.get('value'), 1)} {row['unit']}",
+                            "Origine": row["source"],
+                            "Orario": stamp(row.get("time"), timezone),
+                            "Stato": labels.get(row.get("status"), "—"),
+                            "Controlli": "; ".join(row.get("flags") or []),
+                        }
+                        for row in rows
+                    ]
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+        else:
+            st.info("Controlli disponibili dalla prossima pubblicazione.")
+        if station_id := (snapshot.get("station") or {}).get("id"):
+            st.link_button(
+                "Importa uno storico · amministratore",
+                "/?" + urlencode({"page": "import", "station": station_id}),
+            )
 
 
 def _render_comparison(product, timezone):

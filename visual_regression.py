@@ -658,6 +658,170 @@ def _cielo_checks(page, width: int, height: int) -> None:
     page.evaluate("localStorage.removeItem('meteo.v5.planner')")
 
 
+def _city_forecast_fixture(geo_id):
+    city = (
+        (1850147, "Tokyo", "Tokyo, Giappone", "Asia/Tokyo")
+        if geo_id == 1850147
+        else (3169070, "Roma", "Roma, Lazio, Italia", "Europe/Rome")
+    )
+    identifier, name, label, zone = city
+    now = pd.Timestamp.now(tz=zone)
+    rows = [
+        {
+            "time": time.isoformat(),
+            "temp_c": 12 + i % 8,
+            "wind_kmh": 11,
+            "description": "Nuvoloso" if i % 3 else "Sereno",
+            "is_day": 7 <= time.hour < 17,
+            "precip_probability": (i % 4) * 10,
+        }
+        for i, time in enumerate(pd.date_range(now.normalize(), periods=168, freq="h"))
+    ]
+    daily = [
+        {
+            "time": time.isoformat(),
+            "sunrise": (time + pd.Timedelta(hours=7)).isoformat(),
+            "sunset": (time + pd.Timedelta(hours=17)).isoformat(),
+            "temp_min_c": 7 + i % 3,
+            "temp_max_c": 15 + i % 4,
+            "description": "Parzialmente nuvoloso",
+            "precip_probability": (i % 4) * 15,
+        }
+        for i, time in enumerate(pd.date_range(now.normalize(), periods=7, freq="D"))
+    ]
+    return {
+        "geo_id": identifier,
+        "name": name,
+        "label": label,
+        "timezone": zone,
+        "fetched_at": now.isoformat(),
+        "source": "Open-Meteo",
+        "current": {
+            "time": now.isoformat(),
+            "temp_c": 17,
+            "feels_like_c": 15,
+            "is_day": 1,
+            "description": "Parzialmente nuvoloso",
+            "humidity": 72,
+            "wind_kmh": 11,
+            "wind_gust_kmh": 23,
+            "wind_dir": 0,
+        },
+        "hourly": rows,
+        "daily": daily,
+    }
+
+
+def _city_routes(page):
+    def forecast(route):
+        match = re.search(r"[?&]geo_id=(\d+)", route.request.url)
+        route.fulfill(json=_city_forecast_fixture(int(match[1])))
+
+    page.route(re.compile(r"/api/v5/tools/city\?geo_id=\d+"), forecast)
+    page.route(
+        re.compile(r"/api/v5/tools/cities\?q="),
+        lambda route: route.fulfill(
+            json={
+                "results": [
+                    {
+                        "geo_id": 1850147,
+                        "name": "Tokyo",
+                        "label": "Tokyo, Giappone",
+                        "timezone": "Asia/Tokyo",
+                    },
+                    {
+                        "geo_id": 7945384,
+                        "name": "Tokyo",
+                        "label": "Tokyo, Nepal",
+                        "timezone": "Asia/Kathmandu",
+                    },
+                ]
+            }
+        ),
+    )
+
+
+def _pick_tokyo(page):
+    page.locator("#city-query").fill("Tokyo")
+    page.locator("#city-search button").click()
+    page.get_by_role("button", name=re.compile("Tokyo.*Giappone")).click()
+
+
+def _city_home_checks(browser, base_url, output):
+    from playwright.sync_api import expect
+
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844},
+        geolocation={"latitude": 48.86 - 29 / 10000, "longitude": 2.35 + 19 / 10000},
+        permissions=["geolocation"],
+        service_workers="block",
+    )
+    try:
+        page = context.new_page()
+        _city_routes(page)
+        requests = []
+        page.on("request", lambda r: requests.append(r.url))
+        page.goto(base_url)
+        expect(page.locator(".city-hero h1")).to_have_text("Roma")
+        expect(page.locator(".city-temperature")).to_have_text("17°")
+        expect(page.locator("#location-row")).to_be_hidden()
+        assert not any(
+            "/api/v5/stations" in r or "/api/v5/snapshot/" in r for r in requests
+        )
+        _pick_tokyo(page)
+        expect(page.locator(".city-source")).to_contain_text("Asia/Tokyo")
+        page.locator("#city-favorite").click()
+        page.locator("#city-pin").click()
+        expect(page.locator("#city-pin")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator(".city-favorites")).to_contain_text("Tokyo")
+        page.reload()
+        expect(page.locator(".city-hero h1")).to_have_text("Tokyo")
+        expect(page.locator(".city-week-list li")).to_have_count(7)
+        page.locator("[data-city-day]").nth(1).click()
+        expect(page.get_by_role("heading", name=re.compile("Ore di"))).to_be_visible()
+        expect(page.locator("[data-city-day]").nth(1)).to_have_attribute(
+            "aria-pressed", "true"
+        )
+        page.set_viewport_size({"width": 320, "height": 844})
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= innerWidth + 3"
+        ), page.evaluate("""() =>
+          [...document.querySelectorAll('#content, #view, #view *')]
+          .filter(el => !el.closest('.city-hour-list') && el.getBoundingClientRect().right > innerWidth + 3)
+          .slice(0,14).map(el => [el.tagName, el.id || String(el.className), Math.round(el.getBoundingClientRect().right), el.scrollWidth])
+        """)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.screenshot(path=str(output / "v511-city-forecast.png"), full_page=True)
+
+        def locate(route):
+            body = route.request.post_data_json
+            assert (body["latitude"], body["longitude"]) == (48.86, 2.35)
+            route.fulfill(
+                json={
+                    **_city_forecast_fixture(3169070),
+                    "geo_id": None,
+                    "name": "Vicino a te",
+                    "label": "Posizione approssimata",
+                    "approximate": True,
+                    "timezone": "Europe/Paris",
+                }
+            )
+
+        page.route("**/api/v5/tools/nearby-city", locate)
+        page.locator("#city-locate").click()
+        expect(page.locator(".city-hero h1")).to_have_text("Vicino a te")
+        expect(page.locator(".city-source")).to_contain_text("Europe/Paris")
+        expect(page.locator("#city-pin")).to_have_count(0)
+        page.reload()
+        expect(page.locator(".city-hero h1")).to_have_text("Tokyo")
+        expect(page.locator(".city-temperature")).to_have_text("17°")
+        context.set_offline(True)
+        expect(page.locator("#city-state")).to_contain_text("Copia salvata")
+        expect(page.locator(".city-hero h1")).to_have_text("Tokyo")
+    finally:
+        context.close()
+
+
 def _v5_checks(browser, base_url: str, output: Path) -> dict:
     """Real root API, responsive UI, offline snapshot and a single 600s timer."""
     from playwright.sync_api import expect
@@ -667,6 +831,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
         for width, height in ((1440, 1000), (390, 844)):
             context = browser.new_context(viewport={"width": width, "height": height})
             page = context.new_page()
+            _city_routes(page)
             errors = []
             page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
             # Fast API/cache responses must not render before a slow extension.
@@ -686,6 +851,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
             for view in (
                 "today",
                 "forecast",
+                "station-forecast",
                 "stations",
                 "astronomy",
                 "maps",
@@ -694,8 +860,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                 "journal",
                 "inbox",
                 "activities",
-                "quality",
-                "models",
+                "more",
                 "notifications",
                 "archive",
                 "events",
@@ -713,10 +878,14 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                             }))"""
                         )
                     page.goto(f"{base_url}/?page={view}&theme={theme}")
-                    page.wait_for_function(
-                        "document.querySelector('#snapshot-time').textContent.includes('Fotografia')"
-                    )
-                    assert page.locator("#station option").count() == 2
+                    if view in {"today", "forecast", "cities"}:
+                        expect(page.locator(".city-temperature")).to_have_text("17°")
+                        expect(page.locator("#location-row")).to_be_hidden()
+                    elif view not in {"more", "personal"}:
+                        page.wait_for_function(
+                            "document.querySelector('#snapshot-time').textContent.includes('Fotografia')"
+                        )
+                        assert page.locator("#station option").count() == 2
                     assert (
                         page.evaluate(
                             "document.documentElement.scrollWidth-window.innerWidth"
@@ -725,18 +894,26 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
                     ), name + ": overflow"
                     assert page.locator("#view .card").count() > 0
                     if view == "today":
-                        expect(page.locator(".next-hours")).to_be_visible()
+                        expect(page.locator(".city-hours")).to_be_visible()
+                        expect(page.locator(".city-week")).to_be_visible()
                         expect(page.locator("#expert-radar")).to_have_count(0)
-                    if view == "models":
-                        expect(page.locator(".sample-readiness")).to_contain_text("72")
-                        expect(page.locator(".sample-readiness")).to_contain_text(
-                            "Calibrazione delle probabilità non attiva"
+                    if view == "stations":
+                        expect(
+                            page.get_by_role("article", name="Ultimo controllo")
+                        ).to_be_visible()
+                        page.locator("#station-history > summary").click()
+                        expect(page.locator("#history-days")).to_be_visible()
+                        option = page.locator("#station option").first.evaluate(
+                            "node => ({fg:getComputedStyle(node).color,bg:getComputedStyle(node).backgroundColor})"
                         )
-                    if view in {"models", "notifications"}:
-                        expect(page.locator(".alert-verification")).to_contain_text(
-                            "Assenze corrette"
-                        )
-                        assert page.locator(".alert-verification tbody tr").count() == 7
+                        assert option["fg"] != option["bg"]
+                    if view == "notifications":
+                        expect(page.locator(".alert-verification")).to_have_count(0)
+                        expect(
+                            page.get_by_role(
+                                "link", name=re.compile("Verifica delle soglie in Pro")
+                            )
+                        ).to_be_visible()
                         if width == 390:
                             page.set_viewport_size({"width": 320, "height": height})
                             assert page.evaluate(
@@ -959,7 +1136,7 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
       window.fetch=(...args)=>{if(String(args[0]).includes('/api/v5/snapshot/'))window.weatherFetches++;return original(...args);};
     })();""")
     page.clock.install()
-    page.goto(base_url)
+    page.goto(base_url + "/?page=stations")
     page.wait_for_function(
         "document.querySelector('#snapshot-time').textContent.includes('Fotografia')"
     )
@@ -971,14 +1148,15 @@ def _v5_checks(browser, base_url: str, output: Path) -> dict:
     page.select_option("#station", "visual-secondary")
     assert page.evaluate("window.weatherFetches") == initial
     page.clock.fast_forward(2_000)
-    page.wait_for_function("window.weatherFetches===4")
+    page.wait_for_function("window.weatherFetches===3")
     expect(page.locator("#refresh")).to_be_enabled()
     page.get_by_role("button", name="Aggiorna ora", exact=True).click()
-    page.wait_for_function("window.weatherFetches===6")
+    page.wait_for_function("window.weatherFetches===4")
     expect(page.locator("#refresh")).to_be_enabled()
     page.clock.fast_forward(599_000)
-    assert page.evaluate("window.weatherFetches") == 6
+    assert page.evaluate("window.weatherFetches") == 4
     page.get_by_role("button", name="Personalizza", exact=True).click()
+    page.get_by_text("Stazioni e astronomia", exact=True).click()
     page.locator('[data-card="air"]').uncheck()
     page.get_by_role("button", name="Salva preferenze", exact=True).click()
     assert page.evaluate(
@@ -1031,7 +1209,7 @@ def _opening_recovery_check(browser, base_url: str) -> None:
     try:
         page = context.new_page()
         page.clock.install()
-        page.goto(base_url)
+        page.goto(base_url + "/?page=stations")
         expect(page.locator("#connection")).to_contain_text("Stazione live")
         ready, requests = False, []
 
@@ -1083,6 +1261,7 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     errors = []
     a, b = first.new_page(), second.new_page()
     for p in (a, b):
+        _city_routes(p)
         p.on("pageerror", lambda error: errors.append(str(error)))
         p.goto(f"{base_url}/?page=personal")
         p.wait_for_selector("#account-form")
@@ -1110,6 +1289,12 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
       targets: ["B033"], sites: [{kind:"city", label:"San Pedro de Atacama", geo_id:3871781}]
     })""")
     a.wait_for_function("!JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
+    a.get_by_role("button", name="Oggi", exact=True).click()
+    _pick_tokyo(a)
+    expect(a.locator(".city-temperature")).to_have_text("17°")
+    a.locator("#city-favorite").click()
+    a.locator("#city-pin").click()
+    a.wait_for_function("!JSON.parse(localStorage.getItem('meteo.v53.sync')).dirty")
     b.locator("#account-name").fill("visual-sync-user")
     b.locator("#account-password").fill("visual-private-password-53")
     b.locator("#account-form button").click()
@@ -1127,6 +1312,11 @@ def _v53_private_checks(browser, base_url: str, output: Path) -> None:
     expect(b.locator(".account-overview")).to_be_visible()
     assert b.evaluate("MeteoSky.settings().targets") == ["B033"]
     assert b.evaluate("MeteoSky.settings().sites[0].geo_id") == 3871781
+    b.get_by_role("button", name="Oggi", exact=True).click()
+    expect(b.locator(".city-hero h1")).to_have_text("Tokyo")
+    expect(b.locator("#city-pin")).to_have_attribute("aria-pressed", "true")
+    expect(b.locator("#city-favorite")).to_have_attribute("aria-pressed", "true")
+    b.locator("#account-shortcut").click()
     # Device A edits without polling B; B must expose a conflict, not overwrite.
     a.goto(f"{base_url}/?page=journal")
     a.wait_for_function("window.MeteoV53?.isSignedIn()")
@@ -1323,6 +1513,7 @@ def run_visual_checks(output: str | Path) -> dict[str, str]:
                     executable_path=os.getenv("METEO_BROWSER_EXECUTABLE") or None,
                 )
                 _opening_recovery_check(browser, base_url)
+                _city_home_checks(browser, base_url, output_path)
                 digests.update(_v5_checks(browser, base_url, output_path))
                 _v53_private_checks(browser, base_url, output_path)
                 digests.update(_android_update_checks(browser, base_url, output_path))
