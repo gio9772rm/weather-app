@@ -12,7 +12,7 @@
   let state=null, recovery="", status="Accesso facoltativo · i dati del dispositivo restano disponibili", busy=false, conflict=null, dirty=false, saving=false, saveAgain=false, hydrated=false, applying=false, mode="login", needsLogin=false;
   const savedSession=storage.get("meteo.v53.sync",null);
   if(savedSession?.account&&Number.isInteger(savedSession.revision)){state={account:savedSession.account,revision:savedSession.revision,profile:savedSession.profile,alerts:[]};dirty=Boolean(savedSession.dirty);status="Copia del profilo sul dispositivo · verifica accesso…";}
-  const defaults = { cards: defaultCards, hidden: [], profile: "deep_sky", theme: "light", expert: false };
+  const defaults = { cards: defaultCards, hidden: [], profile: "deep_sky", theme: "light", expert: false, home_city: null };
   const preset = {name:"80/480 + camera 571",telescope:"Rifrattore 80/480",camera:"Camera 571 · verifica sensore",aperture_mm:80,focal_length_mm:480,sensor_width_mm:23.5,sensor_height_mm:15.7,pixel_size_um:3.76,focal_multiplier:1};
 
   function comparisonCard(){
@@ -47,12 +47,13 @@
     const clock = value => MeteoSky.clock(value, plan.timezone), dt = value => MeteoSky.dateTime(value, plan.timezone);
     return `<article class="card"><span class="tag">SEQUENZA OTTIMIZZATA</span><h2>${num(s.net_hours)} ore in blocchi osservabili</h2><p>${num(s.overhead_minutes,0)} minuti dedicati a preparazione e cambi oggetto.</p>${s.blocks.length?table(["Preparazione / cambio","Ripresa","Oggetto","Minuti netti","Qualità stimata"],s.blocks.map(b=>[dt(b.prepare_start),`${clock(b.start)}–${clock(b.end)}`,esc(b.target),num(b.minutes,0),`${num(b.quality,0)}/100`])):'<p class="empty">Nessuna sequenza soddisfa durata minima e soglie nella finestra scelta.</p>'}<p>${esc(s.method)}</p>${s.omitted.map(o=>`<p class="metric-caption">${esc(o.target)} · ${esc(o.reason)}</p>`).join("")}<div class="controls"><button type="button" id="save-session" class="primary">Salva sessione e avvisi</button><button type="button" id="export-sequence" class="quiet">Esporta sequenza CSV</button></div></article><article class="card"><h2>Quale notte rende di più?</h2>${table(["Notte","Ore nette","Preparazione / cambi","Oggetti nella sequenza"],(plan.nights||[]).map(n=>[dt(n.start),num(n.net_hours),`${num(n.overhead_minutes,0)} min`,[...new Set(n.blocks.map(b=>b.target))].map(esc).join(", ")||"Nessuno"]))}<p class="metric-caption">Confronto negli stessi orari locali e con le stesse soglie. Zero ore può dipendere da dati incompleti: consulta i motivi delle esclusioni.</p></article>`;
   }
-  function snapshotLocal(){const out={};for(const k of keys){const v=get(k,null);if(v!==null)out[k]=v;}if(out.preferences){out.preferences={...out.preferences};delete out.preferences.offline;}return out;}
+  function snapshotLocal(){const out={};for(const k of keys){const v=get(k,null);if(v!==null)out[k]=v;}if(out.preferences){out.preferences={...out.preferences};delete out.preferences.offline;if(!out.preferences.home_city)delete out.preferences.home_city;}return out;}
   function applyProfile(profile,preserveDrafts=false){
     applying=true;
     for(const k of keys){if(k==="preferences")continue;if(k in profile)localStorage.setItem(prefix+k,JSON.stringify(profile[k]));else localStorage.removeItem(prefix+k);}
-    const offlineChoice=prefs.offline;Object.assign(prefs,defaults,profile.preferences||{});prefs.offline=offlineChoice;
+    const offlineChoice=prefs.offline;delete prefs.station;Object.assign(prefs,defaults,profile.preferences||{});prefs.offline=offlineChoice;
     localStorage.setItem(prefix+"preferences",JSON.stringify(prefs));setTheme(prefs.theme);
+    window.MeteoCity?.profileChanged(!preserveDrafts);
     window.MeteoExtra?.resetPersonal(preserveDrafts);if(!preserveDrafts){window.MeteoCielo?.resetPersonal();window.MeteoAccount?.reset();}applying=false;
   }
   function checkpoint(){if(state)storage.set("meteo.v53.sync",{account:state.account,revision:state.revision,dirty,profile:snapshotLocal()});}

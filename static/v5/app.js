@@ -90,6 +90,7 @@ if (
   ![
     "today",
     "forecast",
+    "station-forecast",
     "stations",
     "astronomy",
     "more",
@@ -111,8 +112,11 @@ if (
   ].includes(page)
 )
   page = "today";
+const cityPage = () => ["today", "forecast", "cities"].includes(page);
+const stationPage = () => !cityPage() && !["more", "personal", "quality", "models"].includes(page);
 let forecastStep = 3,
   forecastDetailOpen = false,
+  stationHistoryOpen = false,
   historyDays = 90,
   historyMetric = "temp_mean_c",
   importDigest = null;
@@ -158,7 +162,7 @@ function weatherIcon(description = "", night = false, cls = "mini-weather") {
 const proLink = (tab = "today") =>
   "/pro/?" +
   new URLSearchParams({
-    station: activeId,
+    ...(activeId ? { station: activeId } : {}),
     tab,
     theme: prefs.theme,
     detail: prefs.expert ? "expert" : "simple",
@@ -238,10 +242,9 @@ function setStations(values) {
   stations = values;
   const requested =
     new URL(location.href).searchParams.get("station") || prefs.station;
-  if (!stations.some((s) => s.id === activeId))
-    activeId = stations.some((s) => s.id === requested)
-      ? requested
-      : stations[0].id;
+  if (stations.some((s) => s.id === requested) && (new URL(location.href).searchParams.has("station") || !activeId))
+    activeId = requested;
+  else if (!stations.some((s) => s.id === activeId)) activeId = stations[0].id;
   $("#station").innerHTML = stations
     .map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`)
     .join("");
@@ -285,7 +288,6 @@ function restoreOpeningCopy() {
   if (snapshots.has(activeId)) {
     data = snapshots.get(activeId);
     offline = true;
-    render();
   }
 }
 function scheduleRefresh() {
@@ -297,7 +299,13 @@ function cancelRecoveryTimer() {
   retryTimer = null;
 }
 function needsRecovery() {
-  return recovering && (offline || !data) && navigator.onLine && retryIndex < OPENING_RETRIES_MS.length;
+  const pending = cityPage() ? window.MeteoCity?.needsRecovery() : stationPage() && recovering && (offline || !data);
+  return pending && navigator.onLine && retryIndex < OPENING_RETRIES_MS.length;
+}
+function restartRecovery() {
+  recovering = true;
+  retryIndex = 0;
+  cancelRecoveryTimer();
 }
 function scheduleRecovery() {
   if (!needsRecovery() || refreshing || retryTimer !== null || document.hidden) return;
@@ -308,7 +316,16 @@ function scheduleRecovery() {
     refreshCycle({ activeOnly: true });
   }, OPENING_RETRIES_MS[retryIndex]);
 }
-async function refreshCycle({ activeOnly = false } = {}) {
+async function refreshCycle({ activeOnly = false, forceCity = false } = {}) {
+  if (!stationPage()) {
+    clearTimeout(timer);
+    cancelRecoveryTimer();
+    if (!activeOnly) window.MeteoV53?.refresh();
+    if (cityPage()) await window.MeteoCity?.refresh(forceCity);
+    scheduleRefresh();
+    scheduleRecovery();
+    return;
+  }
   if (refreshing) return;
   refreshing = true;
   clearTimeout(timer);
@@ -316,7 +333,7 @@ async function refreshCycle({ activeOnly = false } = {}) {
   $("#refresh").disabled = true;
   try {
     if (!activeOnly || !stationsOnline) await loadStations();
-    const ids = activeOnly ? [activeId] : stations.map(s => s.id);
+    const ids = activeOnly || page !== "stations" ? [activeId] : stations.map(s => s.id);
     const results = await Promise.allSettled(
       ids.map(loadSnapshot),
     );
@@ -327,8 +344,9 @@ async function refreshCycle({ activeOnly = false } = {}) {
     data = own.value.payload;
     offline = own.value.offline;
     if (!offline) recovering = false;
-    render();
+    if (stationPage()) render();
   } catch (error) {
+    if (!stationPage()) return;
     if (data) {
       offline = true;
       render();
@@ -343,22 +361,32 @@ async function refreshCycle({ activeOnly = false } = {}) {
     scheduleRefresh();
     scheduleRecovery();
     if (!activeOnly || !offline) {
-      window.MeteoExtra?.refreshCity();
       window.MeteoV53?.refresh();
     }
   }
 }
 function navigate(next) {
+  const wasCity = cityPage();
   page = next;
+  if (wasCity && !cityPage()) window.MeteoCity?.leave();
+  restartRecovery();
+  notice("");
   const url = new URL(location.href);
   url.searchParams.set("page", page);
-  url.searchParams.set("station", activeId);
+  if (stationPage() && activeId) url.searchParams.set("station", activeId);
+  else url.searchParams.delete("station");
   history.pushState(null, "", url);
   render();
+  if (!stationPage() || !data || !stationsOnline || (page === "stations" && stations.some(s => !snapshots.has(s.id))))
+    refreshCycle();
   window.scrollTo({ top: 0, behavior: "instant" });
 }
 window.addEventListener("popstate", () => {
+  const wasCity = cityPage();
   page = new URL(location.href).searchParams.get("page") || "today";
+  if (wasCity && !cityPage()) window.MeteoCity?.leave();
+  restartRecovery();
+  notice("");
   const id = new URL(location.href).searchParams.get("station");
   if (id && snapshots.has(id)) {
     activeId = id;
@@ -367,6 +395,7 @@ window.addEventListener("popstate", () => {
     $("#station").value = id;
   }
   render();
+  if (!data || !stationPage() || (id && activeId !== id)) refreshCycle();
 });
 $("#account-shortcut").addEventListener("click", () => navigate("personal"));
 $("#navigation").addEventListener("click", (event) => {
@@ -489,7 +518,7 @@ function currentHero() {
     .join("")}</div></div>`;
 }
 function hourStrip() {
-  return `<article class="card span-12"><div class="card-header"><h2>Le prossime ore</h2><button class="quiet" data-go="forecast">7 giorni →</button></div><div class="hour-strip">${
+  return `<article class="card span-12"><div class="card-header"><h2>Le prossime ore</h2><button class="quiet" data-go="station-forecast">Previsioni della stazione →</button></div><div class="hour-strip">${
     (data.forecast || [])
       .slice(0, 24)
       .map(
@@ -538,7 +567,7 @@ function airCard() {
   const a = data.air?.current || {};
   return `<article class="card span-6"><div class="card-header"><h2>Aria e pollini</h2><span class="tag">CAMS · PREVISIONE</span></div><div class="metric">${num(a.european_aqi, 0)}<small>AQI europeo</small></div><p class="metric-caption">${data.air ? "Dati modellistici del " + dateTime(a.time) + ". Non sono misure Ecowitt." : "Le misure ambientali della stazione non includono AQI o pollini."}</p><ul class="fact-list"><li><span>PM2.5 / PM10</span><b>${num(a.pm2_5)} / ${num(a.pm10)} µg/m³</b></li><li><span>Graminacee / ambrosia</span><b>${num(a.grass_pollen, 0)} / ${num(a.ragweed_pollen, 0)} grani/m³</b></li></ul><button class="quiet" data-go="air">Apri qualità dell’aria →</button></article>`;
 }
-function todayView() {
+function stationSummary() {
   const renderers = {
     hours: hourStrip,
     chart: weatherChart,
@@ -550,14 +579,12 @@ function todayView() {
   return (
     currentHero() +
     (window.MeteoDecision?.quick(data.quick_check, tz()) || "") +
-    (window.MeteoV54?.briefing() || "") +
-    (window.MeteoInsights?.homeFocus() || "") +
     title(
-      "La tua giornata, a colpo d’occhio",
-      `<button class="quiet" data-settings>Personalizza</button>`,
+      "Dalla stazione a oggi",
+      `<div class="controls station-links"><button class="quiet" data-go="station-forecast">Previsioni stazione</button><button class="quiet" data-go="maps">Radar</button><button class="quiet" data-settings>Personalizza</button></div>`,
     ) +
     (!prefs.hidden.includes("hours") ? hourStrip() : "") +
-    `<details class="home-details" ${prefs.expert ? "open" : ""}><summary>Grafici e approfondimenti della giornata</summary><div class="grid">${prefs.cards
+    `<details class="card detail-row station-detail" ${prefs.expert ? "open" : ""}><summary>Grafici, cielo e qualità dell’aria</summary><div class="grid">${prefs.cards
       .filter((k) => k !== "hours" && !prefs.hidden.includes(k))
       .map((k) => renderers[k]())
       .join("")}</div></details>`
@@ -612,21 +639,7 @@ function forecastView() {
     )
     .join(
       "",
-    )}${weatherChart()}</div><div class="controls"><button class="quiet" data-go="timeline">Grafici coordinati · cursore e zoom →</button></div><details id="forecast-detail" class="card detail-row"${forecastDetailOpen ? " open" : ""}><summary>Dettaglio orario e confronto Pro</summary><p>${proAnchor("forecast", "Confronto modelli Pro")}</p><div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Dati del blocco</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${f.complete ? "Completi" : "Parziali"}</td></tr>`).join("")}</tbody></table></div></article>${window.MeteoExtra?.uncertaintyCard() || ""}${window.MeteoV53?.probabilities() || ""}${title("Verifica delle previsioni", '<button class="quiet" data-go="models">Quanto ci prende? →</button>')}<div class="grid">${changeCard()}<article class="card span-6"><h2>Errori misurati, per orizzonte</h2>${window.MeteoExtra?.verificationTable() || qualityTable()}<p class="metric-caption">MAE: errore assoluto medio. Il confronto di validazione è su dati tenuti fuori dalla calibrazione; i campioni scarsi non dimostrano un miglioramento.</p></article></div></details>${window.MeteoV54?.reliabilityMarkup(true)||""}`;
-}
-function qualityTable() {
-  const scores = (data.scores || []).filter((s) =>
-    ["temp_c", "humidity", "wind_kmh"].includes(s.variable),
-  );
-  return scores.length
-    ? `<div class="table-wrap"><table><thead><tr><th>Variabile / modello</th><th>Orizzonte</th><th>MAE</th><th>Validazione</th><th>N</th></tr></thead><tbody>${scores
-        .slice(0, 18)
-        .map(
-          (s) =>
-            `<tr><td>${esc(s.variable)} · ${esc(s.model)}</td><td>${esc(s.horizon)}</td><td>${num(s.mae)}</td><td>${num(s.holdout_mae)}</td><td>${num(s.n, 0)}</td></tr>`,
-        )
-        .join("")}</tbody></table></div>`
-    : '<div class="empty">Verifica locale in raccolta. Non viene attribuita un’affidabilità non ancora misurata.</div>';
+    )}${weatherChart()}</div><div class="controls"><button class="quiet" data-go="timeline">Grafici coordinati · cursore e zoom →</button></div><details id="forecast-detail" class="card detail-row"${forecastDetailOpen ? " open" : ""}><summary>Dettaglio orario e confronto Pro</summary><p>${proAnchor("forecast", "Confronto modelli Pro")}</p><div class="controls"><label for="forecast-step">Passo della tabella</label><select id="forecast-step">${[1, 3, 6].map((n) => `<option value="${n}" ${n === forecastStep ? "selected" : ""}>${n} ${n === 1 ? "ora" : "ore"}</option>`).join("")}</select><small>Valori medi del blocco · raffica e probabilità: massimo · pioggia: somma solo con tutte le ore disponibili.</small></div><article class="card"><div class="table-wrap"><table><thead><tr><th>Ora locale</th><th>Temperatura</th><th>Percepita</th><th>Umidità</th><th>Vento / raffica</th><th>Pioggia</th><th>Probabilità</th><th>Nuvole</th><th>Dati del blocco</th></tr></thead><tbody>${groups.map((f) => `<tr><td>${dayLabel(f.valid_time)} ${clock(f.valid_time)}</td><td><b>${num(f.temp_c)} °C</b></td><td>${num(f.feels_like_c)} °C</td><td>${num(f.humidity, 0)}%</td><td>${num(f.wind_kmh, 0)} / ${num(f.wind_gust_kmh, 0)} km/h</td><td>${num(f.rain_mm)} mm</td><td>${num(f.precip_probability, 0)}%</td><td>${num(f.clouds, 0)}%</td><td>${f.complete ? "Completi" : "Parziali"}</td></tr>`).join("")}</tbody></table></div></article></details><p class="station-pro-link">${proAnchor("precision", "Modelli, probabilità e verifica in Pro")}</p>`;
 }
 function stationsView() {
   const h = data.history || {},
@@ -657,7 +670,7 @@ function stationsView() {
       .slice(-historyDays)
       .map((r) => ({ t: r.date + "T12:00:00Z", v: r[historyMetric] })),
   }));
-  return `<h1>La storia delle tue stazioni</h1><p>Calendario, misure e confronto. I riepiloghi giornalieri importati non diventano campioni orari.</p><div class="grid">${historyCard()}<article class="card span-6"><h2>Stato della stazione</h2><ul class="fact-list"><li><span>Ultimo campione</span><b>${dateTime(data.observed_at)}</b></li><li><span>Età della misura</span><b>${ageText(currentAge())}</b></li><li><span>Archivio più antico nel periodo</span><b>${dayLabel(h.first)}</b></li></ul>${proAnchor("station", "Diagnostica sensori e rapporti PDF")}</article></div>${title("Copertura giorno per giorno")}<div class="controls"><label for="history-days">Periodo</label><select id="history-days">${[30, 90, 180, 365].map((n) => `<option value="${n}" ${n === historyDays ? "selected" : ""}>${n} giorni</option>`).join("")}</select><label for="history-metric">Confronta</label><select id="history-metric">${[
+  return stationSummary() + `<details class="card detail-row station-detail"${stationHistoryOpen ? " open" : ""} id="station-history"><summary>Archivio e confronto delle stazioni</summary><p>Calendario delle misure e confronto fra postazioni. I riepiloghi giornalieri importati non diventano campioni orari.</p>${title("Copertura giorno per giorno")}<div class="controls"><label for="history-days">Periodo</label><select id="history-days">${[30, 90, 180, 365].map((n) => `<option value="${n}" ${n === historyDays ? "selected" : ""}>${n} giorni</option>`).join("")}</select><label for="history-metric">Confronta</label><select id="history-metric">${[
     ["temp_mean_c", "Temperatura media"],
     ["humidity_mean", "Umidità media"],
     ["rain_mm", "Pioggia giornaliera"],
@@ -668,7 +681,7 @@ function stationsView() {
     )
     .join(
       "",
-    )}</select><a href="/api/v5/history/${encodeURIComponent(activeId)}.csv">Scarica CSV</a></div><article class="card"><div class="coverage-legend">${Object.entries(
+    )}</select><a href="/api/v5/history/${encodeURIComponent(activeId)}.csv">Scarica CSV</a></div><div class="coverage-legend">${Object.entries(
     labels,
   )
     .map(
@@ -677,7 +690,7 @@ function stationsView() {
     )
     .join(
       "",
-    )}</div><div class="coverage-grid">${calendar.map((d) => `<button class="day-cell ${d.status}" data-day="${d.date}" aria-label="${esc(dayLabel(d.date) + " · " + labels[d.status])}" title="${esc(dayLabel(d.date) + " · " + labels[d.status])}"></button>`).join("")}</div><p id="day-detail" class="metric-caption">Tocca un giorno per conoscere origine e numero dei campioni. Il giorno corrente rimane parziale.</p>${chart(series, { unit, reference: false, gapMs: 1.1 * 86400000 })}<p class="metric-caption">Le linee si interrompono nei giorni mancanti. Confronto descrittivo tra microclimi diversi: nessuna correzione automatica Roma–Comacchio.</p></article><div class="controls"><button class="quiet" data-go="import">Importa uno storico · amministratore</button><button class="quiet" data-go="archive">Rapporti mensili e record →</button>${proAnchor("station", "Archivio completo Pro")}</div>`;
+    )}</div><div class="coverage-grid">${calendar.map((d) => `<button class="day-cell ${d.status}" data-day="${d.date}" aria-label="${esc(dayLabel(d.date) + " · " + labels[d.status])}" title="${esc(dayLabel(d.date) + " · " + labels[d.status])}"></button>`).join("")}</div><p id="day-detail" class="metric-caption">Tocca un giorno per conoscere origine e numero dei campioni. Il giorno corrente rimane parziale.</p>${chart(series, { unit, reference: false, gapMs: 1.1 * 86400000 })}<p class="metric-caption">Le linee si interrompono nei giorni mancanti.</p><div class="controls"><button class="quiet" data-go="archive">Rapporti mensili e record →</button>${proAnchor("station", "Archivio completo Pro")}</div></details><p class="station-pro-link">${proAnchor("station", "Sensori, verifiche e diagnostica Pro")}</p>`;
 }
 function astronomyView() {
   return window.MeteoCielo?.view() ?? astroCard();
@@ -717,14 +730,12 @@ function moreView() {
     ["journal", "▤", "Diario astronomico", "Sessioni personali e confronto con la previsione."],
     ["activities", "↗", "Le tue attività", "Finestre meteo e soglie che decidi tu."],
     ["inbox", "☷", "Centro avvisi", "Eventi rilevati e rientro delle condizioni."],
-    ["quality", "◉", "Qualità dei dati", "Origine, orari reali e anomalie delle misure."],
-    ["models", "≋", "Quanto ci prende?", "Errori locali, correzioni e nuovi modelli in verifica."],
     ["archive", "▤", "Rapporti mensili", "Copertura, estremi e confronto tra le stazioni."],
     ["events", "↶", "Rivedi un evento", "Misure, radar DPC storico e previsione archiviata."],
     [
-      "forecast",
+      "station-forecast",
       "≋",
-      "Previsioni verificate",
+      "Previsioni delle stazioni",
       "Emissioni, cambiamenti e affidabilità per orizzonte.",
     ],
     [
@@ -758,31 +769,40 @@ function moreView() {
       "Condizioni scelte da te, senza notifiche ripetute.",
     ],
   ];
-  return `<h1>Il tuo osservatorio, completo</h1><p>Strumenti quotidiani e approfondimenti scientifici, nello stesso posto.</p><div class="grid">${tools.map(([p, i, h, t]) => `<a class="card tool-card span-4" href="?page=${p}" data-go="${p}"><span class="tool-icon">${i}</span><h2>${h}</h2><p>${t}</p></a>`).join("")}<a class="card tool-card span-6" href="/app/static/android/index.html"><h2>App e aggiornamenti</h2><p>Scarica Meteo Pro e gestisci gli aggiornamenti Android.</p></a><a class="card tool-card span-12" href="?page=cities" data-go="cities"><h2>Cerca una città o un CAP</h2><p>Previsioni mondiali e confronto con la stazione selezionata.</p></a><a class="card tool-card span-6" href="${esc(proLink("system"))}"><h2>Sistema e diagnostica</h2><p>Controllo salute, sorgenti e backup. I dettagli riservati richiedono accesso amministratore.</p></a><a class="card tool-card span-6" href="${esc(proLink("info"))}"><h2>Fonti, metodo e limiti</h2><p>Come sono ottenuti i dati, cosa è misurato e cosa è stimato.</p></a></div>`;
+  return `<h1>Esplora Meteo Pro</h1><p>Pianifica le tue attività, consulta gli archivi e trova gli strumenti per le stazioni.</p><div class="grid">${tools.map(([p, i, h, t]) => `<a class="card tool-card span-4" href="?page=${p}" data-go="${p}"><span class="tool-icon">${i}</span><h2>${h}</h2><p>${t}</p></a>`).join("")}<a class="card tool-card span-6" href="/app/static/android/index.html"><h2>App e aggiornamenti</h2><p>Scarica Meteo Pro e gestisci gli aggiornamenti Android.</p></a><a class="card tool-card span-6" href="${esc(proLink("precision"))}"><h2>Verifica delle previsioni · Pro</h2><p>Campioni, probabilità e confronto tra modelli.</p></a><a class="card tool-card span-6" href="${esc(proLink("system"))}"><h2>Sistema e diagnostica</h2><p>Controllo salute, sorgenti e backup. I dettagli riservati richiedono accesso amministratore.</p></a><a class="card tool-card span-6" href="${esc(proLink("info"))}"><h2>Fonti, metodo e limiti</h2><p>Come sono ottenuti i dati, cosa è misurato e cosa è stimato.</p></a></div>`;
 }
 function mapsView() {
   return `<h1>Radar e mappe</h1><p>Ogni prodotto mantiene la propria origine e il proprio orario.</p><div class="grid"><article class="card span-6"><span class="tag">OSSERVAZIONE</span><h2>Radar e fulmini DPC</h2><p>Eco radar e fulminazioni osservate. Consulta nel pannello Pro l’ultimo fotogramma disponibile e il suo orario.</p>${proAnchor("radar", "Apri radar della località")}</article><article class="card span-6"><span class="tag">TENDENZA PREVISTA</span><h2>Movimento delle precipitazioni</h2><p>Il nowcast è una tendenza a breve termine, non una nuova osservazione. Se non sono disponibili fotogrammi futuri viene dichiarato nel pannello.</p>${proAnchor("radar", "Apri animazione e mappe")}</article></div>`;
 }
 function notificationsView() {
-  return `<h1>Avvisi personali</h1><p>Facoltativi e disattivabili. Non sostituiscono i bollettini ufficiali né i sistemi di sicurezza dell’osservatorio.</p><article class="card"><div id="push-status" role="status">Verifica disponibilità…</div><div class="controls"><label><input type="checkbox" id="alert-rain" checked> Pioggia probabile</label><label><input type="checkbox" id="alert-wind"> Raffiche forti</label><label><input type="checkbox" id="alert-astro"> Finestra astronomica</label><label><input type="checkbox" id="alert-station"> Stazione non aggiornata</label></div><div class="controls"><label>Probabilità pioggia ≥ <input id="alert-pop" type="number" min="30" max="100" value="60" style="width:80px"> %</label><label>Raffica ≥ <input id="alert-gust" type="number" min="20" max="150" value="40" style="width:80px"> km/h</label></div><div class="controls"><label>Silenzioso dalle <input id="quiet-start" type="time" value="23:00"></label><label>alle <input id="quiet-end" type="time" value="08:00"></label></div><button id="enable-push" class="primary">Attiva su questo dispositivo</button> <button id="disable-push" class="quiet">Disattiva</button><p class="privacy-note">Vale per la località selezionata. Il browser chiederà il consenso; il recapito push resta riservato. I controlli seguono il cron di 10 minuti, senza risvegliare continuamente l’app.</p></article>${window.MeteoV55?.alertCard() || ""}`;
+  return `<h1>Avvisi personali</h1><p>Facoltativi e disattivabili. Non sostituiscono i bollettini ufficiali né i sistemi di sicurezza dell’osservatorio.</p><article class="card"><div id="push-status" role="status">Verifica disponibilità…</div><div class="controls"><label><input type="checkbox" id="alert-rain" checked> Pioggia probabile</label><label><input type="checkbox" id="alert-wind"> Raffiche forti</label><label><input type="checkbox" id="alert-astro"> Finestra astronomica</label><label><input type="checkbox" id="alert-station"> Stazione non aggiornata</label></div><div class="controls"><label>Probabilità pioggia ≥ <input id="alert-pop" type="number" min="30" max="100" value="60" style="width:80px"> %</label><label>Raffica ≥ <input id="alert-gust" type="number" min="20" max="150" value="40" style="width:80px"> km/h</label></div><div class="controls"><label>Silenzioso dalle <input id="quiet-start" type="time" value="23:00"></label><label>alle <input id="quiet-end" type="time" value="08:00"></label></div><button id="enable-push" class="primary">Attiva su questo dispositivo</button> <button id="disable-push" class="quiet">Disattiva</button><p class="privacy-note">Vale per la località selezionata. Il browser chiederà il consenso; il recapito push resta riservato. I controlli seguono il cron di 10 minuti, senza risvegliare continuamente l’app.</p></article><p class="station-pro-link">${proAnchor("precision", "Verifica delle soglie in Pro")}</p>`;
 }
 function importView() {
   return `<h1>Importa lo storico giornaliero</h1><p>Operazione riservata. Prima controlli l’anteprima, poi confermi lo stesso file. Non vengono ricostruite osservazioni orarie.</p><article class="card import-form"><label>Token amministratore<input id="import-token" type="password" autocomplete="off"></label><label>Export Ecowitt giornaliero (.xlsx, massimo 8 MB)<input id="import-file" type="file" accept=".xlsx"></label><p>Destinazione: <b>${esc(data.station.name)}</b>. Il token non viene salvato nel dispositivo.</p><button id="preview-import" class="primary">Controlla anteprima</button><button id="confirm-import" disabled>Conferma importazione</button><div id="import-result" role="status"></div></article>`;
 }
 function render() {
-  if (!data) return;
-  updateMeta();
-  const active = ["today", "forecast", "maps", "stations", "astronomy"].includes(page)
-    ? page
-    : "more";
+  $("#location-row").hidden = !stationPage();
+  const active = page === "cities" ? "today" : page === "station-forecast" ? "stations"
+    : ["today", "forecast", "maps", "stations", "astronomy"].includes(page) ? page : "more";
   document.querySelectorAll("#navigation button").forEach((b) => {
     if (b.dataset.page === active) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
+  window.MeteoExtra?.beforeRender();
+  if (cityPage()) {
+    $("#view").innerHTML = window.MeteoCity?.view() || "";
+    window.MeteoCity?.bind();
+    return;
+  }
+  if (stationPage() && !data) {
+    $("#view").innerHTML = '<div class="loading"><h1>Carico i dati della stazione…</h1><p>Misure, radar e previsioni della postazione selezionata.</p></div>';
+    return;
+  }
+  if (stationPage()) updateMeta();
+  else $("#snapshot-time").textContent = "Misure e previsioni: origini distinte.";
   function mainView() {
     switch (page) {
-      case "today": return todayView();
-      case "forecast": return forecastView();
+      case "station-forecast": return forecastView();
       case "stations": return stationsView();
       case "astronomy": return astronomyView();
       case "air": return airView();
@@ -790,14 +810,16 @@ function render() {
       case "more": return moreView();
       case "notifications": return notificationsView();
       case "import": return importView();
-      default: return todayView();
+      default: return moreView();
     }
   }
-  window.MeteoExtra?.beforeRender();
-  $("#view").innerHTML = window.MeteoV53?.view(page) ?? window.MeteoTimeline?.view(page) ?? window.MeteoInsights?.view(page) ?? window.MeteoExtra?.view(page) ?? mainView();
+  const advanced = page === "quality" || page === "models" ? "precision" : "";
+  $("#view").innerHTML = advanced
+    ? `<article class="card"><h1>Verifiche e diagnostica</h1><p>Trovi questo approfondimento in Meteo Pro.</p>${proAnchor(advanced, "Apri in Pro")}</article>`
+    : window.MeteoV53?.view(page) ?? window.MeteoTimeline?.view(page) ?? window.MeteoInsights?.view(page) ?? window.MeteoExtra?.view(page) ?? mainView();
   bindView();
   window.MeteoExtra?.bind(page);
-  window.MeteoInsights?.bind(page);
+  if (!advanced) window.MeteoInsights?.bind(page);
   window.MeteoV53?.bind(page);
   window.MeteoTimeline?.bind();
   window.MeteoCielo?.bind(page);
@@ -817,6 +839,7 @@ function bindView() {
     .querySelectorAll("[data-settings]")
     .forEach((el) => el.addEventListener("click", openPreferences));
   $("#forecast-detail")?.addEventListener("toggle", event => { forecastDetailOpen = event.target.open; });
+  $("#station-history")?.addEventListener("toggle", event => { stationHistoryOpen = event.target.open; });
   $("#forecast-step")?.addEventListener("change", (ev) => {
     forecastStep = Number(ev.target.value);
     render();
@@ -882,18 +905,38 @@ function preferenceRows() {
 }
 function openPreferences() {
   const dialog = $("#preferences");
-  $("#default-station").innerHTML = stations
-    .map(
-      (s) =>
-        `<option value="${esc(s.id)}" ${s.id === (prefs.station || activeId) ? "selected" : ""}>${esc(s.name)}</option>`,
-    )
-    .join("");
+  const setStationChoices = () => {
+    const values = stations.map(s => [s.id, s.name]);
+    if (prefs.station && !stations.some(s => s.id === prefs.station))
+      values.push([prefs.station, "Stazione salvata"]);
+    $("#default-station").innerHTML = '<option value="">Stazione principale</option>' + values.map(([id, name]) =>
+      `<option value="${esc(id)}" ${id === prefs.station ? "selected" : ""}>${esc(name)}</option>`).join("");
+  };
+  setStationChoices();
+  if (!stations.length) loadStations().then(() => { if (dialog.open) setStationChoices(); }).catch(() => {});
+  $("#default-city").innerHTML = window.MeteoCity?.startupOptions() || "";
+  favoriteSettings();
   $("#astro-preference").value = prefs.profile;
   $("#expert").checked = prefs.expert;
   $("#offline-storage").checked = prefs.offline;
   $("#card-settings").innerHTML = preferenceRows();
   dialog.showModal();
 }
+function favoriteSettings() {
+  const list = window.MeteoCity?.favorites() || [];
+  $("#favorite-settings").innerHTML = list.length
+    ? "<ul>" + list.map((item, i) => `<li><span>${esc(item.label)}</span><button type="button" class="quiet" data-favorite-remove="${i}" aria-label="${esc("Rimuovi " + item.label)}">Rimuovi</button></li>`).join("") + "</ul>"
+    : '<p class="metric-caption">Non hai ancora salvato una città preferita.</p>';
+}
+$("#favorite-settings").addEventListener("click", event => {
+  const button = event.target.closest("[data-favorite-remove]");
+  if (!button) return;
+  const selected = $("#default-city").value;
+  window.MeteoCity?.removeFavorite(Number(button.dataset.favoriteRemove));
+  $("#default-city").innerHTML = window.MeteoCity?.startupOptions() || "";
+  if ([...$("#default-city").options].some(o => o.value === selected)) $("#default-city").value = selected;
+  favoriteSettings();
+});
 $("#settings").addEventListener("click", openPreferences);
 $("#card-settings").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-up],[data-down]");
@@ -909,7 +952,9 @@ $("#card-settings").addEventListener("click", (ev) => {
   $("#card-settings").innerHTML = preferenceRows();
 });
 $("#save-preferences").addEventListener("click", async () => {
-  prefs.station = $("#default-station").value;
+  if ($("#default-station").value) prefs.station = $("#default-station").value;
+  else delete prefs.station;
+  window.MeteoCity?.setStartup($("#default-city").value);
   prefs.profile = $("#astro-preference").value;
   prefs.expert = $("#expert").checked;
   prefs.offline = $("#offline-storage").checked;
@@ -930,6 +975,7 @@ $("#save-preferences").addEventListener("click", async () => {
 });
 async function forgetWeather() {
   try {
+    window.MeteoCity?.forget();
     window.MeteoInsights?.forget();
     Object.keys(localStorage)
       .filter((k) => k.startsWith("meteo.v5.snapshot."))
@@ -1161,13 +1207,13 @@ $("#install").addEventListener("click", async () => {
 window.addEventListener("offline", () => {
   offline = true;
   cancelRecoveryTimer();
-  if (page === "astronomy") render();
-  else updateMeta();
+  if (cityPage()) window.MeteoCity?.offline();
+  else if (page === "astronomy") render();
+  else if (stationPage()) updateMeta();
 });
 window.addEventListener("online", () => {
-  recovering = true;
-  retryIndex = 0;
-  if (!document.hidden) refreshCycle({ activeOnly: true });
+  restartRecovery();
+  if (!document.hidden) refreshCycle({ activeOnly: true, forceCity: true });
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) cancelRecoveryTimer();
@@ -1194,5 +1240,6 @@ navigator.serviceWorker?.addEventListener("controllerchange", () =>
 // before a script finishes downloading. This still starts only one timer.
 document.addEventListener("DOMContentLoaded", () => {
   restoreOpeningCopy();
+  render();
   refreshCycle();
 }, { once: true });

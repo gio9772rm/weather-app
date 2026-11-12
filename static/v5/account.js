@@ -23,7 +23,8 @@
   function markup(account, verified) {
     const profile = identity(), sky = MeteoSky.settings();
     const astronomy = { deep_sky: "Fotografia cielo profondo", visual: "Osservazione visuale", planetary: "Luna e pianeti" };
-    const initial = stations.find(station => station.id === prefs.station)?.name || data?.station?.name || "—";
+    const initial = window.MeteoCity?.initial().label || "Roma";
+    const cities = window.MeteoCity?.favorites().length || 0;
     return `<article class="card account-overview">
       <div class="account-identity">${avatar(profile, account, true)}<div><span class="eyebrow">${account ? verified ? "PROFILO PERSONALE" : "COPIA SUL DISPOSITIVO" : "PROFILO OSPITE"}</span>
         <h2>${esc(label(profile, account))}</h2>
@@ -33,7 +34,8 @@
         <button id="account-edit" type="button" class="quiet">Modifica profilo</button></div>
       <dl class="account-prefs">
         <div><dt>Tema</dt><dd>${prefs.theme === "dark" ? "Scuro" : "Chiaro"}</dd></div>
-        <div><dt>Stazione iniziale</dt><dd>${esc(initial)}</dd></div>
+        <div><dt>Città di avvio</dt><dd>${esc(initial)}</dd></div>
+        <div><dt>Scelte rapide</dt><dd>${cities} ${cities === 1 ? "città preferita" : "città preferite"}</dd></div>
         <div><dt>Attività in Cielo</dt><dd>${esc(astronomy[prefs.profile] || "—")}</dd></div>
         <div><dt>Cielo salvato</dt><dd>${sky.sites.length} ${sky.sites.length === 1 ? "postazione" : "postazioni"} · ${sky.projects.length} ${sky.projects.length === 1 ? "progetto" : "progetti"}</dd></div>
       </dl>

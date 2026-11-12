@@ -9,41 +9,43 @@
     <meta name="theme-color" content="#123a5a" />
     <meta
       name="description"
-      content="Meteo Pro: le tue stazioni, previsioni verificabili e il cielo della prossima notte."
+      content="Meteo Pro: previsioni per ogni città, le tue stazioni e il cielo della prossima notte."
     />
     <title>Meteo Pro · V5</title>
     <link rel="icon" href="/assets/v5/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/app/static/apple-touch-icon-180.png" />
     <link rel="manifest" href="/assets/v5/manifest.webmanifest" />
-    <link rel="stylesheet" href="/assets/v5/app.css?v=5.10.0" />
-    <script src="/assets/v5/app.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/sky-tools.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/sky-horizon.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/sky-projects.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/decision.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/integration.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/sky-compare.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/panorama.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/framing.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/account.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/sky-budget.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/radar.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/extras.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/insights.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/v53.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/v55.js?v=5.10.0" defer></script>
-    <link rel="stylesheet" href="/assets/v5/v55.css?v=5.10.0" />
-    <script src="/assets/v5/v54.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/nina.js?v=5.10.0" defer></script>
-    <link rel="stylesheet" href="/assets/v5/v54.css?v=5.10.0" />
-    <script src="/assets/v5/timeline.js?v=5.10.0" defer></script>
-    <script src="/assets/v5/cielo.js?v=5.10.0" defer></script>
-    <link rel="stylesheet" href="/assets/v5/v53.css?v=5.10.0" />
-    <link rel="stylesheet" href="/assets/v5/extras.css?v=5.10.0" />
-    <link rel="stylesheet" href="/assets/v5/insights.css?v=5.10.0" />
-    <link rel="stylesheet" href="/assets/v5/cielo.css?v=5.10.0" />
-    <link rel="stylesheet" href="/assets/v5/sky-personal.css?v=5.10.0" />
-    <link rel="stylesheet" href="/assets/v5/decision.css?v=5.10.0" />
+    <link rel="stylesheet" href="/assets/v5/app.css?v=5.11.0" />
+    <script src="/assets/v5/app.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/sky-tools.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/sky-horizon.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/sky-projects.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/decision.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/integration.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/sky-compare.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/panorama.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/framing.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/account.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/sky-budget.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/radar.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/extras.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/insights.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/v53.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/v55.js?v=5.11.0" defer></script>
+    <link rel="stylesheet" href="/assets/v5/v55.css?v=5.11.0" />
+    <script src="/assets/v5/v54.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/nina.js?v=5.11.0" defer></script>
+    <link rel="stylesheet" href="/assets/v5/v54.css?v=5.11.0" />
+    <script src="/assets/v5/timeline.js?v=5.11.0" defer></script>
+    <script src="/assets/v5/cielo.js?v=5.11.0" defer></script>
+    <link rel="stylesheet" href="/assets/v5/v53.css?v=5.11.0" />
+    <link rel="stylesheet" href="/assets/v5/extras.css?v=5.11.0" />
+    <link rel="stylesheet" href="/assets/v5/insights.css?v=5.11.0" />
+    <link rel="stylesheet" href="/assets/v5/cielo.css?v=5.11.0" />
+    <link rel="stylesheet" href="/assets/v5/sky-personal.css?v=5.11.0" />
+    <link rel="stylesheet" href="/assets/v5/decision.css?v=5.11.0" />
+    <link rel="stylesheet" href="/assets/v5/city-home.css?v=5.11.0" />
+    <script src="/assets/v5/city-home.js?v=5.11.0" defer></script>
   </head>
   <body>
     <a class="skip" href="#content">Vai ai contenuti</a>
@@ -80,20 +82,14 @@
         <button data-page="stations"><span aria-hidden="true">⌁</span>Stazioni</button>
         <button data-page="astronomy"><span aria-hidden="true">☾</span>Cielo</button>
         <button data-page="more"><span aria-hidden="true">⊞</span>Esplora</button>
-        <p class="nav-note">
-          Misure reali.<br />Previsioni trasparenti.<br /><b
-            >Una fotografia ogni 10 min.</b
-          >
-        </p>
+        <p class="nav-note">Previsioni per la tua città.<br />Misure in <b>Stazioni</b>.</p>
       </nav>
       <main id="content" tabindex="-1">
-        <div class="location-row">
+        <div class="location-row" id="location-row" hidden>
           <div>
-            <span class="eyebrow">IL TUO OSSERVATORIO METEO</span
-            ><label class="sr-only" for="station"
-              >Località per tutte le sezioni</label
-            ><select id="station" aria-label="Località per tutte le sezioni">
-              <option>Caricamento località…</option>
+            <label class="eyebrow" for="station">STAZIONE DI RIFERIMENTO</label
+            ><select id="station">
+              <option>Caricamento stazioni…</option>
             </select>
           </div>
           <div class="sync">
@@ -124,26 +120,30 @@
           <button class="icon-button" aria-label="Chiudi">×</button>
         </div>
       </form>
-      <p>Scegli cosa vedere. Accedi al profilo in Esplora per sincronizzare le preferenze tra dispositivi.</p>
-      <label>Località iniziale<select id="default-station"></select></label>
-      <fieldset>
-        <legend>Riquadri della home · ordine di visualizzazione</legend>
-        <div id="card-settings"></div>
-      </fieldset>
+      <p>Scegli la città che si apre all’avvio. Con un account, città e preferiti si ritrovano anche sugli altri dispositivi.</p>
+      <label>Città di avvio<select id="default-city"></select></label>
+      <p class="metric-caption">Per aggiungere una città, cercala in Oggi e scegli «Preferito» o «Imposta come avvio».</p>
+      <details class="detail-row">
+        <summary>Gestisci città preferite</summary>
+        <div id="favorite-settings"></div>
+      </details>
+      <details class="detail-row">
+        <summary>Stazioni e astronomia</summary>
+        <label>Stazione iniziale<select id="default-station"></select></label>
+        <fieldset>
+          <legend>Riquadri delle stazioni · ordine di visualizzazione</legend>
+          <div id="card-settings"></div>
+        </fieldset>
+        <label>Profilo astronomico<select id="astro-preference">
+            <option value="deep_sky">Fotografia cielo profondo</option>
+            <option value="visual">Osservazione visuale</option>
+            <option value="planetary">Luna e pianeti</option>
+          </select></label>
+        <label><input type="checkbox" id="expert" /> Apri i dettagli e usa la vista tecnica in Pro</label>
+      </details>
       <label
-        >Profilo astronomico<select id="astro-preference">
-          <option value="deep_sky">Fotografia cielo profondo</option>
-          <option value="visual">Osservazione visuale</option>
-          <option value="planetary">Luna e pianeti</option>
-        </select></label
-      >
-      <label
-        ><input type="checkbox" id="expert" /> Mostra più dettagli
-        tecnici</label
-      >
-      <label
-        ><input type="checkbox" id="offline-storage" /> Conserva l’ultima
-        fotografia per l’uso offline</label
+        ><input type="checkbox" id="offline-storage" /> Conserva gli ultimi
+        dati meteo per l’uso offline</label
       >
       <button id="save-preferences" class="primary">Salva preferenze</button
       ><button id="forget" class="quiet">

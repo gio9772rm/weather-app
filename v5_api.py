@@ -13,7 +13,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import (
@@ -99,9 +99,22 @@ async def home(request):
             "/pro/?" + request.url.query,
             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
         )
+    if request.query_params.get("page") in {"quality", "models"}:
+        params = {"tab": "precision"}
+        for name in ("station", "theme"):
+            if value := request.query_params.get(name):
+                params[name] = value
+        return RedirectResponse(
+            "/pro/?" + urlencode(params),
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        )
     return FileResponse(
         ROOT / "static/v5/index.html",
-        headers={"Cache-Control": "no-cache", "Referrer-Policy": "no-referrer"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": "geolocation=(self)",
+        },
     )
 
 
@@ -332,7 +345,8 @@ async def push_subscription(request):
 
 
 async def extra_tool(request):
-    from v5_extensions import catalog, city_forecast, planner, search_city
+    from v5_city import city_forecast, nearby_city, search_city
+    from v5_extensions import catalog, planner
 
     headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
     try:
@@ -399,10 +413,12 @@ async def extra_tool(request):
             return JSONResponse({"results": value}, headers=headers)
         if request.method == "GET" and action == "city":
             value = await run_in_threadpool(
-                city_forecast, request.query_params.get("id", "")
+                city_forecast,
+                request.query_params.get("id", ""),
+                stable=request.query_params.get("geo_id"),
             )
             return JSONResponse(value, headers=headers)
-        if request.method == "POST" and action in {"planner", "cielo"}:
+        if request.method == "POST" and action in {"planner", "cielo", "nearby-city"}:
             if not origin_matches(request):
                 return JSONResponse(
                     {"error": "Origine non consentita"},
@@ -417,13 +433,16 @@ async def extra_tool(request):
             body = bytearray()
             async for chunk in request.stream():
                 body.extend(chunk)
-                if len(body) > 32768:
+                if len(body) > (1024 if action == "nearby-city" else 32768):
                     return JSONResponse(
                         {"error": "Richiesta troppo grande"},
                         status_code=413,
                         headers=headers,
                     )
             values = json.loads(body)
+            if action == "nearby-city":
+                value = await run_in_threadpool(nearby_city, values)
+                return JSONResponse(value, headers=headers)
             if not isinstance(values, dict) or not isinstance(
                 values.get("station_id"), str
             ):
